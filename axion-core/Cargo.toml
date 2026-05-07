@@ -1,0 +1,23 @@
+[package]
+name = "axion-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Async runtime for the Dispatcher
+tokio = { version = "1", features = ["full"] }
+rand = "0.8"
+async-trait = "0.1"
+
+# CLI argument parsing
+clap = { version = "4.4", features = ["derive"] }
+
+# Serialization for the Axion Protocol
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP client for OpenAI API
+reqwest = { version = "0.12", features = ["json"] }
+
+# Unique IDs for tasks and agents
+uuid = { version = "1.6", features = ["v4", "serde"] }

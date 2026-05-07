@@ -1,0 +1,3 @@
+[workspace]
+members = ["axion-core"]
+resolver = "2"
