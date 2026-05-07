@@ -1,12 +1,13 @@
 use axion_core::prelude::*;
 use axum::{
-    http::StatusCode,
+    http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::json;
+use tower_http::cors::CorsLayer;
 
 #[derive(Deserialize)]
 struct TaskRequest {
@@ -77,9 +78,15 @@ async fn execute(Json(req): Json<TaskRequest>) -> impl IntoResponse {
 async fn main() {
     dotenvy::dotenv().ok();
 
+    let cors = CorsLayer::new()
+        .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([axum::http::header::CONTENT_TYPE]);
+
     let app = Router::new()
         .route("/health", get(health))
-        .route("/execute", post(execute));
+        .route("/execute", post(execute))
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
