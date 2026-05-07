@@ -51,12 +51,18 @@ pub async fn validate_mission(tasks: &[Task], provider: &dyn AiProvider) -> Vali
 Review the completed mission tasks below and determine if the mission is truly complete, \
 or if the results reveal a new requirement that needs investigation — for example: \
 a visa is needed, a price is suspiciously low, an insurance requirement was missed, \
-or important context is absent from the research.\n\n\
+important context is absent, or a calculation is so complex it warrants Python code.\n\n\
 {summary}\n\n\
 Respond ONLY with valid JSON in exactly one of these two formats (no markdown, no explanation):\n\
 {{\"verdict\":\"SUCCESS\",\"reasoning\":\"brief sentence\",\"new_tasks\":[]}}\n\
 {{\"verdict\":\"EXPAND\",\"reasoning\":\"brief sentence\",\"new_tasks\":[\
 {{\"description\":\"specific task description\",\"role\":\"WebSearcher\"}}]}}\n\n\
+Available roles for new_tasks:\n\
+- \"WebSearcher\" — look up information on the web\n\
+- \"Analyst\"     — summarise, compare, and format research results\n\
+- \"Coder\"       — write and execute Python 3 code via the python_interpreter tool; \
+use this for multi-step arithmetic, statistical summaries, or data transformation \
+that is too complex for the calculator tool\n\n\
 Rules:\n\
 - Limit new_tasks to 2 maximum.\n\
 - Only EXPAND if something genuinely critical is missing for the user's intent.\n\
@@ -100,6 +106,7 @@ fn parse_verdict(response: &str) -> ValidationResult {
                     role: match t.role.as_str() {
                         "Analyst" => AgentRole::Analyst,
                         "Planner" => AgentRole::Planner,
+                        "Coder"   => AgentRole::Coder,
                         _ => AgentRole::WebSearcher,
                     },
                 })

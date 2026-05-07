@@ -1,6 +1,7 @@
 pub mod dispatcher;
 pub mod engine;
 pub mod governor;
+pub mod persistence;
 pub mod planner;
 pub mod protocol;
 pub mod tools;
@@ -13,6 +14,7 @@ pub mod tools;
 pub mod prelude {
     pub use crate::engine::{AiProvider, OpenAIProvider, ToolResponse};
     pub use crate::governor::{NewTask, ValidationResult};
+    pub use crate::persistence::MissionSnapshot;
     pub use crate::planner::Plan;
     pub use crate::protocol::{AgentRole, ContextBus, Task, TaskStatus};
     pub use crate::run_mission;
@@ -36,6 +38,9 @@ pub async fn run_mission(
     // explicit cleanup prevents leaks if the caller ever reuses a Plan.
     plan.context.clear();
 
+    // Record how many tasks existed before any Governor expansions.
+    let original_task_count = plan.tasks.len();
+
     let mut retry_attempts: u8 = 0;
     let mut expansion_rounds: u8 = 0;
 
@@ -44,6 +49,9 @@ pub async fn run_mission(
 
         match governor::validate_mission(&plan.tasks, provider).await {
             governor::ValidationResult::Success => {
+                if let Err(e) = persistence::save_snapshot(plan, original_task_count, "completed") {
+                    println!("  ⚠️  Could not save mission snapshot: {}", e);
+                }
                 return Ok(());
             }
 
@@ -59,6 +67,9 @@ pub async fn run_mission(
             governor::ValidationResult::Expand(new_tasks) => {
                 if expansion_rounds >= MAX_EXPANSIONS {
                     println!("  ⚠️  Governor: Max expansions ({}) reached — treating as SUCCESS.", MAX_EXPANSIONS);
+                    if let Err(e) = persistence::save_snapshot(plan, original_task_count, "completed") {
+                        println!("  ⚠️  Could not save mission snapshot: {}", e);
+                    }
                     return Ok(());
                 }
 
@@ -83,6 +94,10 @@ pub async fn run_mission(
     let unfinished = plan.tasks.iter()
         .filter(|t| !matches!(t.status, protocol::TaskStatus::Completed))
         .count();
+
+    if let Err(e) = persistence::save_snapshot(plan, original_task_count, "failed") {
+        println!("  ⚠️  Could not save mission snapshot: {}", e);
+    }
 
     Err(format!("{} task(s) could not be completed after {} attempts", unfinished, max_attempts))
 }

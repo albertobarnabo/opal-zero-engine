@@ -1,8 +1,11 @@
+mod python;
+
 pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String> {
     match name {
         "calculator" => execute_calculator(arguments),
         "web_search" => execute_web_search(arguments).await,
         "write_file" => execute_write_file(arguments),
+        "python_interpreter" => python::execute_python(arguments),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -52,23 +55,36 @@ fn execute_write_file(arguments: &str) -> Result<String, String> {
     let args: WriteArgs = serde_json::from_str(arguments)
         .map_err(|e| format!("Failed to parse write_file arguments: {}", e))?;
 
-    // Safety: reject filenames with path separators or traversal sequences.
-    if args.filename.contains('/') || args.filename.contains('\\') || args.filename.contains("..") {
-        return Err(format!(
-            "Invalid filename '{}': must not contain path separators or '..'",
-            args.filename
-        ));
+    // Derive a safe slug from the provided filename: strip extension and any
+    // unsafe characters, then compose a timestamped path inside missions/.
+    let slug: String = args
+        .filename
+        .trim_end_matches(".md")
+        .trim_end_matches(".txt")
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .collect::<String>()
+        .to_lowercase();
+
+    if slug.is_empty() || slug.contains("..") {
+        return Err(format!("Invalid filename '{}'", args.filename));
     }
 
-    let output_dir = std::path::Path::new("output");
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("Failed to create output/ directory: {}", e))?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
-    let path = output_dir.join(&args.filename);
+    let final_name = format!("mission_{}_{}.md", timestamp, slug);
+    let missions_dir = std::path::Path::new("missions");
+    std::fs::create_dir_all(missions_dir)
+        .map_err(|e| format!("Failed to create missions/ directory: {}", e))?;
+
+    let path = missions_dir.join(&final_name);
     std::fs::write(&path, &args.content)
-        .map_err(|e| format!("Failed to write '{}': {}", args.filename, e))?;
+        .map_err(|e| format!("Failed to write '{}': {}", final_name, e))?;
 
-    Ok(format!("File 'output/{}' written successfully.", args.filename))
+    Ok(format!("File 'missions/{}' written successfully.", final_name))
 }
 
 async fn execute_web_search(arguments: &str) -> Result<String, String> {

@@ -63,6 +63,14 @@ use tables for cost comparisons, and ## headings to structure sections. \
 Use the 'calculator' tool for all arithmetic. \
 Use the 'write_file' tool when asked to save a report.\n"
         }
+        AgentRole::Coder => {
+            "You are a Python programmer in the Axion Core swarm. \
+Your job is to write and execute Python 3 code using the 'python_interpreter' tool. \
+Rules: use only the standard library, always use print() to emit results, \
+never use file I/O or shell commands, keep scripts concise and self-contained. \
+Call the 'python_interpreter' tool exactly once with your complete script. \
+Use 'write_file' only if explicitly asked to persist the output.\n"
+        }
         _ => {
             "You are an autonomous agent in the Axion Core swarm. The user's request is final. \
 Do not ask questions. If data like prices or quantities is present in the context, use it \
@@ -132,9 +140,10 @@ You can persist data to disk. If a task asks to save or write a report, use the 
 fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
     match role {
-        AgentRole::Analyst => vec![Tool::calculator(), Tool::write_file()],
+        AgentRole::Analyst  => vec![Tool::calculator(), Tool::write_file()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
-        AgentRole::Planner => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
+        AgentRole::Planner  => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
+        AgentRole::Coder    => vec![Tool::python_interpreter(), Tool::write_file()],
     }
 }
 

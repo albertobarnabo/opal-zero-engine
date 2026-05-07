@@ -1,17 +1,28 @@
+use axion_core::persistence::MissionSnapshot;
 use axion_core::prelude::*;
 use axum::{
+    extract::Path as AxumPath,
     http::{Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower_http::cors::CorsLayer;
 
 #[derive(Deserialize)]
 struct TaskRequest {
     intent: String,
+}
+
+#[derive(Serialize)]
+struct MissionSummary {
+    id: String,
+    timestamp: u64,
+    intent: String,
+    task_count: usize,
+    status: String,
 }
 
 async fn health() -> &'static str {
@@ -65,6 +76,7 @@ async fn execute(Json(req): Json<TaskRequest>) -> impl IntoResponse {
                 StatusCode::OK,
                 Json(json!({
                     "status": "completed",
+                    "intent": plan.original_intent,
                     "task_count": plan.tasks.len(),
                     "expanded_task_count": expanded_task_count,
                     "context": plan.context,
@@ -79,6 +91,7 @@ async fn execute(Json(req): Json<TaskRequest>) -> impl IntoResponse {
                 Json(json!({
                     "status": "failed",
                     "error": msg,
+                    "intent": plan.original_intent,
                     "task_count": plan.tasks.len(),
                     "expanded_task_count": expanded_task_count,
                     "context": plan.context,
@@ -86,6 +99,62 @@ async fn execute(Json(req): Json<TaskRequest>) -> impl IntoResponse {
             )
                 .into_response()
         }
+    }
+}
+
+async fn list_missions() -> impl IntoResponse {
+    let missions_dir = std::path::Path::new("missions");
+    let mut summaries: Vec<MissionSummary> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(missions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(snap) = serde_json::from_str::<MissionSnapshot>(&content) {
+                    summaries.push(MissionSummary {
+                        id: snap.id,
+                        timestamp: snap.timestamp,
+                        intent: snap.intent,
+                        task_count: snap.task_count,
+                        status: snap.status,
+                    });
+                }
+            }
+        }
+    }
+
+    summaries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    (StatusCode::OK, Json(summaries)).into_response()
+}
+
+async fn get_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
+    // Reject IDs that could be used for path traversal.
+    if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid mission ID" })),
+        )
+            .into_response();
+    }
+
+    let path = std::path::Path::new("missions").join(format!("{}.json", id));
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+            Err(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "Corrupt snapshot" })),
+            )
+                .into_response(),
+        },
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Mission not found" })),
+        )
+            .into_response(),
     }
 }
 
@@ -101,6 +170,8 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/execute", post(execute))
+        .route("/missions", get(list_missions))
+        .route("/missions/:id", get(get_mission))
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")

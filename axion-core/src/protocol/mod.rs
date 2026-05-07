@@ -7,6 +7,8 @@ pub enum AgentRole {
     WebSearcher,
     Analyst,
     Planner,
+    /// Executes Python code for complex math, data transformation, or analysis.
+    Coder,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -37,9 +39,10 @@ impl AgentRole {
     #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
-            AgentRole::WebSearcher => "Web Searcher",
+            AgentRole::WebSearcher => "WebSearcher",
             AgentRole::Analyst => "Analyst",
             AgentRole::Planner => "Planner",
+            AgentRole::Coder => "Coder",
         }
     }
 }
@@ -164,6 +167,35 @@ impl Tool {
                 param_type: "object".to_string(),
                 properties,
                 required: vec!["query".to_string()],
+            },
+        }
+    }
+
+    pub fn python_interpreter() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "code".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "The Python 3 code to execute. Must use only the standard library. \
+                     Use print() to emit results. Do not use file I/O or shell commands."
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+
+        Tool {
+            name: "python_interpreter".to_string(),
+            description: "Executes a Python 3 snippet and returns its stdout output. \
+                          Use this for complex calculations, statistical analysis, \
+                          data transformation, or any logic the calculator cannot express."
+                .to_string(),
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["code".to_string()],
             },
         }
     }
