@@ -2,6 +2,7 @@ pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String>
     match name {
         "calculator" => execute_calculator(arguments),
         "web_search" => execute_web_search(arguments).await,
+        "write_file" => execute_write_file(arguments),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -39,6 +40,35 @@ fn execute_calculator(arguments: &str) -> Result<String, String> {
     };
 
     Ok(format!("Result: {}", result))
+}
+
+fn execute_write_file(arguments: &str) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct WriteArgs {
+        filename: String,
+        content: String,
+    }
+
+    let args: WriteArgs = serde_json::from_str(arguments)
+        .map_err(|e| format!("Failed to parse write_file arguments: {}", e))?;
+
+    // Safety: reject filenames with path separators or traversal sequences.
+    if args.filename.contains('/') || args.filename.contains('\\') || args.filename.contains("..") {
+        return Err(format!(
+            "Invalid filename '{}': must not contain path separators or '..'",
+            args.filename
+        ));
+    }
+
+    let output_dir = std::path::Path::new("output");
+    std::fs::create_dir_all(output_dir)
+        .map_err(|e| format!("Failed to create output/ directory: {}", e))?;
+
+    let path = output_dir.join(&args.filename);
+    std::fs::write(&path, &args.content)
+        .map_err(|e| format!("Failed to write '{}': {}", args.filename, e))?;
+
+    Ok(format!("File 'output/{}' written successfully.", args.filename))
 }
 
 pub async fn execute_web_search(arguments: &str) -> Result<String, String> {

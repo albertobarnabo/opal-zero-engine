@@ -55,7 +55,8 @@ pub async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: 
     let mut prompt = String::from(
         "You are an autonomous agent in the Axion Core swarm. The user's request is final. \
 Do not ask questions. If data like prices or quantities is present in the context, use it \
-immediately. Use the 'calculator' tool for any and all math.\n"
+immediately. Use the 'calculator' tool for any and all math. \
+You can persist data to disk. If a task asks to save or write a report, use the 'write_file' tool.\n"
     );
 
     if !context.data.is_empty() {
@@ -117,9 +118,9 @@ immediately. Use the 'calculator' tool for any and all math.\n"
 fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
     match role {
-        AgentRole::Analyst => vec![Tool::calculator()],
+        AgentRole::Analyst => vec![Tool::calculator(), Tool::write_file()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
-        AgentRole::Planner => vec![Tool::calculator(), Tool::web_search()],
+        AgentRole::Planner => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
     }
 }
 

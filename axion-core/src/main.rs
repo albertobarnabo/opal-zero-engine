@@ -36,7 +36,13 @@ async fn main() {
     let mut plan = Plan::new(&args.intent);
     let f_id = plan.add_task("The flight to Rome costs $300. Report this fact: 'Flight cost: $300'.", vec![], AgentRole::WebSearcher);
     let h_id = plan.add_task("The hotel in Rome costs $120 per night for 2 nights ($240 total). Report this fact: 'Hotel cost: $240'.", vec![f_id], AgentRole::WebSearcher);
-    plan.add_task("Use the calculator tool to add 300 + 240 and report the total trip cost.", vec![h_id], AgentRole::Analyst);
+    let s_id = plan.add_task("Use the calculator tool to add 300 + 240 and report the total trip cost.", vec![h_id], AgentRole::Analyst);
+    plan.add_task(
+        "Save the trip report to 'trip_report.md' using the write_file tool. \
+         The report must include: Flight cost: $300, Hotel cost: $240 (2 nights at $120), Total: $540.",
+        vec![s_id],
+        AgentRole::Analyst,
+    );
 
     let mut attempts = 0;
     const MAX_ATTEMPTS: u8 = 3; // Cap retries at 3

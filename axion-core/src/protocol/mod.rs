@@ -102,6 +102,36 @@ impl Tool {
         }
     }
 
+    pub fn write_file() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "filename".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some("Name of the file to write (e.g. 'trip_report.md'). Must not contain path separators.".to_string()),
+                items: None,
+            },
+        );
+        properties.insert(
+            "content".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some("The full text content to write into the file.".to_string()),
+                items: None,
+            },
+        );
+
+        Tool {
+            name: "write_file".to_string(),
+            description: "Writes text content to a file inside the output/ directory. Use this to persist reports or summaries to disk.".to_string(),
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["filename".to_string(), "content".to_string()],
+            },
+        }
+    }
+
     pub fn web_search() -> Self {
         let mut properties = HashMap::new();
         properties.insert(
