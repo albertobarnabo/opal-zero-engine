@@ -6,12 +6,21 @@ use crate::protocol::Tool;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolResponse {
     Text(String),
-    ToolCall { name: String, arguments: String },
+    ToolCall { id: String, name: String, arguments: String },
 }
 
 #[async_trait]
 pub trait AiProvider: Send + Sync {
     async fn generate_response(&self, prompt: &str, tools: Option<Vec<Tool>>) -> Result<ToolResponse, String>;
+    async fn submit_tool_result(
+        &self,
+        prompt: &str,
+        tools: Option<Vec<Tool>>,
+        tool_call_id: &str,
+        tool_name: &str,
+        tool_arguments: &str,
+        tool_result: &str,
+    ) -> Result<ToolResponse, String>;
 }
 
 pub struct OpenAIProvider {
@@ -31,10 +40,36 @@ struct OpenAIRequest {
     model: String,
     messages: Vec<Message>,
     temperature: f32,
+    max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OpenAITool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>,
+}
+
+// Unified message type covering user, assistant, and tool roles.
+#[derive(Serialize)]
+struct Message {
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OutboundToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct OutboundToolCall {
+    id: String,
+    r#type: String,
+    function: OutboundToolCallFunction,
+}
+
+#[derive(Serialize)]
+struct OutboundToolCallFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -50,12 +85,6 @@ struct OpenAIFunction {
     parameters: serde_json::Value,
 }
 
-#[derive(Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
 #[derive(Deserialize)]
 struct OpenAIResponse {
     choices: Vec<Choice>,
@@ -66,23 +95,15 @@ struct Choice {
     message: ResponseMessage,
 }
 
+// Single struct instead of an untagged enum: tool_calls takes priority over content.
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum ResponseMessage {
-    Text {
-        content: Option<String>,
-    },
-    ToolCall {
-        tool_calls: Option<Vec<ToolCall>>,
-        #[serde(default)]
-        #[allow(dead_code)]
-        content: Option<String>,
-    },
+struct ResponseMessage {
+    content: Option<String>,
+    tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Deserialize)]
 struct ToolCall {
-    #[allow(dead_code)]
     id: String,
     function: ToolCallFunction,
 }
@@ -93,73 +114,132 @@ struct ToolCallFunction {
     arguments: String,
 }
 
+fn build_tools(tools: Option<Vec<Tool>>) -> Option<Vec<OpenAITool>> {
+    tools.map(|list| {
+        list.into_iter().map(|t| OpenAITool {
+            r#type: "function".to_string(),
+            function: OpenAIFunction {
+                name: t.name,
+                description: t.description,
+                parameters: serde_json::to_value(&t.parameters).unwrap_or_default(),
+            },
+        }).collect()
+    })
+}
+
+fn parse_response(body: OpenAIResponse) -> Result<ToolResponse, String> {
+    let msg = body.choices.into_iter().next()
+        .ok_or_else(|| "No choices in response".to_string())?
+        .message;
+
+    if let Some(calls) = msg.tool_calls {
+        let call = calls.into_iter().next()
+            .ok_or_else(|| "Tool calls array is empty".to_string())?;
+        return Ok(ToolResponse::ToolCall {
+            id: call.id,
+            name: call.function.name,
+            arguments: call.function.arguments,
+        });
+    }
+
+    match msg.content {
+        Some(text) if !text.is_empty() => Ok(ToolResponse::Text(text)),
+        _ => Err("Empty response from OpenAI".to_string()),
+    }
+}
+
+async fn post_to_openai(
+    client: &reqwest::Client,
+    api_key: &str,
+    body: &OpenAIRequest,
+) -> Result<OpenAIResponse, String> {
+    let resp = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("API returned status {}: {}", status, text));
+    }
+
+    resp.json().await.map_err(|e| format!("Failed to parse response: {}", e))
+}
+
 #[async_trait]
 impl AiProvider for OpenAIProvider {
     async fn generate_response(&self, prompt: &str, tools: Option<Vec<Tool>>) -> Result<ToolResponse, String> {
         let client = reqwest::Client::new();
-        
-        let openai_tools = tools.map(|tool_list| {
-            tool_list.into_iter().map(|tool| {
-                OpenAITool {
-                    r#type: "function".to_string(),
-                    function: OpenAIFunction {
-                        name: tool.name.clone(),
-                        description: tool.description.clone(),
-                        parameters: serde_json::to_value(&tool.parameters).unwrap_or_default(),
-                    },
-                }
-            }).collect()
-        });
+        let openai_tools = build_tools(tools);
 
-        let request_body = OpenAIRequest {
+        let body = OpenAIRequest {
             model: "gpt-4o-mini".to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
-                content: prompt.to_string(),
+                content: Some(prompt.to_string()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
-            temperature: 0.7,
-            tools: openai_tools.clone(),
+            temperature: 0.0,
+            max_tokens: 1024,
             tool_choice: openai_tools.as_ref().map(|_| "auto".to_string()),
+            tools: openai_tools,
         };
 
-        let response = client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+        parse_response(post_to_openai(&client, &self.api_key, &body).await?)
+    }
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!("API returned status {}: {}", status, body));
-        }
+    async fn submit_tool_result(
+        &self,
+        prompt: &str,
+        tools: Option<Vec<Tool>>,
+        tool_call_id: &str,
+        tool_name: &str,
+        tool_arguments: &str,
+        tool_result: &str,
+    ) -> Result<ToolResponse, String> {
+        let client = reqwest::Client::new();
+        let openai_tools = build_tools(tools);
 
-        let response_body: OpenAIResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+        let body = OpenAIRequest {
+            model: "gpt-4o-mini".to_string(),
+            messages: vec![
+                Message {
+                    role: "user".to_string(),
+                    content: Some(prompt.to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                Message {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![OutboundToolCall {
+                        id: tool_call_id.to_string(),
+                        r#type: "function".to_string(),
+                        function: OutboundToolCallFunction {
+                            name: tool_name.to_string(),
+                            arguments: tool_arguments.to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                Message {
+                    role: "tool".to_string(),
+                    content: Some(tool_result.to_string()),
+                    tool_calls: None,
+                    tool_call_id: Some(tool_call_id.to_string()),
+                },
+            ],
+            temperature: 0.0,
+            max_tokens: 1024,
+            tool_choice: openai_tools.as_ref().map(|_| "auto".to_string()),
+            tools: openai_tools,
+        };
 
-        match response_body.choices.first() {
-            Some(Choice { message: ResponseMessage::Text { content: Some(text) } }) => {
-                Ok(ToolResponse::Text(text.clone()))
-            }
-            Some(Choice { message: ResponseMessage::ToolCall { tool_calls: Some(calls), .. } }) => {
-                if let Some(call) = calls.first() {
-                    Ok(ToolResponse::ToolCall {
-                        name: call.function.name.clone(),
-                        arguments: call.function.arguments.clone(),
-                    })
-                } else {
-                    Err("Tool calls array is empty".to_string())
-                }
-            }
-            Some(Choice { message: ResponseMessage::Text { content: None } }) => {
-                Err("Empty response from OpenAI".to_string())
-            }
-            None => Err("No choices in response".to_string()),
-            _ => Err("Unexpected response format".to_string()),
-        }
+        parse_response(post_to_openai(&client, &self.api_key, &body).await?)
     }
 }

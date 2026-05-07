@@ -3,6 +3,7 @@ mod dispatcher;
 mod governor;
 mod protocol;
 mod engine;
+mod tools;
 use engine::OpenAIProvider;
 use clap::Parser;
 use planner::Plan;
@@ -33,9 +34,9 @@ async fn main() {
 
     // --- STAGE 1: PLANNING ---
     let mut plan = Plan::new(&args.intent);
-    let f_id = plan.add_task("Research flights", vec![], AgentRole::WebSearcher);
-    let h_id = plan.add_task("Find hotels", vec![f_id], AgentRole::WebSearcher);
-    plan.add_task("Summarize trip", vec![h_id], AgentRole::Analyst);
+    let f_id = plan.add_task("The flight to Rome costs $300. Report this fact: 'Flight cost: $300'.", vec![], AgentRole::WebSearcher);
+    let h_id = plan.add_task("The hotel in Rome costs $120 per night for 2 nights ($240 total). Report this fact: 'Hotel cost: $240'.", vec![f_id], AgentRole::WebSearcher);
+    plan.add_task("Use the calculator tool to add 300 + 240 and report the total trip cost.", vec![h_id], AgentRole::Analyst);
 
     let mut attempts = 0;
     const MAX_ATTEMPTS: u8 = 3; // Cap retries at 3
@@ -56,14 +57,17 @@ async fn main() {
         }
 
         if report.failed_tasks.is_empty() {
-            // If nothing failed but we aren't done, it means we are waiting 
-            // for dependencies to clear in the next tick.
             attempts += 1;
         } else {
-            // HEALING: Governor marks failed tasks as Pending for the next tick
             governor::reset_failed_tasks(&mut plan.tasks);
             attempts += 1;
-            println!("🚨 Failure detected. Attempting self-healing ({})...", attempts);
+            println!("🚨 Failure detected. Attempting self-healing ({}/{})...", attempts, MAX_ATTEMPTS);
         }
     }
+
+    eprintln!("❌ Mission failed: {} task(s) could not be completed after {} attempts.",
+        plan.tasks.iter().filter(|t| !matches!(t.status, crate::protocol::TaskStatus::Completed)).count(),
+        MAX_ATTEMPTS
+    );
+    std::process::exit(1);
 }

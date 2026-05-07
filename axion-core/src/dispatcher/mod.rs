@@ -32,7 +32,7 @@ pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, pro
             task.status = TaskStatus::Running;
             
             // 3. Use the role-based execution logic here
-            execute_with_role(task, provider).await;
+            execute_with_role(task, context, provider).await;
             println!("  ✅ Task completed with status: {:?}", task.status);
             
             // 4. Update the Context Bus with the agent's findings
@@ -49,30 +49,57 @@ pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, pro
     }
 }
 
-pub async fn execute_with_role(task: &mut Task, provider: &dyn AiProvider) {
+pub async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: &dyn AiProvider) {
     println!("    DEBUG: Agent starting task: {}", task.intent);
-    
-    let prompt = format!("You are an AI {}. Task: {}", task.role.as_str(), task.intent);
+
+    let mut prompt = String::from(
+        "You are an autonomous agent in the Axion Core swarm. The user's request is final. \
+Do not ask questions. If data like prices or quantities is present in the context, use it \
+immediately. Use the 'calculator' tool for any and all math.\n"
+    );
+
+    if !context.data.is_empty() {
+        prompt.push_str("\nPREVIOUS TASK RESULTS:\n");
+        for (key, value) in &context.data {
+            prompt.push_str(&format!("{}: {}\n", key, value));
+        }
+    }
+
+    prompt.push_str(&format!("\nTASK: {}", task.intent));
     println!("    DEBUG: Generated prompt: {}", prompt);
     
-    // Get available tools for this role
+    // Get available tools for this role (cloned so we can reuse for the follow-up turn).
     let tools = get_tools_for_role(&task.role);
-    
+    let tools_clone = tools.clone();
+
     match provider.generate_response(&prompt, Some(tools)).await {
         Ok(ToolResponse::Text(text)) => {
             println!("    DEBUG: Provider returned text: {}", text);
             task.result = Some(text);
             task.status = TaskStatus::Completed;
-            println!("    DEBUG: Task status set to Completed");
         }
-        Ok(ToolResponse::ToolCall { name, arguments }) => {
-            println!("    DEBUG: Provider requested tool call: {} with args: {}", name, arguments);
-            match execute_tool(&name, &arguments).await {
-                Ok(result) => {
-                    println!("    DEBUG: Tool {} returned: {}", name, result);
-                    println!("    🔧 Tool Result: {}", result);
-                    task.result = Some(result);
-                    task.status = TaskStatus::Completed;
+        Ok(ToolResponse::ToolCall { id, name, arguments }) => {
+            println!("    🛠️ Executing {} with args: {}", name, arguments);
+            match crate::tools::execute_tool(&name, &arguments).await {
+                Ok(tool_result) => {
+                    println!("    🔧 Tool Result: {}", tool_result);
+                    // Send the result back to OpenAI to get the final natural-language answer.
+                    match provider.submit_tool_result(&prompt, Some(tools_clone), &id, &name, &arguments, &tool_result).await {
+                        Ok(ToolResponse::Text(final_answer)) => {
+                            println!("    DEBUG: Final answer: {}", final_answer);
+                            task.result = Some(final_answer);
+                            task.status = TaskStatus::Completed;
+                        }
+                        Ok(ToolResponse::ToolCall { name: n, .. }) => {
+                            println!("    DEBUG: Model requested another tool call ({}) — using raw result", n);
+                            task.result = Some(tool_result);
+                            task.status = TaskStatus::Completed;
+                        }
+                        Err(err) => {
+                            println!("    DEBUG: submit_tool_result failed: {}", err);
+                            task.status = TaskStatus::Failed;
+                        }
+                    }
                 }
                 Err(err) => {
                     println!("    DEBUG: Tool {} failed: {}", name, err);
@@ -96,58 +123,3 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     }
 }
 
-pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String> {
-    match name {
-        "calculator" => execute_calculator(arguments),
-        "web_search" => execute_web_search(arguments).await,
-        _ => Err(format!("Unknown tool: {}", name)),
-    }
-}
-
-fn execute_calculator(arguments: &str) -> Result<String, String> {
-    #[derive(serde::Deserialize)]
-    struct CalcArgs {
-        operation: String,
-        #[serde(default)]
-        values: Vec<f64>,
-    }
-    
-    let args: CalcArgs = serde_json::from_str(arguments)
-        .map_err(|e| format!("Failed to parse calculator arguments: {}", e))?;
-    
-    if args.values.is_empty() {
-        return Err("No values provided for calculation".to_string());
-    }
-    
-    let result = match args.operation.as_str() {
-        "add" => args.values.iter().sum::<f64>(),
-        "subtract" => args.values.iter().fold(args.values[0], |acc, &x| acc - x),
-        "multiply" => args.values.iter().fold(1.0, |acc, &x| acc * x),
-        "divide" => {
-            let mut result = args.values[0];
-            for &val in &args.values[1..] {
-                if val == 0.0 {
-                    return Err("Division by zero".to_string());
-                }
-                result /= val;
-            }
-            result
-        }
-        _ => return Err(format!("Unknown operation: {}", args.operation)),
-    };
-    
-    Ok(format!("Calculation result: {}", result))
-}
-
-pub async fn execute_web_search(arguments: &str) -> Result<String, String> {
-    #[derive(serde::Deserialize)]
-    struct SearchArgs {
-        query: String,
-    }
-    
-    let args: SearchArgs = serde_json::from_str(arguments)
-        .map_err(|e| format!("Failed to parse search arguments: {}", e))?;
-    
-    // Simulated web search - in production, would call a real search API
-    Ok(format!("Web search results for '{}': [Simulated results showing top 3 results for the query]", args.query))
-}

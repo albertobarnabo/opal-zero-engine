@@ -28,6 +28,7 @@ pub enum TaskStatus {
 }
 
 impl AgentRole {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             AgentRole::WebSearcher => "Web Searcher",
@@ -60,7 +61,8 @@ pub struct ToolParameters {
 pub struct ParameterProperty {
     #[serde(rename = "type")]
     pub prop_type: String,
-    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Box<ParameterProperty>>,
 }
@@ -72,7 +74,7 @@ impl Tool {
             "operation".to_string(),
             ParameterProperty {
                 prop_type: "string".to_string(),
-                description: "The operation to perform: 'add', 'subtract', 'multiply', or 'divide'".to_string(),
+                description: Some("The operation to perform: 'add', 'subtract', 'multiply', or 'divide'".to_string()),
                 items: None,
             },
         );
@@ -80,10 +82,10 @@ impl Tool {
             "values".to_string(),
             ParameterProperty {
                 prop_type: "array".to_string(),
-                description: "Array of numbers to perform the operation on".to_string(),
+                description: Some("Array of numbers to perform the operation on".to_string()),
                 items: Some(Box::new(ParameterProperty {
                     prop_type: "number".to_string(),
-                    description: "A number value".to_string(),
+                    description: None,
                     items: None,
                 })),
             },
@@ -106,7 +108,7 @@ impl Tool {
             "query".to_string(),
             ParameterProperty {
                 prop_type: "string".to_string(),
-                description: "The search query to execute".to_string(),
+                description: Some("The search query to execute".to_string()),
                 items: None,
             },
         );
