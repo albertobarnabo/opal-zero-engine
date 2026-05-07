@@ -2,3 +2,4 @@
 .env
 **/*.rs.bk
 /output/
+/missions/

@@ -83,3 +83,115 @@ pub fn slugify(text: &str, max_words: usize) -> String {
     }
     words.join("_")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── slugify ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn slugify_empty_string_returns_mission() {
+        assert_eq!(slugify("", 5), "mission");
+    }
+
+    #[test]
+    fn slugify_all_stop_words_returns_mission() {
+        assert_eq!(slugify("a the is an in on at to for of", 5), "mission");
+    }
+
+    #[test]
+    fn slugify_emoji_only_returns_mission() {
+        assert_eq!(slugify("🚀🌍✨", 5), "mission");
+    }
+
+    #[test]
+    fn slugify_max_words_respected() {
+        let result = slugify("find cheap flights from london to rome paris berlin", 3);
+        let parts: Vec<&str> = result.split('_').collect();
+        assert!(parts.len() <= 3, "Got {} words: {:?}", parts.len(), parts);
+    }
+
+    #[test]
+    fn slugify_very_long_input_capped() {
+        let long = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10";
+        let result = slugify(long, 5);
+        let parts: Vec<&str> = result.split('_').collect();
+        assert_eq!(parts.len(), 5);
+    }
+
+    #[test]
+    fn slugify_lowercases_all_words() {
+        let result = slugify("FIND FLIGHTS ROME", 5);
+        assert_eq!(result, result.to_lowercase());
+    }
+
+    #[test]
+    fn slugify_filters_stop_words_from_output() {
+        let result = slugify("find the best hotels in rome", 5);
+        let parts: Vec<&str> = result.split('_').collect();
+        assert!(!parts.contains(&"the"), "Stop word 'the' should be removed");
+        assert!(!parts.contains(&"in"), "Stop word 'in' should be removed");
+    }
+
+    #[test]
+    fn slugify_single_significant_word() {
+        let result = slugify("rome", 5);
+        assert_eq!(result, "rome");
+    }
+
+    // ── save_snapshot ────────────────────────────────────────────────────────
+
+    #[test]
+    fn save_snapshot_creates_missions_dir_and_returns_id() {
+        use crate::planner::Plan;
+        use crate::protocol::AgentRole;
+
+        let mut plan = Plan::new("Test snapshot mission");
+        plan.add_task("Do something for the test", vec![], AgentRole::Analyst);
+
+        let result = save_snapshot(&plan, 1, "completed");
+        assert!(result.is_ok(), "save_snapshot returned Err: {:?}", result);
+
+        let id = result.unwrap();
+        assert!(id.starts_with("mission_"), "ID should start with 'mission_', got: {}", id);
+
+        let path = std::path::Path::new("missions").join(format!("{}.json", id));
+        assert!(path.exists(), "Snapshot file missing at {:?}", path);
+
+        // Cleanup so successive test runs stay clean.
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_snapshot_sets_analytical_hint_for_coder_tasks() {
+        use crate::planner::Plan;
+        use crate::protocol::AgentRole;
+
+        let mut plan = Plan::new("Coder mission");
+        plan.add_task("Write a Python script", vec![], AgentRole::Coder);
+
+        let id = save_snapshot(&plan, 1, "completed").unwrap();
+        let path = std::path::Path::new("missions").join(format!("{}.json", id));
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        assert!(content.contains("\"Analytical\""), "layout_hint should be 'Analytical' when Coder is present");
+    }
+
+    #[test]
+    fn save_snapshot_sets_itinerary_hint_for_non_coder_tasks() {
+        use crate::planner::Plan;
+        use crate::protocol::AgentRole;
+
+        let mut plan = Plan::new("Itinerary mission");
+        plan.add_task("Search for flights", vec![], AgentRole::WebSearcher);
+
+        let id = save_snapshot(&plan, 1, "completed").unwrap();
+        let path = std::path::Path::new("missions").join(format!("{}.json", id));
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(path);
+
+        assert!(content.contains("\"Itinerary\""), "layout_hint should be 'Itinerary' without Coder tasks");
+    }
+}
