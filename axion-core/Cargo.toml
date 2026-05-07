@@ -21,3 +21,6 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # Unique IDs for tasks and agents
 uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Load environment variables from .env file
+dotenvy = "0.15"

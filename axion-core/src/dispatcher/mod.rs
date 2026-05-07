@@ -70,6 +70,7 @@ pub async fn execute_with_role(task: &mut Task, provider: &dyn AiProvider) {
             match execute_tool(&name, &arguments).await {
                 Ok(result) => {
                     println!("    DEBUG: Tool {} returned: {}", name, result);
+                    println!("    🔧 Tool Result: {}", result);
                     task.result = Some(result);
                     task.status = TaskStatus::Completed;
                 }

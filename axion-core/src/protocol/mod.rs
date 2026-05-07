@@ -61,6 +61,8 @@ pub struct ParameterProperty {
     #[serde(rename = "type")]
     pub prop_type: String,
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Box<ParameterProperty>>,
 }
 
 impl Tool {
@@ -71,6 +73,7 @@ impl Tool {
             ParameterProperty {
                 prop_type: "string".to_string(),
                 description: "The operation to perform: 'add', 'subtract', 'multiply', or 'divide'".to_string(),
+                items: None,
             },
         );
         properties.insert(
@@ -78,6 +81,11 @@ impl Tool {
             ParameterProperty {
                 prop_type: "array".to_string(),
                 description: "Array of numbers to perform the operation on".to_string(),
+                items: Some(Box::new(ParameterProperty {
+                    prop_type: "number".to_string(),
+                    description: "A number value".to_string(),
+                    items: None,
+                })),
             },
         );
 
@@ -99,6 +107,7 @@ impl Tool {
             ParameterProperty {
                 prop_type: "string".to_string(),
                 description: "The search query to execute".to_string(),
+                items: None,
             },
         );
 

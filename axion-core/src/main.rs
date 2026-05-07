@@ -17,6 +17,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // Load environment variables from .env file
+    dotenvy::dotenv().ok();
+
     let args = Args::parse();
 
     // Initialize OpenAI provider with API key from environment
@@ -35,7 +38,7 @@ async fn main() {
     plan.add_task("Summarize trip", vec![h_id], AgentRole::Analyst);
 
     let mut attempts = 0;
-    const MAX_ATTEMPTS: u8 = 10; // Higher limit for complex graphs
+    const MAX_ATTEMPTS: u8 = 3; // Cap retries at 3
 
     println!("🚀 Axion Core Heartbeat Started");
 
