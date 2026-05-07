@@ -12,7 +12,13 @@ pub enum AgentRole {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
     pub id: Uuid,
+    /// Full natural-language task description.
     pub intent: String,
+    /// Short, sanitized key used as the ContextBus entry for this task's result.
+    /// Derived from the first few significant words of `intent`, so it is both
+    /// human-readable and location-aware (e.g. `find_hotels_in_seoul` vs
+    /// `find_hotels_in_rome`).
+    pub slug: String,
     pub status: TaskStatus,
     pub role: AgentRole,
     pub result: Option<String>,
@@ -40,7 +46,15 @@ impl AgentRole {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ContextBus {
-    pub data: HashMap<String, String>, // Shared key-value store
+    pub data: HashMap<String, String>,
+}
+
+impl ContextBus {
+    /// Wipe all stored results. Call this before re-running a mission to
+    /// guarantee no stale data from a previous execution leaks through.
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tool {

@@ -35,11 +35,11 @@ pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, pro
             execute_with_role(task, context, provider).await;
             println!("  ✅ Task completed with status: {:?}", task.status);
             
-            // 4. Update the Context Bus with the agent's findings
+            // 4. Update the Context Bus with the agent's findings, keyed by the
+            //    task's location-aware slug rather than the raw intent string.
             if let Some(ref res) = task.result {
-                let key = task.intent.replace(" ", "_").to_lowercase();
-                println!("  💾 Storing result in context as key: {}", key);
-                context.data.insert(key, res.clone());
+                println!("  💾 Storing result in context as key: {}", task.slug);
+                context.data.insert(task.slug.clone(), res.clone());
             }
             
             spawned = true;

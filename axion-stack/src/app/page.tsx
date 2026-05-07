@@ -6,6 +6,8 @@ import remarkGfm from "remark-gfm";
 
 interface MissionResponse {
   status: string;
+  task_count?: number;
+  expanded_task_count?: number;
   context: {
     data: Record<string, string>;
   };
@@ -162,9 +164,16 @@ export default function Home() {
         {/* Result cards */}
         {!loading && entries.length > 0 && (
           <section className="space-y-4">
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              Mission complete — {entries.length} task{entries.length !== 1 ? "s" : ""}
-            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                Mission complete — {result?.task_count ?? entries.length} task{(result?.task_count ?? entries.length) !== 1 ? "s" : ""}
+              </p>
+              {result?.expanded_task_count != null && result.expanded_task_count > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold bg-indigo-900/60 border border-indigo-600 text-indigo-300 rounded-full px-2.5 py-0.5">
+                  🔭 +{result.expanded_task_count} expanded
+                </span>
+              )}
+            </div>
 
             {entries.map(([key, value]) => {
               const { label, icon, accent } = cardMeta(key);

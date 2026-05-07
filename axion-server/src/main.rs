@@ -30,6 +30,9 @@ async fn execute(Json(req): Json<TaskRequest>) -> impl IntoResponse {
         }
     };
 
+    // Each request gets a completely fresh Plan (and therefore a fresh
+    // ContextBus). run_mission also calls context.clear() defensively, so
+    // no state from a previous mission can bleed into this one.
     let mut plan = Plan::new(&req.intent);
     let f_id = plan.add_task(
         "The flight to Rome costs $300. Report this fact: 'Flight cost: $300'.",
@@ -53,24 +56,36 @@ async fn execute(Json(req): Json<TaskRequest>) -> impl IntoResponse {
         AgentRole::Analyst,
     );
 
+    let original_task_count = plan.tasks.len();
+
     match run_mission(&mut plan, &provider, 3).await {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({
-                "status": "completed",
-                "context": plan.context,
-            })),
-        )
-            .into_response(),
-        Err(msg) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "status": "failed",
-                "error": msg,
-                "context": plan.context,
-            })),
-        )
-            .into_response(),
+        Ok(()) => {
+            let expanded_task_count = plan.tasks.len().saturating_sub(original_task_count);
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "completed",
+                    "task_count": plan.tasks.len(),
+                    "expanded_task_count": expanded_task_count,
+                    "context": plan.context,
+                })),
+            )
+                .into_response()
+        }
+        Err(msg) => {
+            let expanded_task_count = plan.tasks.len().saturating_sub(original_task_count);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "failed",
+                    "error": msg,
+                    "task_count": plan.tasks.len(),
+                    "expanded_task_count": expanded_task_count,
+                    "context": plan.context,
+                })),
+            )
+                .into_response()
+        }
     }
 }
 
