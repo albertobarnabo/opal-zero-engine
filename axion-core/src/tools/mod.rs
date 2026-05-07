@@ -1,13 +1,21 @@
 mod python;
+mod ui_builder;
 
 pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String> {
     match name {
-        "calculator" => execute_calculator(arguments),
-        "web_search" => execute_web_search(arguments).await,
-        "write_file" => execute_write_file(arguments),
+        "calculator"        => execute_calculator(arguments),
+        "web_search"        => execute_web_search(arguments).await,
+        "write_file"        => execute_write_file(arguments),
         "python_interpreter" => python::execute_python(arguments),
+        "build_dynamic_ui"  => ui_builder::build_dynamic_ui(arguments),
         _ => Err(format!("Unknown tool: {}", name)),
     }
+}
+
+/// True for tools whose output IS the final task result and needs no follow-up
+/// LLM turn.  Avoids the model rephrasing the structured JSON into prose.
+pub fn is_terminal_tool(name: &str) -> bool {
+    name == "build_dynamic_ui"
 }
 
 fn execute_calculator(arguments: &str) -> Result<String, String> {

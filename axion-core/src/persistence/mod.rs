@@ -1,4 +1,5 @@
 use crate::planner::Plan;
+use crate::protocol::UIBlueprint;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -9,10 +10,13 @@ pub struct MissionSnapshot {
     pub task_count: usize,
     pub expanded_task_count: usize,
     pub status: String,
-    /// `"Analytical"` if a Coder agent ran Python; `"Itinerary"` otherwise.
+    /// `"Designed"` | `"Analytical"` | `"Itinerary"`.
     #[serde(default)]
     pub layout_hint: String,
     pub context: crate::protocol::ContextBus,
+    /// Present when the mission produced a `build_dynamic_ui` blueprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_blueprint: Option<UIBlueprint>,
 }
 
 /// Write the completed plan to `missions/<id>.json`. Returns the mission ID.
@@ -29,9 +33,17 @@ pub fn save_snapshot(
 
     let id = format!("mission_{}_{}", timestamp, slugify(&plan.original_intent, 5));
 
-    let layout_hint = if plan.tasks.iter().any(|t| {
-        matches!(t.role, crate::protocol::AgentRole::Coder)
-    }) {
+    let ui_blueprint: Option<UIBlueprint> = plan
+        .tasks
+        .iter()
+        .filter_map(|t| t.result.as_ref())
+        .filter_map(|r| serde_json::from_str::<UIBlueprint>(r).ok())
+        .filter(|bp| !bp.components.is_empty())
+        .last();
+
+    let layout_hint = if ui_blueprint.is_some() {
+        "Designed"
+    } else if plan.tasks.iter().any(|t| matches!(t.role, crate::protocol::AgentRole::Coder)) {
         "Analytical"
     } else {
         "Itinerary"
@@ -47,6 +59,7 @@ pub fn save_snapshot(
         status: status.to_string(),
         layout_hint,
         context: plan.context.clone(),
+        ui_blueprint,
     };
 
     let dir = std::path::Path::new("missions");

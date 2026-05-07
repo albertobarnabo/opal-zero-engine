@@ -107,13 +107,27 @@ pub async fn run_mission(
     Err(error)
 }
 
+/// Extract the first valid [`UIBlueprint`] from completed task results, if any.
+fn extract_ui_blueprint(tasks: &[protocol::Task]) -> Option<protocol::UIBlueprint> {
+    tasks
+        .iter()
+        .filter_map(|t| t.result.as_ref())
+        .filter_map(|r| serde_json::from_str::<protocol::UIBlueprint>(r).ok())
+        .filter(|bp| !bp.components.is_empty())
+        .last()
+}
+
 /// Shared success-path helper: save snapshot, emit `MissionComplete`.
 async fn finish_success(
     plan: &planner::Plan,
     original_task_count: usize,
     tx: Option<&tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
 ) {
-    let layout_hint = if plan.tasks.iter().any(|t| matches!(t.role, protocol::AgentRole::Coder)) {
+    let ui_blueprint = extract_ui_blueprint(&plan.tasks);
+
+    let layout_hint = if ui_blueprint.is_some() {
+        "Designed"
+    } else if plan.tasks.iter().any(|t| matches!(t.role, protocol::AgentRole::Coder)) {
         "Analytical"
     } else {
         "Itinerary"
@@ -134,6 +148,7 @@ async fn finish_success(
             expanded_task_count: plan.tasks.len().saturating_sub(original_task_count),
             mission_id,
             layout_hint: layout_hint.to_string(),
+            ui_blueprint,
         }).await;
     }
 }

@@ -2,6 +2,23 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::collections::HashMap;
 
+// ── UI Blueprint ──────────────────────────────────────────────────────────────
+
+/// A single renderable UI primitive produced by the `build_dynamic_ui` tool.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UIComponent {
+    pub component_type: String,
+    pub props: serde_json::Value,
+}
+
+/// The structured dashboard output that replaces verbose text for data-rich missions.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct UIBlueprint {
+    pub components: Vec<UIComponent>,
+}
+
+// ── Agent roles ───────────────────────────────────────────────────────────────
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum AgentRole {
     WebSearcher,
@@ -199,6 +216,54 @@ impl Tool {
             },
         }
     }
+
+    pub fn build_dynamic_ui() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "summary".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "A brief plain-text summary of all mission findings.".to_string(),
+                ),
+                items: None,
+            },
+        );
+        properties.insert(
+            "components".to_string(),
+            ParameterProperty {
+                prop_type: "array".to_string(),
+                description: Some(
+                    "Array of UI components. Use these types and their props:\n\
+                     - MetricCard: { title, value, subtitle?, unit?, trend?: \"up\"|\"down\" }\n\
+                     - ComparisonTable: { title?, headers: string[], rows: (string|number)[][] }\n\
+                     - StatusBadge: { label, status: \"info\"|\"success\"|\"warning\"|\"error\", description? }\n\
+                     - Timeline: { title?, steps: { label, description?, time?, status?: \"completed\"|\"current\"|\"upcoming\" }[] }"
+                    .to_string(),
+                ),
+                items: Some(Box::new(ParameterProperty {
+                    prop_type: "object".to_string(),
+                    description: None,
+                    items: None,
+                })),
+            },
+        );
+
+        Tool {
+            name: "build_dynamic_ui".to_string(),
+            description:
+                "Transform long text findings into a scannable dashboard. \
+                 Call this with a brief summary of the mission and an array of components. \
+                 Focus on high-density data: extract every number, comparison, and status into \
+                 a dedicated component. Minimise raw prose — the goal is a data-first layout."
+                .to_string(),
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["summary".to_string(), "components".to_string()],
+            },
+        }
+    }
 }
 
 // ── Streaming events ──────────────────────────────────────────────────────────
@@ -233,6 +298,8 @@ pub enum MissionUpdate {
         expanded_task_count: usize,
         mission_id: String,
         layout_hint: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ui_blueprint: Option<UIBlueprint>,
     },
     MissionFailed {
         error: String,

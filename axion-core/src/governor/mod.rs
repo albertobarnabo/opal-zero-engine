@@ -1,6 +1,10 @@
 use crate::engine::{AiProvider, ToolResponse};
-use crate::protocol::{AgentRole, Task, TaskStatus};
+use crate::protocol::{AgentRole, Task, TaskStatus, UIBlueprint};
 use serde::Deserialize;
+
+// Total result text above this byte threshold is considered "data-rich" and
+// triggers a UI generation pass (unless a blueprint already exists).
+const UI_TRIGGER_BYTES: usize = 400;
 
 /// The Governor's verdict after reviewing a completed mission round.
 pub enum ValidationResult {
@@ -36,6 +40,45 @@ pub async fn validate_mission(tasks: &[Task], provider: &dyn AiProvider) -> Vali
         return ValidationResult::Retry;
     }
 
+    // ── Dynamic UI check (code-level, no AI call needed) ─────────────────────
+    //
+    // If the mission produced rich data but no UIBlueprint has been generated
+    // yet, inject a final Analyst task that calls `build_dynamic_ui`.
+    // The `has_ui_task` guard prevents re-queuing if the first attempt failed.
+
+    let has_blueprint = tasks
+        .iter()
+        .filter_map(|t| t.result.as_ref())
+        .any(|r| {
+            serde_json::from_str::<UIBlueprint>(r)
+                .ok()
+                .filter(|bp| !bp.components.is_empty())
+                .is_some()
+        });
+
+    let total_result_bytes: usize = tasks
+        .iter()
+        .filter_map(|t| t.result.as_ref())
+        .map(|r| r.len())
+        .sum();
+
+    let has_ui_task = tasks
+        .iter()
+        .any(|t| matches!(t.role, AgentRole::Analyst) && t.intent.contains("build_dynamic_ui"));
+
+    if !has_blueprint && !has_ui_task && total_result_bytes >= UI_TRIGGER_BYTES {
+        println!("  🎨 Governor: Rich data detected ({} bytes) — hiring UI builder.", total_result_bytes);
+        return ValidationResult::Expand(vec![NewTask {
+            description:
+                "Use the build_dynamic_ui tool to create a structured dashboard from all \
+                 mission findings. Extract every price, option, comparison, and status into \
+                 MetricCard, ComparisonTable, StatusBadge, and Timeline components. \
+                 Call build_dynamic_ui ONCE with the full components array."
+                    .to_string(),
+            role: AgentRole::Analyst,
+        }]);
+    }
+
     println!("\n⚖️  Governor: All {} tasks completed. Consulting Quality Controller...", total);
 
     // Build a concise mission summary for the AI to review.
@@ -51,7 +94,7 @@ pub async fn validate_mission(tasks: &[Task], provider: &dyn AiProvider) -> Vali
 Review the completed mission tasks below and determine if the mission is truly complete, \
 or if the results reveal a new requirement that needs investigation — for example: \
 a visa is needed, a price is suspiciously low, an insurance requirement was missed, \
-important context is absent, or a calculation is so complex it warrants Python code.\n\n\
+or important context is absent.\n\n\
 {summary}\n\n\
 Respond ONLY with valid JSON in exactly one of these two formats (no markdown, no explanation):\n\
 {{\"verdict\":\"SUCCESS\",\"reasoning\":\"brief sentence\",\"new_tasks\":[]}}\n\
@@ -59,13 +102,12 @@ Respond ONLY with valid JSON in exactly one of these two formats (no markdown, n
 {{\"description\":\"specific task description\",\"role\":\"WebSearcher\"}}]}}\n\n\
 Available roles for new_tasks:\n\
 - \"WebSearcher\" — look up information on the web\n\
-- \"Analyst\"     — summarise, compare, and format research results\n\
-- \"Coder\"       — write and execute Python 3 code via the python_interpreter tool; \
-use this for multi-step arithmetic, statistical summaries, or data transformation \
-that is too complex for the calculator tool\n\n\
+- \"Analyst\"     — summarise, compare, or run calculations on research results\n\
+- \"Coder\"       — write and execute Python 3 code via the python_interpreter tool\n\n\
 Rules:\n\
 - Limit new_tasks to 2 maximum.\n\
-- Only EXPAND if something genuinely critical is missing for the user's intent.\n\
+- Only EXPAND if something genuinely critical is MISSING from the research (not already answered).\n\
+- Do NOT expand to add UI or visualisation tasks — that is handled automatically.\n\
 - When in doubt, choose SUCCESS."
     );
 

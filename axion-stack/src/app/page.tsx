@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Renderer, UIBlueprint } from "@/components/Renderer";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ function cardMeta(
     return { label: "Analysis", icon: "🧮", accent: "border-violet-700" };
   if (role === "Planner")
     return { label: "Planning", icon: "📋", accent: "border-gray-700" };
+  if (role === "Designer")
+    return { label: "UI Builder", icon: "🎨", accent: "border-pink-700" };
 
   return {
     label: key.replace(/_/g, " ").slice(0, 48),
@@ -193,6 +196,8 @@ export default function Home() {
   const [streamCards, setStreamCards] = useState<Record<string, StreamCard>>({});
   const [cardOrder, setCardOrder] = useState<string[]>([]);
   const [missionMeta, setMissionMeta] = useState<MissionMeta | null>(null);
+  const [uiBlueprint, setUiBlueprint] = useState<UIBlueprint | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
   const [activeAgent, setActiveAgent] = useState<{ role: string; intent: string } | null>(null);
   const [governorBanner, setGovernorBanner] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -218,6 +223,8 @@ export default function Home() {
     setActiveMissionId(id);
     setFetchError(null);
     setGovernorBanner(null);
+    setUiBlueprint(null);
+    setShowDetails(false);
 
     try {
       const res = await fetch(`http://localhost:8080/missions/${id}`);
@@ -246,6 +253,9 @@ export default function Home() {
         intent: data.intent ?? "",
         layout_hint: data.layout_hint,
       });
+      if (data.ui_blueprint?.components?.length) {
+        setUiBlueprint(data.ui_blueprint as UIBlueprint);
+      }
       setMissionStatus("complete");
       setActiveAgent(null);
     } catch (e) {
@@ -261,6 +271,8 @@ export default function Home() {
     setStreamCards({});
     setCardOrder([]);
     setMissionMeta(null);
+    setUiBlueprint(null);
+    setShowDetails(false);
     setActiveAgent(null);
     setGovernorBanner(null);
     setFetchError(null);
@@ -312,6 +324,9 @@ export default function Home() {
               intent: p.intent,
               layout_hint: p.layout_hint,
             });
+            if (p.ui_blueprint?.components?.length) {
+              setUiBlueprint(p.ui_blueprint as UIBlueprint);
+            }
             setMissionStatus("complete");
             setActiveAgent(null);
             fetchHistory();
@@ -433,7 +448,11 @@ export default function Home() {
                         </span>
                         {m.layout_hint && (
                           <span className="text-[10px] text-gray-500">
-                            {m.layout_hint === "Analytical" ? "🐍" : "🗺️"}
+                            {m.layout_hint === "Designed"
+                              ? "📊"
+                              : m.layout_hint === "Analytical"
+                              ? "🐍"
+                              : "🗺️"}
                           </span>
                         )}
                       </div>
@@ -512,9 +531,11 @@ export default function Home() {
             </div>
           )}
 
-          {/* Result cards — visible while streaming AND after completion */}
+          {/* Result section — visible while streaming AND after completion */}
           {hasCards && (
             <section className="space-y-4">
+
+              {/* ── Section header ── */}
               <div className="flex items-center gap-3 flex-wrap">
                 <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
                   {missionStatus === "complete"
@@ -522,7 +543,8 @@ export default function Home() {
                       ? "Loaded from history"
                       : "Mission complete"
                     : "Mission in progress"}{" "}
-                  {missionMeta && `— ${missionMeta.task_count} task${missionMeta.task_count !== 1 ? "s" : ""}`}
+                  {missionMeta &&
+                    `— ${missionMeta.task_count} task${missionMeta.task_count !== 1 ? "s" : ""}`}
                 </p>
                 {missionMeta?.expanded_task_count != null &&
                   missionMeta.expanded_task_count > 0 && (
@@ -532,7 +554,11 @@ export default function Home() {
                   )}
                 {missionMeta?.layout_hint && (
                   <span className="text-xs text-gray-500">
-                    {missionMeta.layout_hint === "Analytical" ? "🐍 Analytical" : "🗺️ Itinerary"}
+                    {missionMeta.layout_hint === "Designed"
+                      ? "📊 Designed"
+                      : missionMeta.layout_hint === "Analytical"
+                      ? "🐍 Analytical"
+                      : "🗺️ Itinerary"}
                   </span>
                 )}
               </div>
@@ -541,47 +567,102 @@ export default function Home() {
                 <p className="text-xs text-gray-500 italic -mt-2">{missionMeta.intent}</p>
               )}
 
-              {cardOrder.map((slug) => {
-                const card = streamCards[slug];
-                if (!card) return null;
-                const { label, icon, accent } = cardMeta(slug, card.role);
-                const isRunning = card.status === "running";
+              {/* ── Dashboard (Renderer) — shown when a UIBlueprint is available ── */}
+              {uiBlueprint && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-pink-400/80">
+                      📊 Dashboard
+                    </p>
+                    <button
+                      onClick={() => setShowDetails((v) => !v)}
+                      className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+                    >
+                      {showDetails ? "Hide agent reasoning" : "Show agent reasoning"}
+                    </button>
+                  </div>
+                  <Renderer blueprint={uiBlueprint} />
+                </div>
+              )}
+
+              {/* ── Raw agent cards ─────────────────────────────────────────────
+                   Always visible when no blueprint exists.
+                   Collapsible under "Agent Reasoning" when a blueprint is shown. ── */}
+              {(!uiBlueprint || showDetails) && (() => {
+                // Filter out the card whose result IS the UIBlueprint JSON so raw JSON
+                // is never shown as a markdown block.
+                const visibleSlugs = cardOrder.filter((slug) => {
+                  const result = streamCards[slug]?.result;
+                  if (!result) return true;
+                  try {
+                    const parsed = JSON.parse(result);
+                    return !(
+                      parsed &&
+                      Array.isArray(parsed.components) &&
+                      parsed.components.length > 0
+                    );
+                  } catch {
+                    return true;
+                  }
+                });
+
+                if (visibleSlugs.length === 0) return null;
 
                 return (
-                  <article
-                    key={slug}
-                    className={`bg-gray-800/60 border ${accent} rounded-xl p-5 transition-opacity ${
-                      isRunning ? "opacity-80" : "opacity-100"
-                    }`}
-                  >
-                    <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
-                      <span>{icon}</span>
-                      <span>{label}</span>
-                      {isRunning && (
-                        <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400 font-normal">
-                          <span className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin inline-block" />
-                          Working…
-                        </span>
-                      )}
-                      {card.status === "failed" && (
-                        <span className="ml-auto text-xs text-red-400 font-normal">
-                          ✗ Failed
-                        </span>
-                      )}
-                    </h2>
-
-                    {card.result ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                        {card.result}
-                      </ReactMarkdown>
-                    ) : isRunning ? (
-                      <p className="text-xs text-gray-500 italic animate-pulse">
-                        Agent is working…
+                  <div className="space-y-4">
+                    {uiBlueprint && (
+                      <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-600">
+                        Agent Reasoning
                       </p>
-                    ) : null}
-                  </article>
+                    )}
+                    {visibleSlugs.map((slug) => {
+                      const card = streamCards[slug];
+                      if (!card) return null;
+                      const { label, icon, accent } = cardMeta(slug, card.role);
+                      const isRunning = card.status === "running";
+
+                      return (
+                        <article
+                          key={slug}
+                          className={`bg-gray-800/60 border ${accent} rounded-xl p-5 transition-opacity ${
+                            isRunning ? "opacity-80" : "opacity-100"
+                          }`}
+                        >
+                          <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
+                            <span>{icon}</span>
+                            <span>{label}</span>
+                            {isRunning && (
+                              <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400 font-normal">
+                                <span className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin inline-block" />
+                                Working…
+                              </span>
+                            )}
+                            {card.status === "failed" && (
+                              <span className="ml-auto text-xs text-red-400 font-normal">
+                                ✗ Failed
+                              </span>
+                            )}
+                          </h2>
+
+                          {card.result ? (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={mdComponents}
+                            >
+                              {card.result}
+                            </ReactMarkdown>
+                          ) : isRunning ? (
+                            <p className="text-xs text-gray-500 italic animate-pulse">
+                              Agent is working…
+                            </p>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
                 );
-              })}
+              })()}
+
             </section>
           )}
 

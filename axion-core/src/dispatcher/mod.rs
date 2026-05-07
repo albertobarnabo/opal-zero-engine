@@ -84,13 +84,13 @@ async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: &dyn
 
     let system_prefix: &str = match task.role {
         AgentRole::Analyst => {
-            "You are a Senior Travel Architect with 20 years of experience. \
-Your analysis is authoritative — do not hedge or ask questions. \
-When you receive cost data from context, analyze the value, suggest alternatives, \
-and format your response using professional Markdown: **bold** key figures, \
-use tables for cost comparisons, and ## headings to structure sections. \
+            "You are a Senior Data Analyst in the Axion swarm. Your analysis is authoritative — \
+do not hedge or ask questions. \
 Use the 'calculator' tool for all arithmetic. \
-Use the 'write_file' tool when asked to save a report.\n"
+Use the 'write_file' tool when asked to save a report. \
+When asked to build a dashboard, call the 'build_dynamic_ui' tool EXACTLY ONCE with a \
+components array — extract every number, option, and status into the appropriate component type \
+(MetricCard, ComparisonTable, StatusBadge, Timeline). Return ONLY the tool call — no prose.\n"
         }
         AgentRole::Coder => {
             "You are a Python programmer in the Axion Core swarm. \
@@ -135,21 +135,30 @@ You can persist data to disk. If a task asks to save or write a report, use the 
             match crate::tools::execute_tool(&name, &arguments).await {
                 Ok(tool_result) => {
                     println!("    🔧 Tool Result: {}", tool_result);
-                    // Send the result back to OpenAI to get the final natural-language answer.
-                    match provider.submit_tool_result(&prompt, Some(tools_clone), &id, &name, &arguments, &tool_result).await {
-                        Ok(ToolResponse::Text(final_answer)) => {
-                            println!("    DEBUG: Final answer: {}", final_answer);
-                            task.result = Some(final_answer);
-                            task.status = TaskStatus::Completed;
-                        }
-                        Ok(ToolResponse::ToolCall { name: n, .. }) => {
-                            println!("    DEBUG: Model requested another tool call ({}) — using raw result", n);
-                            task.result = Some(tool_result);
-                            task.status = TaskStatus::Completed;
-                        }
-                        Err(err) => {
-                            println!("    DEBUG: submit_tool_result failed: {}", err);
-                            task.status = TaskStatus::Failed;
+
+                    // Terminal tools (e.g. build_dynamic_ui) produce the final task
+                    // result directly — skip the second LLM turn to prevent the model
+                    // from paraphrasing the structured JSON output into prose.
+                    if crate::tools::is_terminal_tool(&name) {
+                        task.result = Some(tool_result);
+                        task.status = TaskStatus::Completed;
+                    } else {
+                        // Send the result back to OpenAI to get the final natural-language answer.
+                        match provider.submit_tool_result(&prompt, Some(tools_clone), &id, &name, &arguments, &tool_result).await {
+                            Ok(ToolResponse::Text(final_answer)) => {
+                                println!("    DEBUG: Final answer: {}", final_answer);
+                                task.result = Some(final_answer);
+                                task.status = TaskStatus::Completed;
+                            }
+                            Ok(ToolResponse::ToolCall { name: n, .. }) => {
+                                println!("    DEBUG: Model requested another tool call ({}) — using raw result", n);
+                                task.result = Some(tool_result);
+                                task.status = TaskStatus::Completed;
+                            }
+                            Err(err) => {
+                                println!("    DEBUG: submit_tool_result failed: {}", err);
+                                task.status = TaskStatus::Failed;
+                            }
                         }
                     }
                 }
@@ -169,7 +178,7 @@ You can persist data to disk. If a task asks to save or write a report, use the 
 fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
     match role {
-        AgentRole::Analyst  => vec![Tool::calculator(), Tool::write_file()],
+        AgentRole::Analyst  => vec![Tool::calculator(), Tool::write_file(), Tool::build_dynamic_ui()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
         AgentRole::Planner  => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
         AgentRole::Coder    => vec![Tool::python_interpreter(), Tool::write_file()],
