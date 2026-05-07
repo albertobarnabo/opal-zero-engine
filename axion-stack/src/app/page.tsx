@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface MissionResponse {
   status: string;
@@ -22,6 +24,59 @@ function cardMeta(key: string): { label: string; icon: string; accent: string } 
     return { label: "Final Report", icon: "💾", accent: "border-amber-700" };
   return { label: key.replace(/_/g, " ").slice(0, 48), icon: "📋", accent: "border-gray-700" };
 }
+
+// Tailwind-styled Markdown components — works without the typography plugin.
+const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  h1: ({ children }) => (
+    <h1 className="text-base font-bold text-white mt-3 mb-1">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="text-sm font-bold text-gray-100 mt-3 mb-1">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-sm font-semibold text-gray-200 mt-2 mb-1">{children}</h3>
+  ),
+  strong: ({ children }) => (
+    <strong className="font-semibold text-white">{children}</strong>
+  ),
+  p: ({ children }) => (
+    <p className="text-gray-300 text-sm leading-relaxed mb-2">{children}</p>
+  ),
+  ul: ({ children }) => (
+    <ul className="list-disc pl-5 space-y-1 mb-2">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal pl-5 space-y-1 mb-2">{children}</ol>
+  ),
+  li: ({ children }) => (
+    <li className="text-gray-300 text-sm leading-relaxed">{children}</li>
+  ),
+  table: ({ children }) => (
+    <div className="overflow-x-auto my-3">
+      <table className="w-full text-sm border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-gray-700">{children}</thead>,
+  th: ({ children }) => (
+    <th className="text-left text-gray-100 font-semibold px-3 py-2 border border-gray-600">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="text-gray-300 px-3 py-2 border border-gray-600">{children}</td>
+  ),
+  code: ({ children }) => (
+    <code className="bg-gray-900 text-emerald-400 text-xs px-1.5 py-0.5 rounded">
+      {children}
+    </code>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-gray-500 pl-3 italic text-gray-400 my-2">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="border-gray-700 my-3" />,
+};
 
 export default function Home() {
   const [intent, setIntent] = useState("Plan a trip to Rome");
@@ -116,15 +171,18 @@ export default function Home() {
               return (
                 <article
                   key={key}
-                  className={`bg-gray-800/60 border ${accent} rounded-xl p-5 space-y-2`}
+                  className={`bg-gray-800/60 border ${accent} rounded-xl p-5`}
                 >
-                  <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
                     <span>{icon}</span>
                     <span>{label}</span>
                   </h2>
-                  <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={mdComponents}
+                  >
                     {value}
-                  </p>
+                  </ReactMarkdown>
                 </article>
               );
             })}

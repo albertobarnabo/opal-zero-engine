@@ -50,14 +50,28 @@ pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, pro
 }
 
 async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: &dyn AiProvider) {
+    use crate::protocol::AgentRole;
     println!("    DEBUG: Agent starting task: {}", task.intent);
 
-    let mut prompt = String::from(
-        "You are an autonomous agent in the Axion Core swarm. The user's request is final. \
+    let system_prefix: &str = match task.role {
+        AgentRole::Analyst => {
+            "You are a Senior Travel Architect with 20 years of experience. \
+Your analysis is authoritative — do not hedge or ask questions. \
+When you receive cost data from context, analyze the value, suggest alternatives, \
+and format your response using professional Markdown: **bold** key figures, \
+use tables for cost comparisons, and ## headings to structure sections. \
+Use the 'calculator' tool for all arithmetic. \
+Use the 'write_file' tool when asked to save a report.\n"
+        }
+        _ => {
+            "You are an autonomous agent in the Axion Core swarm. The user's request is final. \
 Do not ask questions. If data like prices or quantities is present in the context, use it \
 immediately. Use the 'calculator' tool for any and all math. \
 You can persist data to disk. If a task asks to save or write a report, use the 'write_file' tool.\n"
-    );
+        }
+    };
+
+    let mut prompt = String::from(system_prefix);
 
     if !context.data.is_empty() {
         prompt.push_str("\nPREVIOUS TASK RESULTS:\n");

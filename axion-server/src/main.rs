@@ -1,6 +1,6 @@
 use axion_core::prelude::*;
 use axum::{
-    http::{HeaderValue, Method, StatusCode},
+    http::{Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -79,7 +79,7 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let cors = CorsLayer::new()
-        .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
+        .allow_origin(tower_http::cors::Any)
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
 
