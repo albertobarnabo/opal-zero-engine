@@ -1,22 +1,27 @@
-use crate::protocol::{Task, TaskStatus, ContextBus, Tool};
+use crate::protocol::{Task, TaskStatus, ContextBus, MissionUpdate, Tool};
 use crate::engine::{AiProvider, ToolResponse};
 
-pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, provider: &dyn AiProvider) {
+pub async fn dispatch_tasks(
+    tasks: &mut Vec<Task>,
+    context: &mut ContextBus,
+    provider: &dyn AiProvider,
+    tx: Option<&tokio::sync::mpsc::Sender<MissionUpdate>>,
+) {
     println!("⚙️  Dispatcher: Checking dependencies and routing to agents...");
 
     loop {
         let mut spawned = false;
-        
+
         // 1. Identify which tasks are ready (Pending + dependencies met)
         let completed_ids: Vec<uuid::Uuid> = tasks.iter()
             .filter(|t| matches!(t.status, TaskStatus::Completed))
             .map(|t| t.id)
             .collect();
 
-        // 2. We need to collect IDs of tasks to run to avoid borrow checker issues in the loop
+        // 2. Collect indices of ready tasks to avoid borrow-checker conflicts.
         let ready_indices: Vec<usize> = tasks.iter().enumerate()
             .filter(|(_, t)| {
-                matches!(t.status, TaskStatus::Pending) && 
+                matches!(t.status, TaskStatus::Pending) &&
                 t.depends_on.iter().all(|dep_id| completed_ids.contains(dep_id))
             })
             .map(|(i, _)| i)
@@ -30,18 +35,42 @@ pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, pro
             let task = &mut tasks[idx];
             println!("  🔄 Executing task: {}", task.intent);
             task.status = TaskStatus::Running;
-            
-            // 3. Use the role-based execution logic here
+
+            // Notify the stream that this agent is now working.
+            if let Some(tx) = tx {
+                let _ = tx.send(MissionUpdate::TaskStarted {
+                    slug: task.slug.clone(),
+                    role: task.role.as_str().to_string(),
+                    intent: task.intent.clone(),
+                }).await;
+            }
+
             execute_with_role(task, context, provider).await;
             println!("  ✅ Task completed with status: {:?}", task.status);
-            
-            // 4. Update the Context Bus with the agent's findings, keyed by the
-            //    task's location-aware slug rather than the raw intent string.
+
+            // Emit the outcome event.
+            if let Some(tx) = tx {
+                if matches!(task.status, TaskStatus::Completed) {
+                    let _ = tx.send(MissionUpdate::TaskCompleted {
+                        slug: task.slug.clone(),
+                        role: task.role.as_str().to_string(),
+                        result: task.result.clone().unwrap_or_default(),
+                    }).await;
+                } else if matches!(task.status, TaskStatus::Failed) {
+                    let _ = tx.send(MissionUpdate::TaskFailed {
+                        slug: task.slug.clone(),
+                        role: task.role.as_str().to_string(),
+                    }).await;
+                }
+            }
+
+            // Update the Context Bus with the agent's findings, keyed by the
+            // task's location-aware slug rather than the raw intent string.
             if let Some(ref res) = task.result {
                 println!("  💾 Storing result in context as key: {}", task.slug);
                 context.data.insert(task.slug.clone(), res.clone());
             }
-            
+
             spawned = true;
         }
 

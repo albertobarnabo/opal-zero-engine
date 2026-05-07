@@ -9,6 +9,9 @@ pub struct MissionSnapshot {
     pub task_count: usize,
     pub expanded_task_count: usize,
     pub status: String,
+    /// `"Analytical"` if a Coder agent ran Python; `"Itinerary"` otherwise.
+    #[serde(default)]
+    pub layout_hint: String,
     pub context: crate::protocol::ContextBus,
 }
 
@@ -26,6 +29,15 @@ pub fn save_snapshot(
 
     let id = format!("mission_{}_{}", timestamp, slugify(&plan.original_intent, 5));
 
+    let layout_hint = if plan.tasks.iter().any(|t| {
+        matches!(t.role, crate::protocol::AgentRole::Coder)
+    }) {
+        "Analytical"
+    } else {
+        "Itinerary"
+    }
+    .to_string();
+
     let snapshot = MissionSnapshot {
         id: id.clone(),
         timestamp,
@@ -33,6 +45,7 @@ pub fn save_snapshot(
         task_count: plan.tasks.len(),
         expanded_task_count: plan.tasks.len().saturating_sub(original_task_count),
         status: status.to_string(),
+        layout_hint,
         context: plan.context.clone(),
     };
 

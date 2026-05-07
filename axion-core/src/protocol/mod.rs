@@ -200,3 +200,55 @@ impl Tool {
         }
     }
 }
+
+// ── Streaming events ──────────────────────────────────────────────────────────
+
+/// Emitted through the mission channel as work progresses.
+/// `serde(tag = "type")` puts the variant name into the JSON payload so the
+/// frontend can switch on it without a separate SSE `event:` header lookup.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MissionUpdate {
+    TaskStarted {
+        slug: String,
+        role: String,
+        intent: String,
+    },
+    TaskCompleted {
+        slug: String,
+        role: String,
+        result: String,
+    },
+    TaskFailed {
+        slug: String,
+        role: String,
+    },
+    GovernorExpand {
+        new_task_count: usize,
+        descriptions: Vec<String>,
+    },
+    MissionComplete {
+        intent: String,
+        task_count: usize,
+        expanded_task_count: usize,
+        mission_id: String,
+        layout_hint: String,
+    },
+    MissionFailed {
+        error: String,
+    },
+}
+
+impl MissionUpdate {
+    /// Returns the SSE `event:` field value for this variant.
+    pub fn event_name(&self) -> &'static str {
+        match self {
+            MissionUpdate::TaskStarted { .. }    => "task_started",
+            MissionUpdate::TaskCompleted { .. }  => "task_completed",
+            MissionUpdate::TaskFailed { .. }     => "task_failed",
+            MissionUpdate::GovernorExpand { .. } => "governor_expand",
+            MissionUpdate::MissionComplete { .. } => "mission_complete",
+            MissionUpdate::MissionFailed { .. }  => "mission_failed",
+        }
+    }
+}

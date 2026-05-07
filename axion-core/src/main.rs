@@ -50,7 +50,7 @@ async fn main() {
 
     println!("🚀 Axion Core Heartbeat Started");
 
-    match run_mission(&mut plan, &provider, 3).await {
+    match run_mission(&mut plan, &provider, 3, None).await {
         Ok(()) => println!("\n🎯 Mission Accomplished: Graph fully resolved."),
         Err(msg) => {
             eprintln!("❌ Mission failed: {}", msg);
