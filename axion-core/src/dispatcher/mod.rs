@@ -49,7 +49,7 @@ pub async fn dispatch_tasks(tasks: &mut Vec<Task>, context: &mut ContextBus, pro
     }
 }
 
-pub async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: &dyn AiProvider) {
+async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: &dyn AiProvider) {
     println!("    DEBUG: Agent starting task: {}", task.intent);
 
     let mut prompt = String::from(

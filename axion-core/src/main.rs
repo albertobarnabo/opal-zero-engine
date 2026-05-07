@@ -1,13 +1,8 @@
-mod planner;
-mod dispatcher;
-mod governor;
-mod protocol;
-mod engine;
-mod tools;
-use engine::OpenAIProvider;
+use axion_core::engine::OpenAIProvider;
+use axion_core::planner::Plan;
+use axion_core::protocol::AgentRole;
+use axion_core::run_mission;
 use clap::Parser;
-use planner::Plan;
-use protocol::AgentRole; 
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -18,12 +13,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    // Load environment variables from .env file
     dotenvy::dotenv().ok();
 
     let args = Args::parse();
 
-    // Initialize OpenAI provider with API key from environment
     let provider = match OpenAIProvider::new() {
         Ok(p) => p,
         Err(e) => {
@@ -32,11 +25,22 @@ async fn main() {
         }
     };
 
-    // --- STAGE 1: PLANNING ---
     let mut plan = Plan::new(&args.intent);
-    let f_id = plan.add_task("The flight to Rome costs $300. Report this fact: 'Flight cost: $300'.", vec![], AgentRole::WebSearcher);
-    let h_id = plan.add_task("The hotel in Rome costs $120 per night for 2 nights ($240 total). Report this fact: 'Hotel cost: $240'.", vec![f_id], AgentRole::WebSearcher);
-    let s_id = plan.add_task("Use the calculator tool to add 300 + 240 and report the total trip cost.", vec![h_id], AgentRole::Analyst);
+    let f_id = plan.add_task(
+        "The flight to Rome costs $300. Report this fact: 'Flight cost: $300'.",
+        vec![],
+        AgentRole::WebSearcher,
+    );
+    let h_id = plan.add_task(
+        "The hotel in Rome costs $120 per night for 2 nights ($240 total). Report this fact: 'Hotel cost: $240'.",
+        vec![f_id],
+        AgentRole::WebSearcher,
+    );
+    let s_id = plan.add_task(
+        "Use the calculator tool to add 300 + 240 and report the total trip cost.",
+        vec![h_id],
+        AgentRole::Analyst,
+    );
     plan.add_task(
         "Save the trip report to 'trip_report.md' using the write_file tool. \
          The report must include: Flight cost: $300, Hotel cost: $240 (2 nights at $120), Total: $540.",
@@ -44,36 +48,13 @@ async fn main() {
         AgentRole::Analyst,
     );
 
-    let mut attempts = 0;
-    const MAX_ATTEMPTS: u8 = 3; // Cap retries at 3
-
     println!("🚀 Axion Core Heartbeat Started");
 
-    while attempts < MAX_ATTEMPTS {
-        // --- STAGE 2: DISPATCHING ---
-        // We pass the whole list. Dispatcher only runs what is 'Pending' & 'Ready'
-        dispatcher::dispatch_tasks(&mut plan.tasks, &mut plan.context, &provider).await;
-
-        // --- STAGE 3: GOVERNOR ---
-        let report = governor::review_execution(&plan.tasks);
-
-        if report.all_successful {
-            println!("\n🎯 Mission Accomplished: Graph fully resolved.");
-            return;
-        }
-
-        if report.failed_tasks.is_empty() {
-            attempts += 1;
-        } else {
-            governor::reset_failed_tasks(&mut plan.tasks);
-            attempts += 1;
-            println!("🚨 Failure detected. Attempting self-healing ({}/{})...", attempts, MAX_ATTEMPTS);
+    match run_mission(&mut plan, &provider, 3).await {
+        Ok(()) => println!("\n🎯 Mission Accomplished: Graph fully resolved."),
+        Err(msg) => {
+            eprintln!("❌ Mission failed: {}", msg);
+            std::process::exit(1);
         }
     }
-
-    eprintln!("❌ Mission failed: {} task(s) could not be completed after {} attempts.",
-        plan.tasks.iter().filter(|t| !matches!(t.status, crate::protocol::TaskStatus::Completed)).count(),
-        MAX_ATTEMPTS
-    );
-    std::process::exit(1);
 }

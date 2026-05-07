@@ -71,7 +71,7 @@ fn execute_write_file(arguments: &str) -> Result<String, String> {
     Ok(format!("File 'output/{}' written successfully.", args.filename))
 }
 
-pub async fn execute_web_search(arguments: &str) -> Result<String, String> {
+async fn execute_web_search(arguments: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct SearchArgs {
         query: String,

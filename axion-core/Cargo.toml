@@ -3,6 +3,14 @@ name = "axion-core"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "axion_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "axion"
+path = "src/main.rs"
+
 [dependencies]
 # Async runtime for the Dispatcher
 tokio = { version = "1", features = ["full"] }
