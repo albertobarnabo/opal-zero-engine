@@ -177,11 +177,30 @@ You can persist data to disk. If a task asks to save or write a report, use the 
 
 fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
+
+    // Role → canonical tool names.
+    let names: &[&str] = match role {
+        AgentRole::Analyst    => &["calculator", "write_file", "build_dynamic_ui"],
+        AgentRole::WebSearcher => &["web_search"],
+        AgentRole::Planner    => &["calculator", "web_search", "write_file"],
+        AgentRole::Coder      => &["python_interpreter", "write_file"],
+    };
+
+    // Use the live registry when available; fall back to hard-coded constructors
+    // so tests that skip Registry::init_default() continue to work.
+    if let Some(reg) = crate::registry::Registry::get() {
+        let tools = reg.tools_for_names(names);
+        if !tools.is_empty() {
+            return tools;
+        }
+    }
+
+    // Hard-coded fallback (used in tests and when manifests directory is absent).
     match role {
-        AgentRole::Analyst  => vec![Tool::calculator(), Tool::write_file(), Tool::build_dynamic_ui()],
+        AgentRole::Analyst    => vec![Tool::calculator(), Tool::write_file(), Tool::build_dynamic_ui()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
-        AgentRole::Planner  => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
-        AgentRole::Coder    => vec![Tool::python_interpreter(), Tool::write_file()],
+        AgentRole::Planner    => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
+        AgentRole::Coder      => vec![Tool::python_interpreter(), Tool::write_file()],
     }
 }
 

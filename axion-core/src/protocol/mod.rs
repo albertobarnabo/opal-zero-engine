@@ -81,6 +81,10 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
+    /// Whether the tool dispatch is async (e.g. `web_search`).
+    /// Loaded from manifests; skipped when serialising for the OpenAI API.
+    #[serde(default, skip_serializing)]
+    pub is_async: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -128,6 +132,7 @@ impl Tool {
         Tool {
             name: "calculator".to_string(),
             description: "Performs mathematical calculations (add, subtract, multiply, divide)".to_string(),
+            is_async: false,
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -158,6 +163,7 @@ impl Tool {
         Tool {
             name: "write_file".to_string(),
             description: "Writes text content to a file inside the output/ directory. Use this to persist reports or summaries to disk.".to_string(),
+            is_async: false,
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -180,6 +186,7 @@ impl Tool {
         Tool {
             name: "web_search".to_string(),
             description: "Searches the web for information".to_string(),
+            is_async: true,
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -209,6 +216,7 @@ impl Tool {
                           Use this for complex calculations, statistical analysis, \
                           data transformation, or any logic the calculator cannot express."
                 .to_string(),
+            is_async: false,
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -257,12 +265,24 @@ impl Tool {
                  Focus on high-density data: extract every number, comparison, and status into \
                  a dedicated component. Minimise raw prose — the goal is a data-first layout."
                 .to_string(),
+            is_async: false,
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
                 required: vec!["summary".to_string(), "components".to_string()],
             },
         }
+    }
+
+    /// Hydrate a `Tool` from a JSON manifest file on disk.
+    ///
+    /// The manifest must be valid JSON matching the `Tool` serde shape:
+    /// `name`, `description`, `is_async` (bool), and `parameters` (JSON Schema).
+    pub fn from_manifest(path: &std::path::Path) -> Result<Self, String> {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read manifest {:?}: {}", path, e))?;
+        serde_json::from_str::<Tool>(&contents)
+            .map_err(|e| format!("Failed to parse manifest {:?}: {}", path, e))
     }
 }
 

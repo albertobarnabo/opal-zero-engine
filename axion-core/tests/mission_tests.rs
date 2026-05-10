@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use axion_core::engine::{AiProvider, ToolResponse};
+use axion_core::executor::wasm::WasmExecutor;
 use axion_core::planner::Plan;
 use axion_core::protocol::{AgentRole, MissionUpdate, Tool};
 use axion_core::run_mission;
@@ -169,6 +170,86 @@ async fn context_bus_cleared_before_new_mission() {
         "Stale context key survived — run_mission did not call context.clear()"
     );
 }
+
+// ── Wasm executor tests ───────────────────────────────────────────────────────
+
+/// Compile-time path to `professionals/calculator.wasm` relative to the
+/// axion-core crate root.  The binary must be built separately:
+///
+///   cd axion-professionals/calculator
+///   cargo build --target wasm32-wasip1 --release
+///   cp target/wasm32-wasip1/release/axion-calculator.wasm \
+///      ../../axion-core/professionals/calculator.wasm
+const CALC_WASM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/professionals/calculator.wasm"
+);
+
+const MANIFESTS_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/professionals/manifests"
+);
+
+/// Direct WasmExecutor smoke-test: add two numbers, expect "Result: 42".
+/// Skips gracefully when the binary has not been built yet.
+#[test]
+fn wasm_executor_add_returns_correct_result() {
+    let wasm_path = std::path::Path::new(CALC_WASM);
+    if !wasm_path.exists() {
+        eprintln!(
+            "SKIP wasm_executor_add_returns_correct_result — {} not found.\n\
+             Build it with:\n  \
+             cd axion-professionals/calculator && \
+             cargo build --target wasm32-wasip1 --release\n  \
+             cp target/wasm32-wasip1/release/axion-calculator.wasm \
+             ../../axion-core/professionals/calculator.wasm",
+            CALC_WASM
+        );
+        return;
+    }
+
+    let result = WasmExecutor::run(wasm_path, r#"{"operation":"add","values":[10,32]}"#);
+
+    assert!(result.is_ok(), "WasmExecutor::run failed: {:?}", result.err());
+    assert_eq!(result.unwrap().trim(), "Result: 42");
+}
+
+/// Verify that `execute_tool` routes through the Wasm sandbox when
+/// `professionals/calculator.wasm` exists and the registry is initialised.
+///
+/// This is the end-to-end dispatch test: registry → Wasm path check →
+/// WasmExecutor → result.
+#[tokio::test]
+async fn execute_tool_dispatches_calculator_via_wasm() {
+    let manifests = std::path::Path::new(MANIFESTS_DIR);
+    let wasm_path = std::path::Path::new(CALC_WASM);
+
+    if !manifests.exists() || !wasm_path.exists() {
+        eprintln!(
+            "SKIP execute_tool_dispatches_calculator_via_wasm — \
+             manifests dir or calculator.wasm not found."
+        );
+        return;
+    }
+
+    // `init` is a no-op if another test already initialised the global.
+    axion_core::registry::Registry::init(manifests);
+
+    let result = axion_core::tools::execute_tool(
+        "calculator",
+        r#"{"operation":"multiply","values":[6,7]}"#,
+    )
+    .await;
+
+    assert!(result.is_ok(), "Wasm-dispatched calculator failed: {:?}", result.err());
+    assert_eq!(
+        result.unwrap().trim(),
+        "Result: 42",
+        "Wasm calculator returned unexpected output"
+    );
+}
+
+/// ── Existing ContextBus tests ─────────────────────────────────────────────────
 
 /// The ContextBus should contain the result of the task after a successful run,
 /// keyed by the task's slug.

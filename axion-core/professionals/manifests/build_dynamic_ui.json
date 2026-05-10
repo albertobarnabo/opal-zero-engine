@@ -1,0 +1,22 @@
+{
+  "name": "build_dynamic_ui",
+  "description": "Transform long text findings into a scannable dashboard. Call this with a brief summary of the mission and an array of components. Focus on high-density data: extract every number, comparison, and status into a dedicated component. Minimise raw prose — the goal is a data-first layout.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "A brief plain-text summary of all mission findings."
+      },
+      "components": {
+        "type": "array",
+        "description": "Array of UI components. Use these types and their props:\n- MetricCard: { title, value, subtitle?, unit?, trend?: \"up\"|\"down\" }\n- ComparisonTable: { title?, headers: string[], rows: (string|number)[][] }\n- StatusBadge: { label, status: \"info\"|\"success\"|\"warning\"|\"error\", description? }\n- Timeline: { title?, steps: { label, description?, time?, status?: \"completed\"|\"current\"|\"upcoming\" }[] }",
+        "items": {
+          "type": "object"
+        }
+      }
+    },
+    "required": ["summary", "components"]
+  }
+}

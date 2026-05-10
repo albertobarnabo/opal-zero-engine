@@ -1,0 +1,22 @@
+# Declaring an explicit [workspace] keeps this crate isolated from the root
+# Axion workspace.  It must be compiled separately for the wasm32-wasip1 target:
+#
+#   cargo build --target wasm32-wasip1 --release
+#   cp ../../target/wasm32-wasip1/release/axion_calculator.wasm \
+#      ../../axion-core/professionals/calculator.wasm
+[workspace]
+
+[package]
+name = "axion-calculator"
+version = "0.1.0"
+edition = "2021"
+# Intentionally NOT a member of the root workspace — this crate is compiled to
+# wasm32-wasip1 (a different target) and must be built separately:
+#
+#   cargo build --target wasm32-wasip1 --release
+#   cp ../../target/wasm32-wasip1/release/axion_calculator.wasm \
+#      ../../axion-core/professionals/calculator.wasm
+
+[dependencies]
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

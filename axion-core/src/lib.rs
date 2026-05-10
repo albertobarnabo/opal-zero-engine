@@ -1,9 +1,11 @@
 pub mod dispatcher;
 pub mod engine;
+pub mod executor;
 pub mod governor;
 pub mod persistence;
 pub mod planner;
 pub mod protocol;
+pub mod registry;
 pub mod tools;
 
 /// Everything a downstream consumer needs to run a mission in one import.
@@ -17,6 +19,7 @@ pub mod prelude {
     pub use crate::persistence::MissionSnapshot;
     pub use crate::planner::Plan;
     pub use crate::protocol::{AgentRole, ContextBus, MissionUpdate, Task, TaskStatus};
+    pub use crate::registry::Registry;
     pub use crate::run_mission;
 }
 

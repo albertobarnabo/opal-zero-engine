@@ -155,6 +155,7 @@ async fn get_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+    axion_core::registry::Registry::init_default();
 
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)

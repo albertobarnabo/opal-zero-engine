@@ -2,27 +2,56 @@ mod python;
 mod ui_builder;
 
 pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String> {
-    // `web_search` is async, so it lives outside the sync registry.
+    // ── 1. Registry validation + Wasm-first dispatch ──────────────────────────
+    //
+    // When the registry is initialised (normal production path), we:
+    //   a) Reject unknown tool names early with a clear error message.
+    //   b) Check for a `.wasm` binary at `professionals/{name}.wasm`.
+    //      If the file exists, hand execution to the sandboxed WasmExecutor
+    //      and return immediately — no native fallback needed.
+    if let Some(reg) = crate::registry::Registry::get() {
+        if !reg.contains(name) {
+            eprintln!(
+                "[WARN] execute_tool: LLM called unregistered tool '{}' — \
+                 check the tool name matches the registry exactly. \
+                 Arguments were: {}",
+                name, arguments
+            );
+            return Err(format!("Unknown tool: '{}'", name));
+        }
+
+        if let Some(wasm_path) = reg.wasm_path_for(name) {
+            if wasm_path.exists() {
+                println!("  🦀 Dispatching '{}' via Wasm sandbox ({:?}).", name, wasm_path);
+                // `WasmExecutor::run` is synchronous and wasmtime-wasi internally
+                // needs a thread that hasn't already entered a tokio runtime.
+                // `spawn_blocking` offloads it to tokio's blocking thread pool,
+                // which satisfies that requirement while keeping the call-site async.
+                let args_owned = arguments.to_owned();
+                return tokio::task::spawn_blocking(move || {
+                    crate::executor::wasm::WasmExecutor::run(&wasm_path, &args_owned)
+                })
+                .await
+                .unwrap_or_else(|e| Err(format!("Wasm executor panicked: {}", e)));
+            }
+        }
+    }
+
+    // ── 2. Async native tools ─────────────────────────────────────────────────
+    // `web_search` is async — handle it before the synchronous dispatch match.
     if name == "web_search" {
         return execute_web_search(arguments).await;
     }
 
-    // All synchronous tools share the same signature and can be stored as
-    // plain function pointers.  Adding a new tool is a single-line change here.
-    type SyncTool = fn(&str) -> Result<String, String>;
-
-    let registry: std::collections::HashMap<&str, SyncTool> = [
-        ("calculator",         execute_calculator           as SyncTool),
-        ("write_file",         execute_write_file           as SyncTool),
-        ("python_interpreter", python::execute_python       as SyncTool),
-        ("build_dynamic_ui",   ui_builder::build_dynamic_ui as SyncTool),
-    ]
-    .into_iter()
-    .collect();
-
-    match registry.get(name) {
-        Some(f) => f(arguments),
-        None => {
+    // ── 3. Synchronous native fallback ────────────────────────────────────────
+    // Used when no `.wasm` binary is present for the tool — ensures full
+    // backward compatibility during the Wasm migration.
+    match name {
+        "calculator"         => execute_calculator(arguments),
+        "write_file"         => execute_write_file(arguments),
+        "python_interpreter" => python::execute_python(arguments),
+        "build_dynamic_ui"   => ui_builder::build_dynamic_ui(arguments),
+        _ => {
             eprintln!(
                 "[WARN] execute_tool: LLM called unregistered tool '{}' — \
                  check the tool name matches the registry exactly. \

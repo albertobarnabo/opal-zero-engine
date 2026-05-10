@@ -1,0 +1,15 @@
+{
+  "name": "web_search",
+  "description": "Searches the web for information",
+  "is_async": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "The search query to execute"
+      }
+    },
+    "required": ["query"]
+  }
+}

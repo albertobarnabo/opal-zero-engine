@@ -2,9 +2,9 @@ use crate::engine::{AiProvider, ToolResponse};
 use crate::protocol::{AgentRole, Task, TaskStatus, UIBlueprint};
 use serde::Deserialize;
 
-// Total result text above this byte threshold is considered "data-rich" and
-// triggers a UI generation pass (unless a blueprint already exists).
-const UI_TRIGGER_BYTES: usize = 400;
+// Total result text above this byte threshold (across ≥2 completed tasks) is
+// considered "data-rich" and triggers a UI generation pass.
+const UI_TRIGGER_BYTES: usize = 80;
 
 /// The Governor's verdict after reviewing a completed mission round.
 pub enum ValidationResult {
@@ -66,18 +66,30 @@ pub async fn validate_mission(tasks: &[Task], provider: &dyn AiProvider) -> Vali
         .iter()
         .any(|t| matches!(t.role, AgentRole::Analyst) && t.intent.contains("build_dynamic_ui"));
 
-    if !has_blueprint && !has_ui_task && total_result_bytes >= UI_TRIGGER_BYTES {
-        println!("  🎨 Governor: Rich data detected ({} bytes) — hiring UI builder.", total_result_bytes);
+    if !has_blueprint && !has_ui_task
+        && total_result_bytes >= UI_TRIGGER_BYTES
+        && completed_count >= 2
+    {
+        println!(
+            "  🎨 Governor: UI Builder triggered — {} bytes across {} task(s).",
+            total_result_bytes, completed_count
+        );
         return ValidationResult::Expand(vec![NewTask {
             description:
-                "Use the build_dynamic_ui tool to create a structured dashboard from all \
-                 mission findings. Extract every price, option, comparison, and status into \
-                 MetricCard, ComparisonTable, StatusBadge, and Timeline components. \
-                 Call build_dynamic_ui ONCE with the full components array."
+                "Use the build_dynamic_ui tool. The PREVIOUS TASK RESULTS in your context \
+                 contain ALL mission findings — extract every price, option, comparison, and \
+                 status from them. Map each data point into MetricCard, ComparisonTable, \
+                 StatusBadge, or Timeline components. Call build_dynamic_ui EXACTLY ONCE with \
+                 the full components array."
                     .to_string(),
             role: AgentRole::Analyst,
         }]);
     }
+
+    println!(
+        "  ⏭️  Governor: Skipping UI Builder — {} bytes (threshold: {} bytes, {} task(s) completed).",
+        total_result_bytes, UI_TRIGGER_BYTES, completed_count
+    );
 
     println!("\n⚖️  Governor: All {} tasks completed. Consulting Quality Controller...", total);
 

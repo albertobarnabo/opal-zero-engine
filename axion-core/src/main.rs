@@ -14,6 +14,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+    axion_core::registry::Registry::init_default();
 
     let args = Args::parse();
 
