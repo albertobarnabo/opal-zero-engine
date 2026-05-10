@@ -66,7 +66,23 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
               />
             );
           default:
-            return null;
+            // Debug card — renders when the LLM produces a component_type that
+            // doesn't exist in the library.  Helps diagnose model hallucinations
+            // or mismatched casing without a silent no-op.
+            return (
+              <div
+                key={i}
+                className="bg-amber-950/30 border border-amber-700/50 rounded-xl p-4"
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-500 mb-2">
+                  ⚠ Unknown component type:{" "}
+                  <code className="font-mono normal-case">{c.component_type}</code>
+                </p>
+                <pre className="text-xs text-gray-400 font-mono overflow-x-auto whitespace-pre-wrap break-words">
+                  {JSON.stringify(c.props, null, 2)}
+                </pre>
+              </div>
+            );
         }
       })}
     </div>

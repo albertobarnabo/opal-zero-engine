@@ -2,18 +2,40 @@ mod python;
 mod ui_builder;
 
 pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String> {
-    match name {
-        "calculator"        => execute_calculator(arguments),
-        "web_search"        => execute_web_search(arguments).await,
-        "write_file"        => execute_write_file(arguments),
-        "python_interpreter" => python::execute_python(arguments),
-        "build_dynamic_ui"  => ui_builder::build_dynamic_ui(arguments),
-        _ => Err(format!("Unknown tool: {}", name)),
+    // `web_search` is async, so it lives outside the sync registry.
+    if name == "web_search" {
+        return execute_web_search(arguments).await;
+    }
+
+    // All synchronous tools share the same signature and can be stored as
+    // plain function pointers.  Adding a new tool is a single-line change here.
+    type SyncTool = fn(&str) -> Result<String, String>;
+
+    let registry: std::collections::HashMap<&str, SyncTool> = [
+        ("calculator",         execute_calculator           as SyncTool),
+        ("write_file",         execute_write_file           as SyncTool),
+        ("python_interpreter", python::execute_python       as SyncTool),
+        ("build_dynamic_ui",   ui_builder::build_dynamic_ui as SyncTool),
+    ]
+    .into_iter()
+    .collect();
+
+    match registry.get(name) {
+        Some(f) => f(arguments),
+        None => {
+            eprintln!(
+                "[WARN] execute_tool: LLM called unregistered tool '{}' — \
+                 check the tool name matches the registry exactly. \
+                 Arguments were: {}",
+                name, arguments
+            );
+            Err(format!("Unknown tool: '{}'", name))
+        }
     }
 }
 
 /// True for tools whose output IS the final task result and needs no follow-up
-/// LLM turn.  Avoids the model rephrasing the structured JSON into prose.
+/// LLM turn.  Avoids the model rephrasing the structured JSON output into prose.
 pub fn is_terminal_tool(name: &str) -> bool {
     name == "build_dynamic_ui"
 }

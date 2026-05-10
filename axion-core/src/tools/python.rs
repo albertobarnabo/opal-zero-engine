@@ -98,6 +98,16 @@ pub fn execute_python(arguments: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Any test that actually invokes python3 and creates a temp file must hold
+    // this lock for the duration of the test.  Concurrent tests that write
+    // axion_*.py files would otherwise corrupt the before/after snapshot
+    // comparison in `execute_python_cleans_up_temp_file`.
+    //
+    // Tests that fail before a file is created (JSON errors, safety-check
+    // rejections) do NOT need the lock — they never touch the temp dir.
+    static EXEC_LOCK: Mutex<()> = Mutex::new(());
 
     // ── safety_check ────────────────────────────────────────────────────────
 
@@ -153,6 +163,7 @@ mod tests {
 
     #[test]
     fn execute_python_no_output_marker() {
+        let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
         // Code that runs but produces no stdout or stderr.
         let json = r#"{"code": "x = 42"}"#;
         let result = execute_python(json).unwrap();
@@ -162,6 +173,7 @@ mod tests {
 
     #[test]
     fn execute_python_captures_stdout() {
+        let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
         let json = r#"{"code": "print('hello axion')"}"#;
         let result = execute_python(json).unwrap();
         assert!(result.contains("hello axion"));
@@ -171,6 +183,7 @@ mod tests {
 
     #[test]
     fn execute_python_output_contains_source_block() {
+        let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
         let json = r#"{"code": "print(6 * 7)"}"#;
         let result = execute_python(json).unwrap();
         assert!(result.contains("```python"), "Output should include a fenced code block");
@@ -181,6 +194,10 @@ mod tests {
     fn execute_python_cleans_up_temp_file() {
         use std::collections::HashSet;
         use std::path::PathBuf;
+
+        // Hold the lock for the entire test so no sibling test can create a
+        // competing axion_*.py file between the before/after snapshots.
+        let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
 
         let snapshot = |dir: &std::path::Path| -> HashSet<PathBuf> {
             std::fs::read_dir(dir)
@@ -197,7 +214,6 @@ mod tests {
         let after = snapshot(&tmp);
 
         // Any file in `after` but not in `before` is a leak from this call.
-        // Files that disappeared between snapshots are from concurrent tests (fine).
         let leaked: Vec<_> = after.difference(&before).collect();
         assert!(
             leaked.is_empty(),
