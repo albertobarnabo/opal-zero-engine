@@ -1,0 +1,14 @@
+{
+  "id": "mission_1778449228_stale_context_test",
+  "timestamp": 1778449228,
+  "intent": "Stale context test",
+  "task_count": 1,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "some_task": "mock result"
+    }
+  }
+}

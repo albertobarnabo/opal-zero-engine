@@ -2,6 +2,21 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::collections::HashMap;
 
+// ── Human-in-the-loop signalling ──────────────────────────────────────────────
+
+/// Magic prefix written to a task's `result` field by the `feedback` tool.
+/// `validate_mission` scans for this prefix to detect a requested human pause.
+pub const AWAITING_FEEDBACK_PREFIX: &str = "__AWAITING_FEEDBACK__: ";
+
+/// Returned by `run_mission` when the mission is paused awaiting human input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeRequest {
+    /// ID of the persisted snapshot (`missions/<id>.json`).
+    pub mission_id: String,
+    /// The question the agent wants the user to answer.
+    pub question: String,
+}
+
 // ── UI Blueprint ──────────────────────────────────────────────────────────────
 
 /// A single renderable UI primitive produced by the `build_dynamic_ui` tool.
@@ -76,6 +91,23 @@ impl ContextBus {
         self.data.clear();
     }
 }
+/// A directory the Wasm executor should expose to the guest module.
+///
+/// `host` is a path on the Axion host (relative to CWD at runtime).
+/// `guest` is the absolute path the Wasm code will see (e.g. `"/missions"`).
+/// `readonly` restricts the preopen to read-only `DirPerms::READ | FilePerms::READ`.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct WasmPreopen {
+    pub host: String,
+    pub guest: String,
+    #[serde(default = "bool_true")]
+    pub readonly: bool,
+}
+
+fn bool_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tool {
     pub name: String,
@@ -85,6 +117,10 @@ pub struct Tool {
     /// Loaded from manifests; skipped when serialising for the OpenAI API.
     #[serde(default, skip_serializing)]
     pub is_async: bool,
+    /// Host directories to expose to the Wasm module via WASI preopens.
+    /// Loaded from manifests; skipped when serialising for the OpenAI API.
+    #[serde(default, skip_serializing)]
+    pub preopens: Vec<WasmPreopen>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -133,6 +169,7 @@ impl Tool {
             name: "calculator".to_string(),
             description: "Performs mathematical calculations (add, subtract, multiply, divide)".to_string(),
             is_async: false,
+            preopens: vec![],
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -164,6 +201,7 @@ impl Tool {
             name: "write_file".to_string(),
             description: "Writes text content to a file inside the output/ directory. Use this to persist reports or summaries to disk.".to_string(),
             is_async: false,
+            preopens: vec![],
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -187,6 +225,7 @@ impl Tool {
             name: "web_search".to_string(),
             description: "Searches the web for information".to_string(),
             is_async: true,
+            preopens: vec![],
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -217,6 +256,7 @@ impl Tool {
                           data transformation, or any logic the calculator cannot express."
                 .to_string(),
             is_async: false,
+            preopens: vec![],
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
@@ -266,10 +306,104 @@ impl Tool {
                  a dedicated component. Minimise raw prose — the goal is a data-first layout."
                 .to_string(),
             is_async: false,
+            preopens: vec![],
             parameters: ToolParameters {
                 param_type: "object".to_string(),
                 properties,
                 required: vec!["summary".to_string(), "components".to_string()],
+            },
+        }
+    }
+
+    pub fn feedback() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "question".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "The question or decision you want the user to answer before work continues \
+                     (e.g. 'The dashboard is ready — does the layout look correct?')."
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+        properties.insert(
+            "context".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "Optional summary of what was accomplished so far, to give the user \
+                     enough context to answer the question."
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+
+        Tool {
+            name: "feedback".to_string(),
+            description:
+                "Pause the mission and ask the human user a question. Use when you need \
+                 approval, clarification, or a decision before continuing. The mission will \
+                 resume once the user responds."
+                    .to_string(),
+            is_async: false,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["question".to_string()],
+            },
+        }
+    }
+
+    pub fn vision() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "file_path".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "File name of the image in the uploads directory (e.g. 'chart.png'). \
+                     Do not include directory separators or path prefixes."
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+        properties.insert(
+            "prompt".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "Specific analysis question or instruction (e.g. \
+                     'What data is shown in this chart?', 'Extract all visible text'). \
+                     Defaults to a general description if omitted."
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+
+        Tool {
+            name: "vision".to_string(),
+            description:
+                "Analyze an image file and return a detailed textual description or data \
+                 summary. Use for charts, photos, diagrams, and screenshots stored in the \
+                 uploads/ directory."
+                    .to_string(),
+            is_async: true,
+            preopens: vec![WasmPreopen {
+                host: "uploads".to_string(),
+                guest: "/uploads".to_string(),
+                readonly: true,
+            }],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["file_path".to_string()],
             },
         }
     }
@@ -324,6 +458,13 @@ pub enum MissionUpdate {
     MissionFailed {
         error: String,
     },
+    /// The mission is paused and waiting for a human response before continuing.
+    MissionPaused {
+        /// The question the Governor wants the user to answer.
+        question: String,
+        /// Snapshot ID so the caller can persist/resume the mission.
+        mission_id: String,
+    },
 }
 
 impl MissionUpdate {
@@ -336,6 +477,7 @@ impl MissionUpdate {
             MissionUpdate::GovernorExpand { .. } => "governor_expand",
             MissionUpdate::MissionComplete { .. } => "mission_complete",
             MissionUpdate::MissionFailed { .. }  => "mission_failed",
+            MissionUpdate::MissionPaused { .. }  => "mission_paused",
         }
     }
 }

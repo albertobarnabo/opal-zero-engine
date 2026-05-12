@@ -1,4 +1,5 @@
-use axion_core::engine::OpenAIProvider;
+use axion_core::engine::SimpleProvider;
+use axion_core::governor::BuiltinGovernor;
 use axion_core::planner::Plan;
 use axion_core::protocol::AgentRole;
 use axion_core::run_mission;
@@ -18,13 +19,15 @@ async fn main() {
 
     let args = Args::parse();
 
-    let provider = match OpenAIProvider::new() {
+    let provider = match SimpleProvider::openai("gpt-4o-mini") {
         Ok(p) => p,
         Err(e) => {
             eprintln!("❌ Error: {}", e);
             std::process::exit(1);
         }
     };
+
+    let governor = BuiltinGovernor::new();
 
     let mut plan = Plan::new(&args.intent);
     let f_id = plan.add_task(
@@ -51,8 +54,13 @@ async fn main() {
 
     println!("🚀 Axion Core Heartbeat Started");
 
-    match run_mission(&mut plan, &provider, 3, None).await {
-        Ok(()) => println!("\n🎯 Mission Accomplished: Graph fully resolved."),
+    match run_mission(&mut plan, &provider, &governor, 3, None).await {
+        Ok(None) => println!("\n🎯 Mission Accomplished: Graph fully resolved."),
+        Ok(Some(hs)) => {
+            println!("\n⏸️  Mission paused — awaiting human feedback.");
+            println!("   Question: {}", hs.question);
+            println!("   Resume with: resume_mission(&mut plan, \"<your answer>\", ...)");
+        }
         Err(msg) => {
             eprintln!("❌ Mission failed: {}", msg);
             std::process::exit(1);

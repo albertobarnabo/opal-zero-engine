@@ -151,10 +151,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "axion-kernel"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axion-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "axion-server"
 version = "0.1.0"
 dependencies = [
  "axion-core",
+ "axion-kernel",
  "axum",
  "dotenvy",
  "serde",

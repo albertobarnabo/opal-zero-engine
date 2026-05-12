@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axion-core = { path = "../axion-core" }
+axion-core   = { path = "../axion-core" }
+axion-kernel = { path = "../axion-kernel" }
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }

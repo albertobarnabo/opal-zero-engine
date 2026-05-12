@@ -1,10 +1,12 @@
-use crate::protocol::{Task, TaskStatus, ContextBus, MissionUpdate, Tool};
 use crate::engine::{AiProvider, ToolResponse};
+use crate::governor::Governor;
+use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool};
 
 pub async fn dispatch_tasks(
     tasks: &mut Vec<Task>,
     context: &mut ContextBus,
     provider: &dyn AiProvider,
+    governor: &dyn Governor,
     tx: Option<&tokio::sync::mpsc::Sender<MissionUpdate>>,
 ) {
     println!("⚙️  Dispatcher: Checking dependencies and routing to agents...");
@@ -13,23 +15,28 @@ pub async fn dispatch_tasks(
         let mut spawned = false;
 
         // 1. Identify which tasks are ready (Pending + dependencies met)
-        let completed_ids: Vec<uuid::Uuid> = tasks.iter()
+        let completed_ids: Vec<uuid::Uuid> = tasks
+            .iter()
             .filter(|t| matches!(t.status, TaskStatus::Completed))
             .map(|t| t.id)
             .collect();
 
         // 2. Collect indices of ready tasks to avoid borrow-checker conflicts.
-        let ready_indices: Vec<usize> = tasks.iter().enumerate()
+        let ready_indices: Vec<usize> = tasks
+            .iter()
+            .enumerate()
             .filter(|(_, t)| {
-                matches!(t.status, TaskStatus::Pending) &&
-                t.depends_on.iter().all(|dep_id| completed_ids.contains(dep_id))
+                matches!(t.status, TaskStatus::Pending)
+                    && t.depends_on.iter().all(|dep_id| completed_ids.contains(dep_id))
             })
             .map(|(i, _)| i)
             .collect();
 
         println!("  📋 Found {} tasks ready to execute", ready_indices.len());
 
-        if ready_indices.is_empty() { break; }
+        if ready_indices.is_empty() {
+            break;
+        }
 
         for idx in ready_indices {
             let task = &mut tasks[idx];
@@ -38,29 +45,35 @@ pub async fn dispatch_tasks(
 
             // Notify the stream that this agent is now working.
             if let Some(tx) = tx {
-                let _ = tx.send(MissionUpdate::TaskStarted {
-                    slug: task.slug.clone(),
-                    role: task.role.as_str().to_string(),
-                    intent: task.intent.clone(),
-                }).await;
+                let _ = tx
+                    .send(MissionUpdate::TaskStarted {
+                        slug: task.slug.clone(),
+                        role: task.role.as_str().to_string(),
+                        intent: task.intent.clone(),
+                    })
+                    .await;
             }
 
-            execute_with_role(task, context, provider).await;
+            execute_with_role(task, context, provider, governor).await;
             println!("  ✅ Task completed with status: {:?}", task.status);
 
             // Emit the outcome event.
             if let Some(tx) = tx {
                 if matches!(task.status, TaskStatus::Completed) {
-                    let _ = tx.send(MissionUpdate::TaskCompleted {
-                        slug: task.slug.clone(),
-                        role: task.role.as_str().to_string(),
-                        result: task.result.clone().unwrap_or_default(),
-                    }).await;
+                    let _ = tx
+                        .send(MissionUpdate::TaskCompleted {
+                            slug: task.slug.clone(),
+                            role: task.role.as_str().to_string(),
+                            result: task.result.clone().unwrap_or_default(),
+                        })
+                        .await;
                 } else if matches!(task.status, TaskStatus::Failed) {
-                    let _ = tx.send(MissionUpdate::TaskFailed {
-                        slug: task.slug.clone(),
-                        role: task.role.as_str().to_string(),
-                    }).await;
+                    let _ = tx
+                        .send(MissionUpdate::TaskFailed {
+                            slug: task.slug.clone(),
+                            role: task.role.as_str().to_string(),
+                        })
+                        .await;
                 }
             }
 
@@ -74,41 +87,25 @@ pub async fn dispatch_tasks(
             spawned = true;
         }
 
-        if !spawned { break; }
+        if !spawned {
+            break;
+        }
     }
 }
 
-async fn execute_with_role(task: &mut Task, context: &ContextBus, provider: &dyn AiProvider) {
-    use crate::protocol::AgentRole;
+async fn execute_with_role(
+    task: &mut Task,
+    context: &ContextBus,
+    provider: &dyn AiProvider,
+    governor: &dyn Governor,
+) {
     println!("    DEBUG: Agent starting task: {}", task.intent);
 
-    let system_prefix: &str = match task.role {
-        AgentRole::Analyst => {
-            "You are a Senior Data Analyst in the Axion swarm. Your analysis is authoritative — \
-do not hedge or ask questions. \
-Use the 'calculator' tool for all arithmetic. \
-Use the 'write_file' tool when asked to save a report. \
-When asked to build a dashboard, call the 'build_dynamic_ui' tool EXACTLY ONCE with a \
-components array — extract every number, option, and status into the appropriate component type \
-(MetricCard, ComparisonTable, StatusBadge, Timeline). Return ONLY the tool call — no prose.\n"
-        }
-        AgentRole::Coder => {
-            "You are a Python programmer in the Axion Core swarm. \
-Your job is to write and execute Python 3 code using the 'python_interpreter' tool. \
-Rules: use only the standard library, always use print() to emit results, \
-never use file I/O or shell commands, keep scripts concise and self-contained. \
-Call the 'python_interpreter' tool exactly once with your complete script. \
-Use 'write_file' only if explicitly asked to persist the output.\n"
-        }
-        _ => {
-            "You are an autonomous agent in the Axion Core swarm. The user's request is final. \
-Do not ask questions. If data like prices or quantities is present in the context, use it \
-immediately. Use the 'calculator' tool for any and all math. \
-You can persist data to disk. If a task asks to save or write a report, use the 'write_file' tool.\n"
-        }
-    };
+    // ── System prefix comes from the Governor (pluggable, role-specific) ──────
+    let system_prefix = governor.system_prompt_for_role(&task.role);
 
-    let mut prompt = String::from(system_prefix);
+    // ── Build the full prompt: prefix + context + task ────────────────────────
+    let mut prompt = system_prefix;
 
     if !context.data.is_empty() {
         prompt.push_str("\nPREVIOUS TASK RESULTS:\n");
@@ -119,7 +116,7 @@ You can persist data to disk. If a task asks to save or write a report, use the 
 
     prompt.push_str(&format!("\nTASK: {}", task.intent));
     println!("    DEBUG: Generated prompt: {}", prompt);
-    
+
     // Get available tools for this role (cloned so we can reuse for the follow-up turn).
     let tools = get_tools_for_role(&task.role);
     let tools_clone = tools.clone();
@@ -136,22 +133,35 @@ You can persist data to disk. If a task asks to save or write a report, use the 
                 Ok(tool_result) => {
                     println!("    🔧 Tool Result: {}", tool_result);
 
-                    // Terminal tools (e.g. build_dynamic_ui) produce the final task
+                    // Terminal tools (e.g. build_dynamic_ui, feedback) produce the final task
                     // result directly — skip the second LLM turn to prevent the model
                     // from paraphrasing the structured JSON output into prose.
                     if crate::tools::is_terminal_tool(&name) {
                         task.result = Some(tool_result);
                         task.status = TaskStatus::Completed;
                     } else {
-                        // Send the result back to OpenAI to get the final natural-language answer.
-                        match provider.submit_tool_result(&prompt, Some(tools_clone), &id, &name, &arguments, &tool_result).await {
+                        // Send the result back to the provider to get the final natural-language answer.
+                        match provider
+                            .submit_tool_result(
+                                &prompt,
+                                Some(tools_clone),
+                                &id,
+                                &name,
+                                &arguments,
+                                &tool_result,
+                            )
+                            .await
+                        {
                             Ok(ToolResponse::Text(final_answer)) => {
                                 println!("    DEBUG: Final answer: {}", final_answer);
                                 task.result = Some(final_answer);
                                 task.status = TaskStatus::Completed;
                             }
                             Ok(ToolResponse::ToolCall { name: n, .. }) => {
-                                println!("    DEBUG: Model requested another tool call ({}) — using raw result", n);
+                                println!(
+                                    "    DEBUG: Model requested another tool call ({}) — using raw result",
+                                    n
+                                );
                                 task.result = Some(tool_result);
                                 task.status = TaskStatus::Completed;
                             }
@@ -179,11 +189,12 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
 
     // Role → canonical tool names.
+    // `memory` is included for roles that may need to reference past missions.
     let names: &[&str] = match role {
-        AgentRole::Analyst    => &["calculator", "write_file", "build_dynamic_ui"],
+        AgentRole::Analyst     => &["calculator", "write_file", "build_dynamic_ui", "memory", "vision", "feedback"],
         AgentRole::WebSearcher => &["web_search"],
-        AgentRole::Planner    => &["calculator", "web_search", "write_file"],
-        AgentRole::Coder      => &["python_interpreter", "write_file"],
+        AgentRole::Planner     => &["calculator", "web_search", "write_file", "memory", "feedback"],
+        AgentRole::Coder       => &["python_interpreter", "write_file"],
     };
 
     // Use the live registry when available; fall back to hard-coded constructors
@@ -196,11 +207,12 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     }
 
     // Hard-coded fallback (used in tests and when manifests directory is absent).
+    // `memory` is excluded here because it has no native implementation — it
+    // always requires the Wasm binary to be present.
     match role {
-        AgentRole::Analyst    => vec![Tool::calculator(), Tool::write_file(), Tool::build_dynamic_ui()],
+        AgentRole::Analyst     => vec![Tool::calculator(), Tool::write_file(), Tool::build_dynamic_ui(), Tool::vision(), Tool::feedback()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
-        AgentRole::Planner    => vec![Tool::calculator(), Tool::web_search(), Tool::write_file()],
-        AgentRole::Coder      => vec![Tool::python_interpreter(), Tool::write_file()],
+        AgentRole::Planner     => vec![Tool::calculator(), Tool::web_search(), Tool::write_file(), Tool::feedback()],
+        AgentRole::Coder       => vec![Tool::python_interpreter(), Tool::write_file()],
     }
 }
-

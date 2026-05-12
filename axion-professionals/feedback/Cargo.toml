@@ -1,0 +1,17 @@
+# Declaring an explicit [workspace] keeps this crate isolated from the root
+# Axion workspace.  It must be compiled separately for the wasm32-wasip1 target:
+#
+#   cd axion-professionals/feedback
+#   cargo build --target wasm32-wasip1 --release
+#   cp target/wasm32-wasip1/release/axion-feedback.wasm \
+#      ../../axion-core/professionals/feedback.wasm
+[workspace]
+
+[package]
+name = "axion-feedback"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

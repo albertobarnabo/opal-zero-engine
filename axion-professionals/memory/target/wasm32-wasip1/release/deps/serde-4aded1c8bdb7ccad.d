@@ -1,0 +1,14 @@
+/Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/deps/serde-4aded1c8bdb7ccad.d: /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/build/serde-fd42c1d09f7a069f/out/private.rs
+
+/Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/deps/libserde-4aded1c8bdb7ccad.rlib: /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/build/serde-fd42c1d09f7a069f/out/private.rs
+
+/Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/deps/libserde-4aded1c8bdb7ccad.rmeta: /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/build/serde-fd42c1d09f7a069f/out/private.rs
+
+/Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/albi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/build/serde-fd42c1d09f7a069f/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/albi/Projects/Axion/axion-professionals/memory/target/wasm32-wasip1/release/build/serde-fd42c1d09f7a069f/out

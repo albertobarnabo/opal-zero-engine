@@ -1,5 +1,6 @@
 use axion_core::persistence::MissionSnapshot;
 use axion_core::prelude::*;
+use axion_kernel::prelude::{AxionGovernor, OpenAIProvider};
 use axum::{
     extract::Path as AxumPath,
     http::{Method, StatusCode},
@@ -55,6 +56,8 @@ async fn execute(Json(req): Json<TaskRequest>) -> Response {
         }
     };
 
+    let governor = AxionGovernor::new();
+
     // Channel capacity 64 — enough for a full mission with expansions without
     // back-pressure. Sends are fire-and-forget (errors silently dropped).
     let (tx, rx) = tokio::sync::mpsc::channel::<MissionUpdate>(64);
@@ -87,7 +90,7 @@ async fn execute(Json(req): Json<TaskRequest>) -> Response {
         );
 
         // tx is dropped when run_mission returns, which closes the SSE stream.
-        let _ = run_mission(&mut plan, &provider, 3, Some(tx)).await;
+        let _ = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;
     });
 
     let stream = ReceiverStream::new(rx).map(to_sse);

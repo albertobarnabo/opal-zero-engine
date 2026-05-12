@@ -1,0 +1,14 @@
+{
+  "id": "mission_1778448323_single_task_test_plan",
+  "timestamp": 1778448323,
+  "intent": "Single task test plan",
+  "task_count": 1,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "do_one_thing": "mock result"
+    }
+  }
+}

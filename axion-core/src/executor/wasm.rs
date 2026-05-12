@@ -5,57 +5,88 @@ use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::{
     pipe::{MemoryInputPipe, MemoryOutputPipe},
     preview1::{self, WasiP1Ctx},
-    WasiCtxBuilder,
+    DirPerms, FilePerms, WasiCtxBuilder,
 };
+
+use crate::protocol::WasmPreopen;
 
 /// Sandboxed Wasm executor using WASI preview1.
 ///
 /// Every call compiles and instantiates a fresh module — suitable for
-/// tool-dispatch where invocations are infrequent.  The `Engine` (which
-/// holds the JIT cache) could be lifted to a long-lived `OnceLock` later
-/// without changing the public API.
+/// tool-dispatch where invocations are infrequent.
 ///
 /// # Isolation contract
-/// - No filesystem access (directories not pre-opened).
+/// - Filesystem: only directories explicitly listed in `preopens` are visible
+///   to the guest, and only with the permissions declared in each entry.
 /// - No network access.
 /// - stdin  = `arguments` JSON string (UTF-8).
 /// - stdout = captured in memory, returned as the tool result string.
-/// - stderr = discarded (guest may write diagnostic text there freely).
+/// - stderr = printed to the Axion terminal for diagnostics; NOT returned.
 pub struct WasmExecutor;
 
 impl WasmExecutor {
-    /// Load the `.wasm` file at `wasm_path`, feed `arguments` as stdin, and
-    /// return the module's stdout as the tool result.
-    pub fn run(wasm_path: &Path, arguments: &str) -> Result<String, String> {
+    /// Load the `.wasm` file at `wasm_path`, feed `arguments` as stdin,
+    /// pre-open the host directories in `preopens`, and return stdout.
+    pub fn run(
+        wasm_path: &Path,
+        arguments: &str,
+        preopens: &[WasmPreopen],
+    ) -> Result<String, String> {
         let wasm_bytes = std::fs::read(wasm_path)
             .map_err(|e| format!("Failed to read {:?}: {}", wasm_path, e))?;
-        Self::run_bytes(&wasm_bytes, arguments)
+        Self::run_bytes(&wasm_bytes, arguments, preopens)
     }
 
     /// Execute already-loaded Wasm bytes (useful in tests that skip disk I/O).
-    pub fn run_bytes(wasm_bytes: &[u8], arguments: &str) -> Result<String, String> {
+    pub fn run_bytes(
+        wasm_bytes: &[u8],
+        arguments: &str,
+        preopens: &[WasmPreopen],
+    ) -> Result<String, String> {
         // ── Engine & module ────────────────────────────────────────────────
         let engine = Engine::default();
         let module = Module::new(&engine, wasm_bytes)
             .map_err(|e| format!("Wasm compilation failed: {}", e))?;
 
         // ── Stdio plumbing ─────────────────────────────────────────────────
-        // stdin : the JSON arguments string
-        // stdout: captured in a cloneable in-memory pipe
-        // stderr: inherited from the host process (writes appear in the Axion
-        //         terminal log but are NOT returned as the tool result)
         let stdin = MemoryInputPipe::new(Bytes::copy_from_slice(arguments.as_bytes()));
-        let stdout = MemoryOutputPipe::new(64 * 1024); // 64 KiB capture buffer
-        let stdout_capture = stdout.clone(); // keeps a second Arc ref for post-run read
+        let stdout = MemoryOutputPipe::new(256 * 1024); // 256 KiB — snapshots can be large
+        let stdout_capture = stdout.clone();
 
-        // ── WASI context (preview1 / wasm32-wasip1) ────────────────────────
-        // Restricted: no dirs pre-opened, no env vars, no args, only stdio.
-        let wasi: WasiP1Ctx = WasiCtxBuilder::new()
-            .stdin(stdin)
-            .stdout(stdout)
-            .build_p1();
+        // ── WASI context ───────────────────────────────────────────────────
+        let mut builder = WasiCtxBuilder::new();
+        builder.stdin(stdin).stdout(stdout);
 
-        // ── Link WASI host functions into the module ───────────────────────
+        // Wire up any host directories declared by this tool's manifest.
+        // `preopened_dir` calls `cap_std::Dir::open_ambient_dir` internally,
+        // so we only need the host path string and the desired permissions.
+        for p in preopens {
+            let host_path = Path::new(&p.host);
+
+            if !host_path.exists() {
+                // Directory absent (e.g. `missions/` before the first save).
+                // Skip silently — the guest handles the missing path itself.
+                println!(
+                    "  ⚠️  WasmExecutor: preopen host path {:?} not found — skipping.",
+                    host_path
+                );
+                continue;
+            }
+
+            let (dp, fp) = if p.readonly {
+                (DirPerms::READ, FilePerms::READ)
+            } else {
+                (DirPerms::all(), FilePerms::all())
+            };
+
+            builder
+                .preopened_dir(host_path, &p.guest, dp, fp)
+                .map_err(|e| format!("Failed to preopen {:?}: {}", host_path, e))?;
+        }
+
+        let wasi: WasiP1Ctx = builder.build_p1();
+
+        // ── Link WASI host functions ───────────────────────────────────────
         let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
         preview1::add_to_linker_sync(&mut linker, |ctx| ctx)
             .map_err(|e| format!("WASI linker setup failed: {}", e))?;
@@ -75,10 +106,7 @@ impl WasmExecutor {
             .call(&mut store, ())
             .map_err(|e| format!("Wasm execution error: {}", e))?;
 
-        // ── Capture stdout ─────────────────────────────────────────────────
-        // Drop the store first so the WASI context releases its Arc ref to the
-        // stdout pipe.  After the drop `stdout_capture` is the sole owner,
-        // and `try_into_inner` can unwrap the Arc without allocating.
+        // Drop store so the WASI context releases its Arc ref to the stdout pipe.
         drop(store);
 
         let bytes = stdout_capture

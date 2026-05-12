@@ -1,3 +1,3 @@
 [workspace]
-members = ["axion-core", "axion-server"]
+members = ["axion-core", "axion-kernel", "axion-server"]
 resolver = "2"
