@@ -40,16 +40,18 @@ function resolveSpan(
 
   switch (strategy) {
 
+    // "Bento-Wide" kept for legacy; "DataHeavy" is the canonical manifest value
     case "Bento-Wide":
-      // Comparison-heavy layout: tables full-width, charts wide, metrics small.
+    case "DataHeavy":
       if (t === "ComparisonTable") return { col: 3, row: 1 };
       if (t === "ChartCard")       return { col: 2, row: 1 };
       if (t === "Timeline")        return { col: 2, row: 1 };
       if (t === "ImageCard")       return { col: 1, row: 1 };
       return { col: 1, row: 1 };
 
+    // "Magazine-Flow" kept for legacy; "Narrative" is the canonical manifest value
     case "Magazine-Flow":
-      // Narrative-heavy: first component is a hero, rest flow in 2-col.
+    case "Narrative":
       if (index === 0)             return { col: 3, row: 1 };
       if (t === "ComparisonTable") return { col: 2, row: 1 };
       if (t === "ImageCard")       return { col: 2, row: 1 };
@@ -195,28 +197,28 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
             key={i}
             initial={{ opacity: 0, y: 20, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{
-              type: "spring",
-              stiffness: 240,
-              damping: 22,
-              delay: i * 0.055,
-            }}
-            whileHover={{
-              scale: 1.018,
-              y: -3,
-              transition: { type: "spring", stiffness: 400, damping: 28 },
-            }}
+            transition={{ type: "spring", stiffness: 240, damping: 22, delay: i * 0.055 }}
+            className="axion-grain"
             style={{
               gridColumn: `span ${colSpan}`,
               gridRow: `span ${rowSpan}`,
               position: "relative",
+              transformStyle: "preserve-3d",
+              willChange: "transform",
+              transition: "box-shadow 0.2s",
             }}
-            onMouseEnter={(e: React.MouseEvent<HTMLElement>) => {
+            onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              const x = (e.clientX - r.left) / r.width  - 0.5;  // -0.5…0.5
+              const y = (e.clientY - r.top)  / r.height - 0.5;
+              e.currentTarget.style.transform =
+                `perspective(700px) rotateY(${x * 7}deg) rotateX(${-y * 7}deg) translateZ(6px)`;
               e.currentTarget.style.boxShadow =
-                "0 20px 56px rgba(0,0,0,0.50), 0 0 44px var(--axion-glow, rgba(139,156,244,0.10))";
+                "0 24px 60px rgba(0,0,0,0.55), 0 0 44px var(--axion-glow, rgba(139,156,244,0.12))";
               e.currentTarget.style.zIndex = "10";
             }}
-            onMouseLeave={(e: React.MouseEvent<HTMLElement>) => {
+            onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
+              e.currentTarget.style.transform = "";
               e.currentTarget.style.boxShadow = "";
               e.currentTarget.style.zIndex = "";
             }}

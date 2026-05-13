@@ -8,7 +8,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -108,6 +108,25 @@ async fn list_missions() -> impl IntoResponse {
     (StatusCode::OK, Json(summaries)).into_response()
 }
 
+async fn delete_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
+    if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid mission ID" })),
+        )
+            .into_response();
+    }
+    let path = std::path::Path::new("missions").join(format!("{}.json", id));
+    match std::fs::remove_file(&path) {
+        Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Mission not found" })),
+        )
+            .into_response(),
+    }
+}
+
 async fn get_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
@@ -142,14 +161,14 @@ async fn main() {
 
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/execute", post(execute))
         .route("/missions", get(list_missions))
-        .route("/missions/:id", get(get_mission))
+        .route("/missions/:id", get(get_mission).delete(delete_mission))
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")

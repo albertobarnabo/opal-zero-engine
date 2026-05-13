@@ -32,8 +32,9 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
       </p>
       <div className="flex items-baseline gap-2 mt-2">
         <span
-          className="text-7xl font-black tabular-nums leading-none tracking-tighter"
+          className="text-6xl font-black tabular-nums leading-none tracking-tighter"
           style={{
+            fontFamily: "var(--axion-font-main)",
             background: "linear-gradient(135deg, #f1f5f9 0%, #94a3b8 40%, #e2e8f0 75%, #cbd5e1 100%)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",

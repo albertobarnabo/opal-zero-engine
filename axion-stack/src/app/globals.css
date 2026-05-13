@@ -3,11 +3,22 @@
 @tailwind utilities;
 
 /* ── Base scale — Deep Obsidian background ───────────────────────────────── */
+:root {
+  --axion-font-main: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Display",
+    ui-sans-serif, system-ui, sans-serif;
+  --axion-font-mono: "SF Mono", "Fira Code", ui-monospace, monospace;
+}
+
 html {
   font-size: 16px;
+  font-family: var(--axion-font-main);
   background:
     radial-gradient(ellipse 200% 140% at 30% -10%, #101828 0%, #070910 42%, #030408 100%);
   min-height: 100%;
+}
+
+body {
+  font-family: var(--axion-font-main);
 }
 
 /* ── Light-Trace border: rotating "racing light" on command bar ──────────── */
@@ -54,6 +65,38 @@ html {
 
 /* Keep legacy class working */
 .animate-gradient-border { }
+
+/* ── Neural Pulse — active-processing card border ────────────────────────── */
+@keyframes neural-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(var(--axion-accent-rgb, 139,156,244), 0),
+                inset 0 1px 0 rgba(255,255,255,0.12);
+    border-color: rgba(var(--axion-accent-rgb, 139,156,244), 0.30);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(var(--axion-accent-rgb, 139,156,244), 0.18),
+                0 0 20px rgba(var(--axion-accent-rgb, 139,156,244), 0.14),
+                inset 0 1px 0 rgba(255,255,255,0.16);
+    border-color: rgba(var(--axion-accent-rgb, 139,156,244), 0.65);
+  }
+}
+.axion-neural-pulse {
+  animation: neural-pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Grain texture overlay for cards ─────────────────────────────────────── */
+.axion-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  opacity: 0.028;
+  mix-blend-mode: overlay;
+  z-index: 1;
+}
 
 /* ── Logo shimmer pulse ───────────────────────────────────────────────────── */
 @keyframes logo-shimmer {

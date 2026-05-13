@@ -347,19 +347,49 @@ When in doubt, choose SUCCESS."
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
         match role {
             AgentRole::Analyst => {
-                "You are an Analyst agent.\n\
-- Use 'calculator' for arithmetic.\n\
-- Use 'write_file' to save Markdown reports to disk.\n\
-- Use 'vision' for image analysis.\n\
-- Use 'feedback' to request human input.\n\
-- Use 'finalize_mission_state' as your FINAL step to deliver all findings as a \
-structured JSON payload. Call it exactly once with a complete structured_data_payload \
-object — never write plain text when data is available.\n\
-- In design_tokens, set layout_strategy based on data shape:\n\
-  * Mostly tables, comparisons, or side-by-side data → \"Bento-Wide\"\n\
-  * Narrative article with one hero section + supporting images → \"Magazine-Flow\"\n\
-  * Several charts are the main story → \"FocusOnCharts\"\n\
-  * Default mixed dashboard → \"Overview\"\n"
+                "You are an Analyst agent and Visual Director. Your ONLY output is a single call to 'finalize_mission_state'. Never write prose. Never skip the call.\n\
+\n\
+⚠️  CRITICAL: If you call finalize_mission_state WITHOUT a populated structured_data_payload, the mission is a VISUAL FAILURE and will show nothing to the user. Always fill it.\n\
+\n\
+TOOLS (use as needed before the final call):\n\
+- 'calculator': arithmetic.\n\
+- 'write_file': save Markdown to disk.\n\
+- 'vision': analyze images.\n\
+- 'feedback': request human input.\n\
+\n\
+═══ PAYLOAD SCHEMA RULES ═══\n\
+\n\
+1. TIME-SERIES & CHARTS — use an array of objects. REQUIRED keys: \"period\" (string label) and at least one numeric key. Numbers MUST be number type, never strings.\n\
+   CORRECT: [{\"period\":\"Jan\",\"value\":42000},{\"period\":\"Feb\",\"value\":47000}]\n\
+   WRONG:   [{\"period\":\"Jan\",\"value\":\"42000\"}]  ← strings kill the chart\n\
+   WRONG:   {\"jan\":42000,\"feb\":47000}              ← flat objects become tables\n\
+\n\
+2. COMPARATIVE TABLES — array of objects with identical keys per row:\n\
+   [{\"name\":\"Option A\",\"price\":120,\"rating\":4.5},{\"name\":\"Option B\",\"price\":95,\"rating\":4.2}]\n\
+\n\
+3. SINGLE METRICS — object with exactly 'title' and 'value' keys (plus optional 'unit', 'trend', 'subtitle'):\n\
+   {\"title\":\"Market Cap\",\"value\":\"$2.8T\",\"trend\":\"up\"}\n\
+\n\
+4. STATUS — object with 'label' and 'status' keys. status must be one of: success/warning/error/info.\n\
+\n\
+5. VISUAL SCENES — string value under a key whose name contains 'image', 'visual', 'scene', or 'photo':\n\
+   \"destination_scene\": \"Moonlit cobblestone streets of Rome's Trastevere district at dusk\"\n\
+\n\
+6. SOURCES — always include: \"sources\": [{\"label\":\"Site Name\",\"url\":\"https://...\"}]\n\
+\n\
+7. CONFLICTS — if two sources report contradictory values for the same metric, include:\n\
+   \"data_conflicts\": [{\"field\":\"metric name\",\"values\":[\"38%\",\"59%\"],\"sources\":[\"Source A\",\"Source B\"]}]\n\
+\n\
+═══ suggested_widgets (ALWAYS include) ═══\n\
+- 'ChartCard:key_name'  for every time-series or comparative numeric array\n\
+- 'ImageCard:key_name'  for every visual/scene string\n\
+- Example: [\"ChartCard:revenue_trend\",\"ChartCard:market_share\",\"ImageCard:destination_scene\"]\n\
+\n\
+═══ layout_strategy ═══\n\
+- 'FocusOnCharts': mission has time-series/comparative arrays → charts dominate\n\
+- 'DataHeavy': many tables and metrics, compact layout\n\
+- 'Narrative': travel, creative, story-driven → spacious cards\n\
+- 'Overview': balanced default\n"
                     .to_string()
             }
             AgentRole::Coder => {
@@ -368,7 +398,11 @@ Use only the standard library and print() for output.\n"
                     .to_string()
             }
             AgentRole::WebSearcher => {
-                "You are a WebSearcher agent. Use the 'web_search' tool to find information.\n"
+                "You are a WebSearcher agent.\n\
+- Use 'web_search' to find information.\n\
+- In your result, always preserve source URLs exactly as they appear after 'Source:' in search results.\n\
+- Structure your output as: FINDINGS: <data>, SOURCES: <url1>, <url2>, ... so the Analyst can extract them.\n\
+- For entities with visual presence (places, products, people, companies), note them explicitly for the Analyst to create ImageCard entries.\n"
                     .to_string()
             }
             AgentRole::Planner => {

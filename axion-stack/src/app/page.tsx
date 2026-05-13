@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Renderer, UIBlueprint, UIComponent } from "@/components/Renderer";
+import { ActionBar } from "@/components/ActionBar";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -136,14 +137,17 @@ const TEMPORAL_KEYS = ["date", "time", "month", "year", "week", "day", "quarter"
 const IMAGE_KEYS    = ["visual", "image", "photo", "scene", "render", "illustration", "picture"];
 
 function isChartArray(arr: unknown[]): boolean {
-  if (arr.length < 3) return false;
+  if (arr.length < 2) return false; // allow 2-item comparisons
   const first = arr[0];
   if (typeof first !== "object" || first === null || Array.isArray(first)) return false;
   const keys = Object.keys(first as object);
   const hasTemporalKey = keys.some((k) => TEMPORAL_KEYS.some((t) => k.toLowerCase().includes(t)));
+  // coerce string numbers — LLMs frequently serialize numbers as strings
   const numericKeys = keys.filter((k) => {
     const v = (first as Record<string, unknown>)[k];
-    return typeof v === "number";
+    if (typeof v === "number") return true;
+    if (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v))) return true;
+    return false;
   });
   return hasTemporalKey || numericKeys.length >= 2;
 }
@@ -185,6 +189,13 @@ function applicationMapper(
       if (value.length === 0) continue;
       const first = value[0];
 
+      // ChartCard FIRST — before Timeline, so numeric arrays aren't stolen by label check
+      if (isChartArray(value)) {
+        components.push({ component_type: "ChartCard", props: { title: label, data: value } });
+        continue;
+      }
+
+      // Timeline: objects with a "label" key and no strong numeric signature
       if (
         typeof first === "object" &&
         first !== null &&
@@ -192,11 +203,6 @@ function applicationMapper(
         "label" in (first as object)
       ) {
         components.push({ component_type: "Timeline", props: { title: label, steps: value } });
-        continue;
-      }
-
-      if (isChartArray(value)) {
-        components.push({ component_type: "ChartCard", props: { title: label, data: value } });
         continue;
       }
 
@@ -234,6 +240,24 @@ function applicationMapper(
         continue;
       }
 
+      // Chart coercion: >2 numeric entries → synthetic bar chart (more visual than a 2-column table)
+      const numericEntries = Object.entries(obj).filter(([, v]) => {
+        if (typeof v === "number") return true;
+        if (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v))) return true;
+        return false;
+      });
+      if (numericEntries.length > 2) {
+        const chartData = numericEntries.map(([k, v]) => ({
+          metric: formatKey(k),
+          value: typeof v === "number" ? v : Number(v),
+        }));
+        components.push({
+          component_type: "ChartCard",
+          props: { title: label, data: chartData, chartType: "bar", xKey: "metric", dataKeys: ["value"] },
+        });
+        continue;
+      }
+
       const rows = Object.entries(obj).map(([k, v]) => [formatKey(k), String(v ?? "")]);
       if (rows.length > 0) {
         components.push({
@@ -266,21 +290,15 @@ function applicationMapper(
     }
   }
 
+  // Do NOT pre-assign spans here — let Renderer.resolveSpan handle it with strategy awareness.
+  // Only set span for MetricCards with long values that always need more space.
   const withSpans = components.map((c) => ({
     ...c,
     span:
-      c.component_type === "ComparisonTable"
-        ? { col: 3, row: 1 }
-        : c.component_type === "ChartCard"
-        ? { col: 3, row: 1 }
-        : c.component_type === "Timeline"
+      c.component_type === "MetricCard" &&
+      (String(c.props.value ?? "").length > 15 || c.props.subtitle)
         ? { col: 2, row: 1 }
-        : c.component_type === "ImageCard"
-        ? { col: 1, row: 1 }
-        : c.component_type === "MetricCard" &&
-          (String(c.props.value ?? "").length > 15 || c.props.subtitle)
-        ? { col: 2, row: 1 }
-        : { col: 1, row: 1 },
+        : undefined,
   }));
 
   return { components: withSpans, layout_strategy: layoutStrategy };
@@ -403,6 +421,8 @@ export default function Home() {
   const [intent, setIntent] = useState("Plan a trip to Rome");
   const [missionStatus, setMissionStatus] = useState<MissionStatus>("idle");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const userScrolledRef = useRef(false);
   const [streamCards, setStreamCards] = useState<Record<string, StreamCard>>({});
   const [cardOrder, setCardOrder] = useState<string[]>([]);
   const [missionMeta, setMissionMeta] = useState<MissionMeta | null>(null);
@@ -414,6 +434,16 @@ export default function Home() {
   const [history, setHistory] = useState<MissionSummary[]>([]);
   const [activeMissionId, setActiveMissionId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  async function deleteMission(id: string) {
+    try {
+      await fetch(`http://localhost:8080/missions/${id}`, { method: "DELETE" });
+    } catch { /* ignore if server is down */ }
+    setHistory((prev) => prev.filter((m) => m.id !== id));
+    if (activeMissionId === id) newMission();
+    setConfirmDeleteId(null);
+  }
 
   function newMission() {
     setMissionStatus("idle");
@@ -449,6 +479,25 @@ export default function Home() {
   useEffect(() => {
     if (missionStatus === "streaming") resetDesignTokens();
   }, [missionStatus]);
+
+  // Scroll lock: track if the user has manually scrolled up
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const onScroll = () => {
+      const atBottom = stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 60;
+      userScrolledRef.current = !atBottom;
+    };
+    stage.addEventListener("scroll", onScroll, { passive: true });
+    return () => stage.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Auto-scroll to newest card when streaming, unless user scrolled up
+  useEffect(() => {
+    if (missionStatus !== "streaming" || userScrolledRef.current) return;
+    const stage = stageRef.current;
+    if (stage) stage.scrollTo({ top: stage.scrollHeight, behavior: "smooth" });
+  }, [cardOrder, missionStatus]);
 
   async function loadMission(id: string) {
     if (missionStatus === "streaming") return;
@@ -507,6 +556,7 @@ export default function Home() {
     setGovernorBanner(null);
     setFetchError(null);
     setActiveMissionId(null);
+    userScrolledRef.current = false;
 
     function handleSSEEvent(eventType: string, raw: string) {
       try {
@@ -658,7 +708,11 @@ export default function Home() {
               runMission();
             }
           }}
-          placeholder="Describe your mission intent…"
+          placeholder={
+            intent === "" && history.length > 0
+              ? `Continue: "${history[0].intent.slice(0, 55)}${history[0].intent.length > 55 ? "…" : ""}"`
+              : "Describe your mission intent…"
+          }
           disabled={isStreaming}
           className="flex-1 bg-transparent text-lg text-gray-100 placeholder-gray-500
                      focus:outline-none resize-none leading-relaxed overflow-hidden
@@ -839,89 +893,106 @@ export default function Home() {
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <AnimatePresence initial={false}>
                   {history.map((m) => {
                     const accent = accentForMission(m);
                     const isActive = activeMissionId === m.id;
                     const heights = sparklineHeights(m.id, m.task_count);
+                    const isConfirming = confirmDeleteId === m.id;
                     return (
-                      <motion.button
+                      <motion.div
                         key={m.id}
-                        onClick={() => { loadMission(m.id); setSidebarOpen(false); }}
-                        whileHover={{
-                          scale: 1.015,
-                          boxShadow: `0 0 18px ${accent}2a, 0 2px 8px rgba(0,0,0,0.30)`,
-                        }}
-                        style={{
-                          textAlign: "left",
-                          borderRadius: 12,
-                          padding: "12px 14px",
-                          cursor: "pointer",
-                          background: isActive
-                            ? `linear-gradient(135deg, ${accent}20 0%, rgba(255,255,255,0.04) 100%)`
-                            : `linear-gradient(135deg, ${accent}0d 0%, transparent 70%)`,
-                          border: `0.5px solid ${isActive ? accent + "44" : "rgba(255,255,255,0.07)"}`,
-                        }}
+                        layout
+                        initial={{ opacity: 0, x: -16 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -48, height: 0, marginBottom: 0, overflow: "hidden" }}
+                        transition={{ duration: 0.22 }}
+                        style={{ position: "relative" }}
+                        onMouseLeave={() => { if (isConfirming) setConfirmDeleteId(null); }}
                       >
-                        {/* Row 1: status icon + timestamp */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                          <span
-                            style={{
-                              width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
-                              background: m.status === "completed" ? `${accent}28` : "rgba(248,113,113,0.15)",
-                              color: m.status === "completed" ? accent : "#f87171",
-                              fontSize: 9, fontWeight: 700,
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                            }}
-                          >
-                            {m.status === "completed" ? "✓" : "✕"}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 10, fontFamily: "monospace",
-                              color: "rgba(255,255,255,0.25)", marginLeft: "auto",
-                            }}
-                          >
-                            {formatDate(m.timestamp)}
-                          </span>
-                        </div>
-                        {/* Row 2: mission title — text-lg */}
-                        <p
+                        {/* Mission card button */}
+                        <motion.button
+                          onClick={() => { loadMission(m.id); setSidebarOpen(false); }}
+                          whileHover={{ boxShadow: `0 0 18px ${accent}2a, 0 2px 8px rgba(0,0,0,0.30)` }}
                           style={{
-                            fontSize: "1.05rem",
-                            fontWeight: isActive ? 600 : 500,
-                            lineHeight: 1.4,
-                            color: isActive ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.65)",
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
+                            width: "100%",
+                            textAlign: "left",
+                            borderRadius: 12,
+                            padding: "12px 14px",
+                            paddingRight: 40,
+                            cursor: "pointer",
+                            background: isActive
+                              ? `linear-gradient(135deg, ${accent}20 0%, rgba(255,255,255,0.04) 100%)`
+                              : `linear-gradient(135deg, ${accent}0d 0%, transparent 70%)`,
+                            border: `0.5px solid ${isActive ? accent + "44" : "rgba(255,255,255,0.07)"}`,
                           }}
                         >
-                          {m.intent}
-                        </p>
-                        {/* Row 3: sparkline */}
-                        <div style={{ marginTop: 8, display: "flex", alignItems: "flex-end", gap: 2, height: 14 }}>
-                          {heights.map((h, i) => (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                             <span
-                              key={i}
                               style={{
-                                display: "inline-block", width: 3, height: h,
-                                borderRadius: 2, background: accent, opacity: 0.38 + i * 0.045,
+                                width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+                                background: m.status === "completed" ? `${accent}28` : "rgba(248,113,113,0.15)",
+                                color: m.status === "completed" ? accent : "#f87171",
+                                fontSize: 9, fontWeight: 700,
+                                display: "flex", alignItems: "center", justifyContent: "center",
                               }}
-                            />
-                          ))}
-                          <span
+                            >
+                              {m.status === "completed" ? "✓" : "✕"}
+                            </span>
+                            <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.25)", marginLeft: "auto" }}>
+                              {formatDate(m.timestamp)}
+                            </span>
+                          </div>
+                          <p
                             style={{
-                              marginLeft: 4, fontSize: 9, fontFamily: "monospace",
-                              color: `${accent}90`, lineHeight: "13px",
+                              fontSize: "1.05rem", fontWeight: isActive ? 600 : 500, lineHeight: 1.4,
+                              color: isActive ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.65)",
+                              display: "-webkit-box", WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical", overflow: "hidden",
                             }}
                           >
-                            {m.task_count}t
-                          </span>
-                        </div>
-                      </motion.button>
+                            {m.intent}
+                          </p>
+                          <div style={{ marginTop: 8, display: "flex", alignItems: "flex-end", gap: 2, height: 14 }}>
+                            {heights.map((h, i) => (
+                              <span key={i} style={{ display: "inline-block", width: 3, height: h, borderRadius: 2, background: accent, opacity: 0.38 + i * 0.045 }} />
+                            ))}
+                            <span style={{ marginLeft: 4, fontSize: 9, fontFamily: "monospace", color: `${accent}90`, lineHeight: "13px" }}>{m.task_count}t</span>
+                          </div>
+                        </motion.button>
+
+                        {/* Delete button — shown on hover via CSS group */}
+                        <motion.button
+                          onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            if (isConfirming) {
+                              deleteMission(m.id);
+                            } else {
+                              setConfirmDeleteId(m.id);
+                            }
+                          }}
+                          title={isConfirming ? "Click again to confirm" : "Delete mission"}
+                          animate={{ opacity: isConfirming ? 1 : 0 }}
+                          whileHover={{ opacity: 1 }}
+                          transition={{ duration: 0.15 }}
+                          style={{
+                            position: "absolute", top: "50%", right: 10,
+                            transform: "translateY(-50%)",
+                            width: 26, height: 26, borderRadius: 7,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: isConfirming ? "rgba(239,68,68,0.18)" : "rgba(255,255,255,0.07)",
+                            border: `1px solid ${isConfirming ? "rgba(239,68,68,0.45)" : "rgba(255,255,255,0.10)"}`,
+                            color: isConfirming ? "#f87171" : "rgba(255,255,255,0.40)",
+                            fontSize: 12, cursor: "pointer",
+                            transition: "background 0.15s, border-color 0.15s, color 0.15s",
+                          }}
+                        >
+                          {isConfirming ? "✕" : "🗑"}
+                        </motion.button>
+                      </motion.div>
                     );
                   })}
+                  </AnimatePresence>
                 </div>
               )}
             </div>
@@ -959,7 +1030,7 @@ export default function Home() {
       </motion.button>
 
       {/* ── Stage (scrolling content area) ───────────────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", position: "relative", zIndex: 1 }}>
+      <div ref={stageRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", position: "relative", zIndex: 1 }}>
 
         {/* Idle: in-flow centered hero header */}
         <AnimatePresence>
@@ -985,7 +1056,7 @@ export default function Home() {
                 alt="Axion"
                 style={{
                   width: 160, height: 160,
-                  filter: "invert(1)",
+                  filter: "brightness(0) invert(1)",
                   mixBlendMode: "screen",
                   marginBottom: 16,
                 }}
@@ -1280,8 +1351,8 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Results section */}
-              {hasCards && missionStatus !== "streaming" && (
+              {/* Results section — visible during streaming AND after completion */}
+              {hasCards && (
                 <section className="space-y-5">
 
                   {/* Section header */}
@@ -1335,6 +1406,41 @@ export default function Home() {
                         <div className={missionStatus === "complete" && missionState ? "axion-sheen-wrapper" : ""}>
                           <Renderer blueprint={blueprint} />
                         </div>
+
+                        {/* Conflict badge — when Analyst flagged conflicting data */}
+                        {Array.isArray((missionState.data_payload as Record<string,unknown>).data_conflicts) && (
+                          <div style={{
+                            marginTop: 16,
+                            padding: "12px 16px",
+                            borderRadius: 14,
+                            background: "rgba(251,191,36,0.08)",
+                            border: "1px solid rgba(251,191,36,0.28)",
+                            backdropFilter: "blur(20px)",
+                            display: "flex", alignItems: "flex-start", gap: 10,
+                          }}>
+                            <span style={{ fontSize: 15, flexShrink: 0 }}>⚠️</span>
+                            <div>
+                              <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(251,191,36,0.90)", marginBottom: 4 }}>
+                                Conflicting Data Detected
+                              </p>
+                              {((missionState.data_payload as Record<string,unknown>).data_conflicts as {field:string; values:string[]; sources:string[]}[]).map((c, i) => (
+                                <p key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 2 }}>
+                                  <strong style={{ color: "rgba(255,255,255,0.75)" }}>{c.field}:</strong>{" "}
+                                  {c.values.join(" vs ")} — {c.sources.join(", ")}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Action Bar — completed missions only */}
+                        {missionStatus === "complete" && (
+                          <ActionBar
+                            intent={missionMeta?.intent ?? intent}
+                            missionState={missionState}
+                            onNewMission={(newIntent) => { setIntent(newIntent); setSidebarOpen(false); setTimeout(() => textareaRef.current?.focus(), 80); }}
+                          />
+                        )}
                       </div>
                     ) : null;
                   })()}
@@ -1368,33 +1474,37 @@ export default function Home() {
                           const isRunning = card.status === "running";
 
                           return (
-                            <article
+                            <motion.article
                               key={slug}
-                              className={`border rounded-xl transition-opacity ${isRunning ? "opacity-80" : "opacity-100"}`}
+                              layout
+                              initial={{ opacity: 0, y: 14 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.28 }}
+                              className={`rounded-2xl ${isRunning ? "axion-neural-pulse" : ""}`}
                               style={{
-                                background: "var(--axion-glass-bg, rgba(31,41,55,0.6))",
-                                borderColor: isRunning
-                                  ? "var(--axion-accent, #6366f1)"
-                                  : "var(--axion-glass-border, rgba(55,65,81,0.7))",
-                                backdropFilter: "blur(var(--axion-blur, 0px))",
-                                WebkitBackdropFilter: "blur(var(--axion-blur, 0px))",
+                                background: isRunning
+                                  ? "rgba(255,255,255,0.04)"
+                                  : "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+                                border: isRunning
+                                  ? `1px solid rgba(var(--axion-accent-rgb, 139,156,244), 0.40)`
+                                  : "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
+                                backdropFilter: "blur(var(--axion-blur, 56px))",
+                                WebkitBackdropFilter: "blur(var(--axion-blur, 56px))",
                                 padding: "var(--axion-pad, 20px)",
-                                boxShadow: isRunning ? "0 0 16px var(--axion-glow, transparent)" : "none",
+                                boxShadow: isRunning
+                                  ? "inset 0 1px 0 rgba(255,255,255,0.10)"
+                                  : "inset 0 1px 0 rgba(255,255,255,0.08)",
                               }}
                             >
                               <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
                                 <span>{icon}</span>
                                 <span>{label}</span>
                                 {isRunning && (
-                                  <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400 font-normal">
-                                    <span
-                                      className="w-3 h-3 rounded-full animate-spin inline-block"
-                                      style={{
-                                        border: "2px solid var(--axion-accent, #6366f1)",
-                                        borderTopColor: "transparent",
-                                      }}
-                                    />
-                                    Working…
+                                  <span className="ml-auto flex items-center gap-1.5 text-xs font-normal"
+                                    style={{ color: "var(--axion-accent, #a5b4fc)" }}>
+                                    <span className="w-2 h-2 rounded-full inline-block"
+                                      style={{ background: "var(--axion-accent, #a5b4fc)", animation: "neural-pulse 1.4s ease-in-out infinite" }} />
+                                    Processing…
                                   </span>
                                 )}
                                 {card.status === "failed" && (
@@ -1403,13 +1513,21 @@ export default function Home() {
                               </h2>
 
                               {isRunning ? (
-                                <p className="text-xs text-gray-500 italic animate-pulse">Agent is working…</p>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                  {[1, 0.55, 0.3].map((op, i) => (
+                                    <div key={i} className="animate-pulse" style={{
+                                      height: 10, borderRadius: 6,
+                                      background: `rgba(255,255,255,${op * 0.08})`,
+                                      width: i === 2 ? "55%" : "100%",
+                                    }} />
+                                  ))}
+                                </div>
                               ) : showDetails && card.result ? (
                                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                                   {card.result}
                                 </ReactMarkdown>
                               ) : null}
-                            </article>
+                            </motion.article>
                           );
                         })}
                       </div>
