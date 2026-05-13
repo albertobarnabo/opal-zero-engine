@@ -51,12 +51,36 @@ pub fn execute_python(arguments: &str) -> Result<String, String> {
     std::fs::write(&tmp_path, &args.code)
         .map_err(|e| format!("Failed to write temp script: {}", e))?;
 
+    // Wrap execution in an AST-aware runner so that bare expressions on the
+    // last line (e.g. `1 + 1`, `result`, `df.head()`) are automatically
+    // printed — matching Python REPL / Jupyter notebook behaviour.
+    let runner_path = std::env::temp_dir().join(format!("axion_{}_run.py", nonce));
+    let runner_script = format!(
+        "import ast as _a, sys as _s\n\
+         with open(r'{}') as _f:\n\
+         \t_c = _f.read()\n\
+         _t = _a.parse(_c)\n\
+         _ns = {{'__name__': '__main__'}}\n\
+         if _t.body and isinstance(_t.body[-1], _a.Expr):\n\
+         \t_l = _t.body.pop()\n\
+         \texec(compile(_t, '<axion>', 'exec'), _ns)\n\
+         \t_v = eval(compile(_a.Expression(body=_l.value), '<axion>', 'eval'), _ns)\n\
+         \tif _v is not None:\n\
+         \t\tprint(repr(_v))\n\
+         else:\n\
+         \texec(compile(_t, '<axion>', 'exec'), _ns)\n",
+        tmp_path.to_string_lossy()
+    );
+    std::fs::write(&runner_path, &runner_script)
+        .map_err(|e| format!("Failed to write runner script: {}", e))?;
+
     let output = std::process::Command::new("python3")
-        .arg(&tmp_path)
+        .arg(&runner_path)
         .output();
 
-    // Always clean up, even if execution failed.
+    // Always clean up both files, even if execution failed.
     let _ = std::fs::remove_file(&tmp_path);
+    let _ = std::fs::remove_file(&runner_path);
 
     let output = output.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -162,13 +186,31 @@ mod tests {
     }
 
     #[test]
-    fn execute_python_no_output_marker() {
+    fn execute_python_no_output_marker_for_pure_assignment() {
         let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
-        // Code that runs but produces no stdout or stderr.
+        // An assignment statement has no expression value — still produces no output.
         let json = r#"{"code": "x = 42"}"#;
         let result = execute_python(json).unwrap();
-        assert!(result.contains("*(no output)*"));
+        assert!(result.contains("*(no output)*"), "pure assignment should still give no-output");
         assert!(result.contains("```python"));
+    }
+
+    #[test]
+    fn execute_python_auto_prints_last_expression() {
+        let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
+        // A bare expression on the last line should be auto-printed (REPL behaviour).
+        let json = r#"{"code": "x = 42\nx"}"#;
+        let result = execute_python(json).unwrap();
+        assert!(result.contains("42"), "bare name expression should auto-print its value");
+        assert!(!result.contains("*(no output)*"));
+    }
+
+    #[test]
+    fn execute_python_auto_prints_arithmetic_expression() {
+        let _guard = EXEC_LOCK.lock().expect("EXEC_LOCK poisoned");
+        let json = r#"{"code": "300 + 240"}"#;
+        let result = execute_python(json).unwrap();
+        assert!(result.contains("540"), "arithmetic expression should auto-print result");
     }
 
     #[test]
@@ -213,7 +255,8 @@ mod tests {
         let _ = execute_python(r#"{"code": "x = 1"}"#);
         let after = snapshot(&tmp);
 
-        // Any file in `after` but not in `before` is a leak from this call.
+        // Any axion_* file in `after` but not in `before` is a leak (both the
+        // user script and the runner wrapper must be cleaned up).
         let leaked: Vec<_> = after.difference(&before).collect();
         assert!(
             leaked.is_empty(),

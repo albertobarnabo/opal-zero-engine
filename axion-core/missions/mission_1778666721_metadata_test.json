@@ -1,0 +1,15 @@
+{
+  "id": "mission_1778666721_metadata_test",
+  "timestamp": 1778666721,
+  "intent": "Metadata test",
+  "task_count": 2,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "task_one": "mock result",
+      "task_two": "mock result"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use crate::engine::{AiProvider, ToolResponse};
 use crate::protocol::{AgentRole, ContextBus, Task, TaskStatus};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +22,17 @@ impl Plan {
     }
 
     pub fn add_task(&mut self, description: &str, dependencies: Vec<Uuid>, role: AgentRole) -> Uuid {
+        self.add_task_excluded(description, dependencies, role, vec![])
+    }
+
+    /// Like [`add_task`] but also records tools the agent must not be offered.
+    pub fn add_task_excluded(
+        &mut self,
+        description: &str,
+        dependencies: Vec<Uuid>,
+        role: AgentRole,
+        excluded_tools: Vec<String>,
+    ) -> Uuid {
         let id = Uuid::new_v4();
         let task = Task {
             id,
@@ -30,10 +42,178 @@ impl Plan {
             role,
             result: None,
             depends_on: dependencies,
+            excluded_tools,
         };
         self.tasks.push(task);
         id
     }
+}
+
+/// Ask the LLM to decompose `intent` into concrete tasks and return a ready [`Plan`].
+///
+/// Falls back to a single open-ended Analyst task if the LLM returns
+/// unparseable output, so the mission always has at least one task to run.
+pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> Plan {
+    let mut plan = Plan::new(intent);
+
+    let prompt = format!(
+        "You are a mission planner. Decompose the user request into 2-5 concrete tasks \
+         for specialist agents.\n\n\
+         Available roles:\n\
+         - WebSearcher: searches the web for factual information\n\
+         - Analyst: runs calculations, synthesizes findings, builds dashboards\n\
+         - Coder: writes and executes Python code\n\n\
+         Rules:\n\
+         - Always include a final Analyst task to synthesize the research results.\n\
+         - Do NOT add a build_dynamic_ui step — the system injects it automatically.\n\
+         - Keep each description specific and actionable (one sentence).\n\n\
+         Respond ONLY with valid JSON, no markdown:\n\
+         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\"}}]}}\n\n\
+         User intent: {}",
+        intent
+    );
+
+    if let Ok(ToolResponse::Text(text)) = provider.generate_response(&prompt, None).await {
+        #[derive(Deserialize)]
+        struct PlanJson { tasks: Vec<TaskJson> }
+        #[derive(Deserialize)]
+        struct TaskJson { description: String, role: String }
+
+        let json_str = crate::governor::extract_json(&text);
+        if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
+            if !parsed.tasks.is_empty() {
+                let mut prev_ids: Vec<Uuid> = vec![];
+                for t in parsed.tasks {
+                    let role = match t.role.as_str() {
+                        "Analyst" => AgentRole::Analyst,
+                        "Coder"   => AgentRole::Coder,
+                        _         => AgentRole::WebSearcher,
+                    };
+                    let id = plan.add_task(&t.description, prev_ids.clone(), role);
+                    prev_ids.push(id);
+                }
+                return plan;
+            }
+        }
+    }
+
+    // Fallback: single open-ended Analyst task.
+    println!("  ⚠️  Planner: LLM did not return a valid task list — using single-task fallback.");
+    plan.add_task(intent, vec![], AgentRole::Analyst);
+    plan
+}
+
+/// Ask the LLM to generate alternative tasks for failed ones (dynamic re-planning).
+///
+/// Called by `run_loop` after the second consecutive failure round. Returns an
+/// empty Vec when the LLM is unavailable or returns unparseable output — callers
+/// should fall back to a plain reset+retry in that case.
+pub async fn repair_failed_tasks(
+    failed: &[Task],
+    original_intent: &str,
+    provider: &dyn AiProvider,
+) -> Vec<crate::governor::NewTask> {
+    if failed.is_empty() {
+        return vec![];
+    }
+
+    // Short-circuit: if the failing task was finalize_mission_state, inject a
+    // targeted retry with a simplified payload rather than asking the LLM for
+    // generic alternatives (which tend to change the topic entirely).
+    let finalize_failed = failed
+        .iter()
+        .any(|t| matches!(t.role, AgentRole::Analyst) && t.intent.contains("finalize_mission_state"));
+    if finalize_failed {
+        println!("  🧠 Re-planner: finalize_mission_state failed — injecting targeted retry.");
+        return vec![crate::governor::NewTask {
+            description: "Call finalize_mission_state with a SIMPLIFIED payload. \
+Use a flat structured_data_payload with 3-5 scalar keys only (strings or numbers). \
+Pull the most important facts from the PREVIOUS TASK RESULTS in your context \
+(prices, totals, recommendations) and map each one to a descriptive key. \
+Call finalize_mission_state EXACTLY ONCE."
+                .to_string(),
+            role: AgentRole::Analyst,
+            excluded_tools: vec![],
+        }];
+    }
+
+    let failed_summary: String = failed
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!("{}. [{}] \"{}\"", i + 1, t.role.as_str(), t.intent))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Detect whether the failing tasks included Python execution so we can
+    // blacklist `python_interpreter` and steer the LLM toward alternatives.
+    let python_failed = failed.iter().any(|t| matches!(t.role, AgentRole::Coder));
+    let python_note = if python_failed {
+        "\nIMPORTANT: Python execution failed. Do NOT suggest Coder/Python tasks. \
+         Use Analyst (calculator tool) or WebSearcher to find the answer instead."
+    } else {
+        ""
+    };
+
+    let prompt = format!(
+        "You are a self-healing AI agent. The following tasks failed during a mission and \
+         need alternative approaches.\n\n\
+         Original mission: {original_intent}\n\n\
+         Failed tasks:\n{failed_summary}\n\n\
+         Generate 1-3 replacement tasks using a DIFFERENT approach \
+         (e.g. if a web search failed, try a different query or reason from context; \
+         if a tool errored, break the work into smaller steps or use a simpler method).\
+         {python_note}\n\n\
+         Respond ONLY with valid JSON, no markdown:\n\
+         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher|Analyst\"}}]}}"
+    );
+
+    if let Ok(ToolResponse::Text(text)) = provider.generate_response(&prompt, None).await {
+        #[derive(Deserialize)]
+        struct RepairJson {
+            tasks: Vec<TaskJson>,
+        }
+        #[derive(Deserialize)]
+        struct TaskJson {
+            description: String,
+            role: String,
+        }
+
+        // When Python failed, blacklist python_interpreter so the repair agent
+        // cannot fall back to the same tool even if the LLM tries.
+        let excluded: Vec<String> = if python_failed {
+            vec!["python_interpreter".to_string()]
+        } else {
+            vec![]
+        };
+
+        let json_str = crate::governor::extract_json(&text);
+        if let Ok(parsed) = serde_json::from_str::<RepairJson>(&json_str) {
+            let repaired: Vec<crate::governor::NewTask> = parsed
+                .tasks
+                .into_iter()
+                .map(|t| {
+                    let role = match t.role.as_str() {
+                        "Analyst" => AgentRole::Analyst,
+                        // Explicitly block the LLM from re-selecting Coder when
+                        // Python has already failed — force Analyst instead.
+                        "Coder" if python_failed => AgentRole::Analyst,
+                        "Coder"   => AgentRole::Coder,
+                        _         => AgentRole::WebSearcher,
+                    };
+                    crate::governor::NewTask {
+                        description: t.description,
+                        role,
+                        excluded_tools: excluded.clone(),
+                    }
+                })
+                .collect();
+            if !repaired.is_empty() {
+                return repaired;
+            }
+        }
+    }
+
+    vec![]
 }
 
 /// Derive a short, stable, location-aware key from a task intent.

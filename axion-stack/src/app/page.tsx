@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Renderer, UIBlueprint } from "@/components/Renderer";
+import { Renderer, UIBlueprint, UIComponent } from "@/components/Renderer";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,173 @@ interface MissionSummary {
 }
 
 type MissionStatus = "idle" | "streaming" | "complete" | "failed";
+
+// ── MissionState & DesignTokens (the backend's canonical output) ─────────────
+
+interface DesignTokens {
+  primary_accent: string;
+  glass_intensity: number;
+  theme_preset: string;
+  layout_density: "spacious" | "compact";
+}
+
+interface MissionState {
+  intent_resolved: boolean;
+  data_payload: Record<string, unknown>;
+  verification_logs: string[];
+  design_tokens: DesignTokens;
+}
+
+// ── Theme engine ──────────────────────────────────────────────────────────────
+// Converts DesignTokens into CSS custom properties on <html> so every
+// component picks them up without prop-drilling.
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "").padEnd(6, "0");
+  return [
+    parseInt(h.slice(0, 2), 16) || 99,
+    parseInt(h.slice(2, 4), 16) || 102,
+    parseInt(h.slice(4, 6), 16) || 241,
+  ];
+}
+
+function applyDesignTokens(tokens: DesignTokens) {
+  const root = document.documentElement;
+  const [r, g, b] = hexToRgb(tokens.primary_accent);
+  const gi = Math.max(0, Math.min(1, tokens.glass_intensity));
+  const blur = Math.round(4 + gi * 28);          // 4–32 px
+  const bgAlpha = (0.04 + gi * 0.18).toFixed(3); // 0.04–0.22
+  const borderAlpha = (0.2 + gi * 0.3).toFixed(3); // 0.2–0.5
+  const compact = tokens.layout_density === "compact";
+
+  root.style.setProperty("--axion-accent",       tokens.primary_accent);
+  root.style.setProperty("--axion-blur",         `${blur}px`);
+  root.style.setProperty("--axion-glass-bg",     `rgba(${r},${g},${b},${bgAlpha})`);
+  root.style.setProperty("--axion-glass-border", `rgba(${r},${g},${b},${borderAlpha})`);
+  root.style.setProperty("--axion-glow",         `rgba(${r},${g},${b},0.22)`);
+  root.style.setProperty("--axion-pad",          compact ? "12px" : "20px");
+  root.style.setProperty("--axion-gap",          compact ? "8px"  : "12px");
+}
+
+function resetDesignTokens() {
+  const props = [
+    "--axion-accent", "--axion-blur", "--axion-glass-bg",
+    "--axion-glass-border", "--axion-glow", "--axion-pad", "--axion-gap",
+  ];
+  props.forEach((p) => document.documentElement.style.removeProperty(p));
+}
+
+// ── ApplicationMapper ─────────────────────────────────────────────────────────
+// Converts a raw `data_payload` JSON object into a `UIBlueprint` that the
+// existing `Renderer` can display.  The Brain provides facts; we decide the UI.
+
+function formatKey(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function applicationMapper(payload: Record<string, unknown>): UIBlueprint {
+  const components: UIComponent[] = [];
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === null || value === undefined) continue;
+    const label = formatKey(key);
+    const lk = key.toLowerCase();
+
+    // ── Arrays ──────────────────────────────────────────────────────────────
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      const first = value[0];
+
+      // Array of step-like objects (have a "label" key) → Timeline
+      if (
+        typeof first === "object" &&
+        first !== null &&
+        !Array.isArray(first) &&
+        "label" in (first as object)
+      ) {
+        components.push({ component_type: "Timeline", props: { title: label, steps: value } });
+        continue;
+      }
+
+      // Array of plain objects → ComparisonTable
+      if (typeof first === "object" && first !== null && !Array.isArray(first)) {
+        const headers = Object.keys(first as object);
+        const rows = value.map((item) =>
+          headers.map((h) => {
+            const v = (item as Record<string, unknown>)[h];
+            return v != null ? String(v) : "";
+          })
+        );
+        components.push({
+          component_type: "ComparisonTable",
+          props: { title: label, headers: headers.map(formatKey), rows },
+        });
+        continue;
+      }
+
+      // Array of primitives → single-column ComparisonTable
+      components.push({
+        component_type: "ComparisonTable",
+        props: { title: label, headers: [label], rows: value.map((v) => [String(v)]) },
+      });
+      continue;
+    }
+
+    // ── Objects ───────────────────────────────────────────────────────────────
+    if (typeof value === "object" && value !== null) {
+      const obj = value as Record<string, unknown>;
+
+      if ("title" in obj && "value" in obj) {
+        components.push({ component_type: "MetricCard", props: obj });
+        continue;
+      }
+      if ("label" in obj && "status" in obj) {
+        components.push({ component_type: "StatusBadge", props: obj });
+        continue;
+      }
+
+      const rows = Object.entries(obj).map(([k, v]) => [formatKey(k), String(v ?? "")]);
+      if (rows.length > 0) {
+        components.push({
+          component_type: "ComparisonTable",
+          props: { title: label, headers: ["Field", "Value"], rows },
+        });
+      }
+      continue;
+    }
+
+    // ── Scalars ───────────────────────────────────────────────────────────────
+    const isStatus =
+      lk.includes("status") || lk.includes("state") || typeof value === "boolean";
+
+    if (isStatus) {
+      const strVal = String(value).toLowerCase();
+      const status =
+        value === true ||
+        strVal === "ok" ||
+        strVal === "success" ||
+        strVal === "done" ||
+        strVal === "completed"
+          ? "success"
+          : value === false || strVal === "error" || strVal === "failed"
+          ? "error"
+          : strVal.includes("warn") || strVal.includes("partial")
+          ? "warning"
+          : "info";
+      components.push({
+        component_type: "StatusBadge",
+        props: { label, status, description: String(value) },
+      });
+    } else {
+      components.push({ component_type: "MetricCard", props: { title: label, value: String(value) } });
+    }
+  }
+
+  return { components };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -196,7 +363,7 @@ export default function Home() {
   const [streamCards, setStreamCards] = useState<Record<string, StreamCard>>({});
   const [cardOrder, setCardOrder] = useState<string[]>([]);
   const [missionMeta, setMissionMeta] = useState<MissionMeta | null>(null);
-  const [uiBlueprint, setUiBlueprint] = useState<UIBlueprint | null>(null);
+  const [missionState, setMissionState] = useState<MissionState | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [activeAgent, setActiveAgent] = useState<{ role: string; intent: string } | null>(null);
   const [governorBanner, setGovernorBanner] = useState<string | null>(null);
@@ -217,13 +384,24 @@ export default function Home() {
     fetchHistory();
   }, [fetchHistory]);
 
+  // Apply design tokens whenever a new mission state arrives; reset on new run.
+  useEffect(() => {
+    if (missionState?.design_tokens) {
+      applyDesignTokens(missionState.design_tokens);
+    }
+  }, [missionState]);
+
+  useEffect(() => {
+    if (missionStatus === "streaming") resetDesignTokens();
+  }, [missionStatus]);
+
   // Load a past mission from the snapshot store.
   async function loadMission(id: string) {
     if (missionStatus === "streaming") return;
     setActiveMissionId(id);
     setFetchError(null);
     setGovernorBanner(null);
-    setUiBlueprint(null);
+    setMissionState(null);
     setShowDetails(false);
 
     try {
@@ -253,8 +431,8 @@ export default function Home() {
         intent: data.intent ?? "",
         layout_hint: data.layout_hint,
       });
-      if (data.ui_blueprint?.components?.length) {
-        setUiBlueprint(data.ui_blueprint as UIBlueprint);
+      if (data.mission_state?.data_payload) {
+        setMissionState(data.mission_state as MissionState);
       }
       setMissionStatus("complete");
       setActiveAgent(null);
@@ -271,7 +449,7 @@ export default function Home() {
     setStreamCards({});
     setCardOrder([]);
     setMissionMeta(null);
-    setUiBlueprint(null);
+    setMissionState(null);
     setShowDetails(false);
     setActiveAgent(null);
     setGovernorBanner(null);
@@ -324,8 +502,14 @@ export default function Home() {
               intent: p.intent,
               layout_hint: p.layout_hint,
             });
-            if (p.ui_blueprint?.components?.length) {
-              setUiBlueprint(p.ui_blueprint as UIBlueprint);
+            if (p.mission_state?.data_payload) {
+              setMissionState(p.mission_state as MissionState);
+              // State payload is the primary view — keep agent reasoning collapsed.
+              setShowDetails(false);
+            } else {
+              // No state payload produced — auto-reveal agent cards so the user
+              // always sees a result rather than a blank screen.
+              setShowDetails(true);
             }
             setMissionStatus("complete");
             setActiveAgent(null);
@@ -448,8 +632,8 @@ export default function Home() {
                         </span>
                         {m.layout_hint && (
                           <span className="text-[10px] text-gray-500">
-                            {m.layout_hint === "Designed"
-                              ? "📊"
+                            {m.layout_hint === "Synthesized"
+                              ? "🧠"
                               : m.layout_hint === "Analytical"
                               ? "🐍"
                               : "🗺️"}
@@ -500,10 +684,31 @@ export default function Home() {
 
           {/* Active agent indicator — shows which specialist is working */}
           {isStreaming && activeAgent && (
-            <div className="flex items-center gap-3 rounded-xl bg-gray-800/50 border border-gray-700/60 px-4 py-3">
-              <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            <div
+              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{
+                background: "var(--axion-glass-bg, rgb(31 41 55 / 0.5))",
+                border: "1px solid",
+                borderColor: "var(--axion-glass-border, rgb(55 65 81 / 0.6))",
+                backdropFilter: "blur(var(--axion-blur, 0px))",
+                WebkitBackdropFilter: "blur(var(--axion-blur, 0px))",
+                boxShadow: "0 0 18px var(--axion-glow, transparent)",
+              }}
+            >
+              <div
+                className="w-4 h-4 rounded-full animate-spin shrink-0"
+                style={{
+                  border: "2px solid var(--axion-accent, #6366f1)",
+                  borderTopColor: "transparent",
+                }}
+              />
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-indigo-300">{activeAgent.role}</p>
+                <p
+                  className="text-xs font-semibold"
+                  style={{ color: "var(--axion-accent, #a5b4fc)" }}
+                >
+                  {activeAgent.role}
+                </p>
                 <p className="text-xs text-gray-400 truncate">{activeAgent.intent}</p>
               </div>
             </div>
@@ -512,7 +717,14 @@ export default function Home() {
           {/* Initial spinner — before the first task_started event */}
           {isStreaming && !hasCards && !activeAgent && (
             <div className="flex flex-col items-center gap-4 py-10">
-              <div className="w-9 h-9 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <div
+                className="w-9 h-9 rounded-full animate-spin"
+                style={{
+                  border: "3px solid var(--axion-accent, #6366f1)",
+                  borderTopColor: "transparent",
+                  boxShadow: "0 0 16px var(--axion-glow, rgba(99,102,241,0.3))",
+                }}
+              />
               <p className="text-gray-400 text-sm">🤖 Axion swarm initializing…</p>
             </div>
           )}
@@ -531,8 +743,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* Result section — visible while streaming AND after completion */}
-          {hasCards && (
+          {/* Result section — hidden during streaming; revealed only after completion */}
+          {hasCards && missionStatus !== "streaming" && (
             <section className="space-y-4">
 
               {/* ── Section header ── */}
@@ -554,8 +766,8 @@ export default function Home() {
                   )}
                 {missionMeta?.layout_hint && (
                   <span className="text-xs text-gray-500">
-                    {missionMeta.layout_hint === "Designed"
-                      ? "📊 Designed"
+                    {missionMeta.layout_hint === "Synthesized"
+                      ? "🧠 Synthesized"
                       : missionMeta.layout_hint === "Analytical"
                       ? "🐍 Analytical"
                       : "🗺️ Itinerary"}
@@ -567,30 +779,33 @@ export default function Home() {
                 <p className="text-xs text-gray-500 italic -mt-2">{missionMeta.intent}</p>
               )}
 
-              {/* ── Dashboard (Renderer) — shown when a UIBlueprint is available ── */}
-              {uiBlueprint && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-semibold uppercase tracking-widest text-pink-400/80">
-                      📊 Dashboard
-                    </p>
-                    <button
-                      onClick={() => setShowDetails((v) => !v)}
-                      className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
-                    >
-                      {showDetails ? "Hide agent reasoning" : "Show agent reasoning"}
-                    </button>
+              {/* ── Dashboard — shown when a MissionState payload is available ── */}
+              {missionState && (() => {
+                const blueprint = applicationMapper(missionState.data_payload);
+                return blueprint.components.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-semibold uppercase tracking-widest text-pink-400/80">
+                        🧠 Synthesized State
+                      </p>
+                      <button
+                        onClick={() => setShowDetails((v) => !v)}
+                        className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+                      >
+                        {showDetails ? "Hide agent reasoning" : "Show agent reasoning"}
+                      </button>
+                    </div>
+                    <Renderer blueprint={blueprint} />
                   </div>
-                  <Renderer blueprint={uiBlueprint} />
-                </div>
-              )}
+                ) : null;
+              })()}
 
               {/* ── Raw agent cards ─────────────────────────────────────────────
-                   Always visible when no blueprint exists.
-                   Collapsible under "Agent Reasoning" when a blueprint is shown. ── */}
-              {(!uiBlueprint || showDetails) && (() => {
-                // Filter out the card whose result IS the UIBlueprint JSON so raw JSON
-                // is never shown as a markdown block.
+                   Always visible when no state payload exists.
+                   Collapsible under "Agent Reasoning" when a state is shown. ── */}
+              {(!missionState || showDetails) && (() => {
+                // Filter out the card whose result IS the MissionState JSON so raw
+                // JSON is never shown as a markdown block.
                 const visibleSlugs = cardOrder.filter((slug) => {
                   const result = streamCards[slug]?.result;
                   if (!result) return true;
@@ -598,8 +813,8 @@ export default function Home() {
                     const parsed = JSON.parse(result);
                     return !(
                       parsed &&
-                      Array.isArray(parsed.components) &&
-                      parsed.components.length > 0
+                      typeof parsed.data_payload === "object" &&
+                      parsed.data_payload !== null
                     );
                   } catch {
                     return true;
@@ -610,7 +825,7 @@ export default function Home() {
 
                 return (
                   <div className="space-y-4">
-                    {uiBlueprint && (
+                    {missionState && (
                       <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-600">
                         Agent Reasoning
                       </p>
@@ -624,16 +839,34 @@ export default function Home() {
                       return (
                         <article
                           key={slug}
-                          className={`bg-gray-800/60 border ${accent} rounded-xl p-5 transition-opacity ${
+                          className={`border rounded-xl transition-opacity ${
                             isRunning ? "opacity-80" : "opacity-100"
                           }`}
+                          style={{
+                            background: "var(--axion-glass-bg, rgb(31 41 55 / 0.6))",
+                            borderColor: isRunning
+                              ? "var(--axion-accent, #6366f1)"
+                              : `var(--axion-glass-border, rgb(55 65 81 / 0.7))`,
+                            backdropFilter: "blur(var(--axion-blur, 0px))",
+                            WebkitBackdropFilter: "blur(var(--axion-blur, 0px))",
+                            padding: "var(--axion-pad, 20px)",
+                            boxShadow: isRunning
+                              ? "0 0 16px var(--axion-glow, transparent)"
+                              : "none",
+                          }}
                         >
                           <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
                             <span>{icon}</span>
                             <span>{label}</span>
                             {isRunning && (
                               <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400 font-normal">
-                                <span className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin inline-block" />
+                                <span
+                                  className="w-3 h-3 rounded-full animate-spin inline-block"
+                                  style={{
+                                    border: "2px solid var(--axion-accent, #6366f1)",
+                                    borderTopColor: "transparent",
+                                  }}
+                                />
                                 Working…
                               </span>
                             )}
@@ -644,17 +877,17 @@ export default function Home() {
                             )}
                           </h2>
 
-                          {card.result ? (
+                          {isRunning ? (
+                            <p className="text-xs text-gray-500 italic animate-pulse">
+                              Agent is working…
+                            </p>
+                          ) : showDetails && card.result ? (
                             <ReactMarkdown
                               remarkPlugins={[remarkGfm]}
                               components={mdComponents}
                             >
                               {card.result}
                             </ReactMarkdown>
-                          ) : isRunning ? (
-                            <p className="text-xs text-gray-500 italic animate-pulse">
-                              Agent is working…
-                            </p>
                           ) : null}
                         </article>
                       );

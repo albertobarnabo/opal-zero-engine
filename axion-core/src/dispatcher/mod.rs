@@ -117,8 +117,12 @@ async fn execute_with_role(
     prompt.push_str(&format!("\nTASK: {}", task.intent));
     println!("    DEBUG: Generated prompt: {}", prompt);
 
-    // Get available tools for this role (cloned so we can reuse for the follow-up turn).
-    let tools = get_tools_for_role(&task.role);
+    // Get available tools for this role, then strip any the task has blacklisted
+    // (set by the re-planner when a tool has already failed once).
+    let tools: Vec<Tool> = get_tools_for_role(&task.role)
+        .into_iter()
+        .filter(|t| !task.excluded_tools.contains(&t.name))
+        .collect();
     let tools_clone = tools.clone();
 
     match provider.generate_response(&prompt, Some(tools)).await {
@@ -191,7 +195,7 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     // Role → canonical tool names.
     // `memory` is included for roles that may need to reference past missions.
     let names: &[&str] = match role {
-        AgentRole::Analyst     => &["calculator", "write_file", "build_dynamic_ui", "memory", "vision", "feedback"],
+        AgentRole::Analyst     => &["calculator", "write_file", "finalize_mission_state", "memory", "vision", "feedback"],
         AgentRole::WebSearcher => &["web_search"],
         AgentRole::Planner     => &["calculator", "web_search", "write_file", "memory", "feedback"],
         AgentRole::Coder       => &["python_interpreter", "write_file"],
@@ -210,7 +214,7 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     // `memory` is excluded here because it has no native implementation — it
     // always requires the Wasm binary to be present.
     match role {
-        AgentRole::Analyst     => vec![Tool::calculator(), Tool::write_file(), Tool::build_dynamic_ui(), Tool::vision(), Tool::feedback()],
+        AgentRole::Analyst     => vec![Tool::calculator(), Tool::write_file(), Tool::finalize_mission_state(), Tool::vision(), Tool::feedback()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
         AgentRole::Planner     => vec![Tool::calculator(), Tool::web_search(), Tool::write_file(), Tool::feedback()],
         AgentRole::Coder       => vec![Tool::python_interpreter(), Tool::write_file()],

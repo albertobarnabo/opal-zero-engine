@@ -39,22 +39,38 @@ impl Registry {
         let _ = GLOBAL.set(registry);
     }
 
-    /// Try the compile-time manifest path first; fall back to a CWD-relative
-    /// path for environments where `CARGO_MANIFEST_DIR` differs from the
-    /// working directory at runtime (e.g. `axion-server`).
+    /// Try multiple strategies to locate manifests:
+    /// 1. Compile-time manifest path (for axion-core)
+    /// 2. Sibling axion-core path (when called from axion-server)
+    /// 3. CWD-relative path (fallback for other environments)
     pub fn init_default() {
         let compile_time_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/professionals/manifests"
         );
 
-        let dir = if Path::new(compile_time_path).is_dir() {
-            Path::new(compile_time_path)
-        } else {
-            Path::new("professionals/manifests")
-        };
+        // Strategy 1: Try compile-time path
+        if Path::new(compile_time_path).is_dir() {
+            return Self::init(Path::new(compile_time_path));
+        }
 
-        Self::init(dir);
+        // Strategy 2: If in axion-server, look for axion-core/professionals/manifests
+        // CARGO_MANIFEST_DIR will be .../axion-server, so go up and into axion-core
+        if compile_time_path.contains("axion-server") {
+            let manifest_dir = PathBuf::from(compile_time_path)
+                .parent()
+                .and_then(|p| p.parent()) // Go to workspace root
+                .map(|p| p.join("axion-core/professionals/manifests"));
+            
+            if let Some(path) = manifest_dir {
+                if path.is_dir() {
+                    return Self::init(&path);
+                }
+            }
+        }
+
+        // Strategy 3: CWD-relative fallback
+        Self::init(Path::new("professionals/manifests"));
     }
 
     // ── Internal loader ───────────────────────────────────────────────────────

@@ -6,9 +6,20 @@ interface ComparisonTableProps {
 
 export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) {
   return (
-    <div className="bg-gray-800/80 border border-gray-700 rounded-xl overflow-hidden">
+    <div
+      className="border rounded-xl overflow-hidden"
+      style={{
+        background: "var(--axion-glass-bg, rgb(31 41 55 / 0.8))",
+        borderColor: "var(--axion-glass-border, rgb(55 65 81))",
+        backdropFilter: "blur(var(--axion-blur, 0px))",
+        WebkitBackdropFilter: "blur(var(--axion-blur, 0px))",
+      }}
+    >
       {title && (
-        <div className="px-5 py-3 border-b border-gray-700/80">
+        <div
+          className="px-5 py-3"
+          style={{ borderBottom: "1px solid var(--axion-glass-border, rgb(55 65 81 / 0.8))" }}
+        >
           <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
             {title}
           </p>
@@ -17,12 +28,13 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-900/50">
+            <tr style={{ background: "var(--axion-glass-bg, rgb(17 24 39 / 0.5))" }}>
               {headers.map((h, i) => (
                 <th
                   key={i}
                   className="text-left text-[11px] font-semibold uppercase tracking-wide
                              text-gray-400 px-5 py-3 whitespace-nowrap"
+                  style={i === 0 ? { color: "var(--axion-accent, rgb(156 163 175))" } : undefined}
                 >
                   {h}
                 </th>
@@ -33,14 +45,13 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
             {rows.map((row, ri) => (
               <tr
                 key={ri}
-                className="border-t border-gray-700/50 hover:bg-gray-700/20 transition-colors"
+                className="transition-colors"
+                style={{ borderTop: "1px solid var(--axion-glass-border, rgb(55 65 81 / 0.5))" }}
               >
                 {row.map((cell, ci) => (
                   <td
                     key={ci}
-                    className={`px-5 py-3 ${
-                      ci === 0 ? "font-medium text-gray-200" : "text-gray-400"
-                    }`}
+                    className={`px-5 py-3 ${ci === 0 ? "font-medium text-gray-200" : "text-gray-400"}`}
                   >
                     {cell}
                   </td>

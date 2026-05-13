@@ -84,11 +84,11 @@ pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String>
     // Used when no `.wasm` binary is present for the tool — ensures full
     // backward compatibility during the Wasm migration.
     match name {
-        "calculator"         => execute_calculator(arguments),
-        "write_file"         => execute_write_file(arguments),
-        "python_interpreter" => python::execute_python(arguments),
-        "build_dynamic_ui"   => ui_builder::build_dynamic_ui(arguments),
-        "feedback"           => execute_feedback_native(arguments),
+        "calculator"              => execute_calculator(arguments),
+        "write_file"              => execute_write_file(arguments),
+        "python_interpreter"      => python::execute_python(arguments),
+        "finalize_mission_state"  => ui_builder::finalize_mission_state(arguments),
+        "feedback"                => execute_feedback_native(arguments),
         _ => {
             eprintln!(
                 "[WARN] execute_tool: LLM called unregistered tool '{}' — \
@@ -152,7 +152,7 @@ fn execute_feedback_native(arguments: &str) -> Result<String, String> {
 /// `feedback` is also terminal: its output is the awaiting-feedback marker
 /// which must be passed to `validate_mission` unchanged.
 pub fn is_terminal_tool(name: &str) -> bool {
-    matches!(name, "build_dynamic_ui" | "feedback")
+    matches!(name, "finalize_mission_state" | "feedback")
 }
 
 fn execute_calculator(arguments: &str) -> Result<String, String> {

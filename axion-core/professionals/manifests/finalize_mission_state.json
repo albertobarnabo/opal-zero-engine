@@ -1,0 +1,50 @@
+{
+  "name": "finalize_mission_state",
+  "description": "REQUIRED final-step tool. Submit all mission findings as a verified JSON state payload AND select design tokens that match the mission's visual identity. Call exactly once. Do not write plain text when data is available.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "A brief plain-text summary of all mission findings."
+      },
+      "structured_data_payload": {
+        "type": "object",
+        "description": "MANDATORY JSON object containing all mission findings. Use descriptive keys (e.g. 'cheapest_flight', 'hotel_options', 'total_cost'). Values can be strings, numbers, arrays of objects, or nested objects. Focus on completeness and accuracy.",
+        "additionalProperties": true
+      },
+      "design_tokens": {
+        "type": "object",
+        "description": "REQUIRED visual theme tokens. You are the Visual Director — choose tokens that match the mission's soul. Financial/market missions: cool blues or teals, high glass_intensity. Travel/organic missions: warm oranges or greens, medium intensity. Technical/code missions: cyan or lime, compact density. Creative missions: vibrant purples or pinks.",
+        "required": ["primary_accent", "glass_intensity", "theme_preset", "layout_density"],
+        "properties": {
+          "primary_accent": {
+            "type": "string",
+            "description": "Hex color string for borders, glows, and highlights. Examples: '#00d4ff' (fintech), '#f97316' (travel), '#a855f7' (creative), '#22c55e' (organic), '#ff0080' (cyberpunk)."
+          },
+          "glass_intensity": {
+            "type": "number",
+            "description": "Glassmorphism intensity from 0.0 (solid cards) to 1.0 (maximum blur and transparency). Fintech: 0.8. Organic: 0.5. Cyberpunk: 0.9. Minimalist: 0.3."
+          },
+          "theme_preset": {
+            "type": "string",
+            "enum": ["fintech", "organic", "cyberpunk", "minimalist"],
+            "description": "Narrative theme that best matches the mission type."
+          },
+          "layout_density": {
+            "type": "string",
+            "enum": ["spacious", "compact"],
+            "description": "Card spacing. Use 'compact' for data-dense missions (financial tables, comparisons). Use 'spacious' for narrative or travel content."
+          }
+        }
+      },
+      "verification_logs": {
+        "type": "array",
+        "description": "Optional quality notes, data sources, or caveats.",
+        "items": { "type": "string" }
+      }
+    },
+    "required": ["summary", "structured_data_payload", "design_tokens"]
+  }
+}

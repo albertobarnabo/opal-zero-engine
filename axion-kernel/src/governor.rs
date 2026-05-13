@@ -60,13 +60,13 @@ impl Governor for AxionGovernor {
             .map(|r| r.len())
             .sum();
 
-        let has_blueprint = tasks
+        let has_final_state = tasks
             .iter()
             .filter_map(|t| t.result.as_ref())
             .any(|r| {
-                serde_json::from_str::<axion_core::protocol::UIBlueprint>(r)
+                serde_json::from_str::<axion_core::protocol::MissionState>(r)
                     .ok()
-                    .filter(|bp| !bp.components.is_empty())
+                    .filter(|s| !s.data_payload.is_null())
                     .is_some()
             });
 
@@ -96,11 +96,12 @@ impl Governor for AxionGovernor {
         }
 
         // ── UI nudge when data is rich but no dashboard yet ────────────────
-        let ui_note = if total_result_bytes > UI_TRIGGER_BYTES && !has_blueprint {
+        let ui_note = if total_result_bytes > UI_TRIGGER_BYTES && !has_final_state {
             format!(
-                "\nNOTE: The mission produced {} bytes of rich data but no UI blueprint was \
-                 generated. If the results would benefit from a visual summary, return REVISE \
-                 with refinement_instructions that include calling 'build_dynamic_ui'.\n",
+                "\nNOTE: The mission produced {} bytes of rich data but no finalized state \
+                 payload was produced. If the results would benefit from structured synthesis, \
+                 return REVISE with refinement_instructions that include calling \
+                 'finalize_mission_state'.\n",
                 total_result_bytes
             )
         } else {
@@ -158,17 +159,41 @@ Rules:\n\
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
         match role {
             AgentRole::Analyst => {
-                "You are a Senior Data Analyst in the Axion swarm. Your analysis is authoritative — \
-do not hedge or ask questions. \
-Use the 'calculator' tool for all arithmetic. \
-Use the 'write_file' tool when asked to save a report. \
-When asked to build a dashboard, call the 'build_dynamic_ui' tool EXACTLY ONCE with a \
-components array — extract every number, option, and status into the appropriate component type \
-(MetricCard, ComparisonTable, StatusBadge, Timeline). Return ONLY the tool call — no prose. \
-If the task involves an image, chart, photo, or screenshot file in the uploads/ directory, \
-call the 'vision' tool with the file name and an analysis prompt. \
-If the task references a previous mission, past result, or earlier work, call the 'memory' tool \
-first with a relevant query to retrieve that context before proceeding.\n"
+                "You are a Senior Data Analyst AND Visual Director operating inside Axion — \
+a Headless Intelligence Kernel.\n\
+\n\
+SECURITY CONSTRAINT: Your output must be 100% tool-calls. Any plain text outside \
+of a tool call is a security violation and will cause mission failure.\n\
+\n\
+IDENTITY RULE: Every mission MUST conclude with a single call to \
+'finalize_mission_state'. You have two responsibilities:\n\
+\n\
+1. DATA SYNTHESIS — Synthesize ALL findings into a complete structured_data_payload \
+JSON object. Use descriptive keys (e.g. 'cheapest_flight', 'hotel_options', \
+'total_cost') and capture every fact, number, comparison, and status.\n\
+\n\
+2. VISUAL DIRECTION — Based on the mission's soul, select design_tokens that match \
+its character. You are the Visual Director; the frontend renders whatever you choose:\n\
+   - Financial/market data → theme_preset: 'fintech', primary_accent: '#00d4ff', \
+glass_intensity: 0.8, layout_density: 'compact'\n\
+   - Travel/organic/lifestyle → theme_preset: 'organic', primary_accent: '#f97316', \
+glass_intensity: 0.5, layout_density: 'spacious'\n\
+   - Cyberpunk/tech/hacking → theme_preset: 'cyberpunk', primary_accent: '#ff0080', \
+glass_intensity: 0.9, layout_density: 'compact'\n\
+   - Minimalist/general → theme_preset: 'minimalist', primary_accent: '#6366f1', \
+glass_intensity: 0.35, layout_density: 'spacious'\n\
+   - Scientific/research → theme_preset: 'fintech', primary_accent: '#22c55e', \
+glass_intensity: 0.6, layout_density: 'spacious'\n\
+   - Creative/artistic → theme_preset: 'cyberpunk', primary_accent: '#a855f7', \
+glass_intensity: 0.7, layout_density: 'spacious'\n\
+\n\
+Tool rules:\n\
+- Use 'calculator' for all arithmetic.\n\
+- Use 'write_file' only when explicitly asked to save a file to disk.\n\
+- Use 'finalize_mission_state' EXACTLY ONCE as your final step with both a complete \
+structured_data_payload AND carefully chosen design_tokens.\n\
+- Use 'vision' for any image, chart, photo, or screenshot in the uploads/ directory.\n\
+- Use 'memory' first when the task references a previous mission or earlier work.\n"
                     .to_string()
             }
             AgentRole::Coder => {
@@ -177,7 +202,9 @@ Your job is to write and execute Python 3 code using the 'python_interpreter' to
 Rules: use only the standard library, always use print() to emit results, \
 never use file I/O or shell commands, keep scripts concise and self-contained. \
 Call the 'python_interpreter' tool exactly once with your complete script. \
-Use 'write_file' only if explicitly asked to persist the output.\n"
+Use 'write_file' only if explicitly asked to persist the output.\n\
+SECURITY CONSTRAINT: Your output must be 100% tool-calls. Any plain text outside \
+of a tool call is a security violation and will cause mission failure.\n"
                     .to_string()
             }
             _ => {
@@ -186,7 +213,10 @@ Do not ask questions. If data like prices or quantities is present in the contex
 immediately. Use the 'calculator' tool for any and all math. \
 You can persist data to disk. If a task asks to save or write a report, use the 'write_file' tool. \
 If the task involves recalling, referencing, or following up on a previous mission, \
-call the 'memory' tool with a relevant query to retrieve past results before answering.\n"
+call the 'memory' tool with a relevant query to retrieve past results before answering.\n\
+SECURITY CONSTRAINT: Your output must be 100% tool-calls. Any plain text outside \
+of a tool call is a security violation and will cause mission failure. \
+Return only factual data — no explanatory headers, no status updates, no narrative prose.\n"
                     .to_string()
             }
         }

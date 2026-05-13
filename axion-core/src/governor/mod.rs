@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::engine::{AiProvider, ToolResponse};
-use crate::protocol::{AgentRole, ContextBus, Task, TaskStatus, UIBlueprint};
+use crate::protocol::{AgentRole, ContextBus, MissionState, Task, TaskStatus};
 
 // Total result text above this byte threshold (across ≥2 completed tasks) is
 // considered "data-rich" and triggers a UI generation pass.
@@ -31,6 +31,10 @@ pub enum ValidationResult {
 pub struct NewTask {
     pub description: String,
     pub role: AgentRole,
+    /// Tools that must not be offered to this task's agent (e.g. after a
+    /// tool failure the re-planner blacklists the failing tool so the next
+    /// attempt is forced onto an alternative approach).
+    pub excluded_tools: Vec<String>,
 }
 
 // ── Governor trait (public interface) ─────────────────────────────────────────
@@ -118,14 +122,14 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
         return Some(ValidationResult::Retry);
     }
 
-    // ── 3. Dynamic UI Builder ─────────────────────────────────────────────────
-    let has_blueprint = tasks
+    // ── 3. State Finalizer ────────────────────────────────────────────────────
+    let has_final_state = tasks
         .iter()
         .filter_map(|t| t.result.as_ref())
         .any(|r| {
-            serde_json::from_str::<UIBlueprint>(r)
+            serde_json::from_str::<MissionState>(r)
                 .ok()
-                .filter(|bp| !bp.components.is_empty())
+                .filter(|s| !s.data_payload.is_null())
                 .is_some()
         });
 
@@ -135,29 +139,35 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
         .map(|r| r.len())
         .sum();
 
-    let has_ui_task = tasks
-        .iter()
-        .any(|t| matches!(t.role, AgentRole::Analyst) && t.intent.contains("build_dynamic_ui"));
+    // Block re-injection only while a finalize task is still in-flight.
+    // A completed-but-prose task doesn't count as finalized, so the Governor
+    // can inject a fresh attempt rather than silently approving empty output.
+    let has_finalize_task = tasks.iter().any(|t| {
+        matches!(t.role, AgentRole::Analyst)
+            && t.intent.contains("finalize_mission_state")
+            && matches!(t.status, TaskStatus::Pending | TaskStatus::Running)
+    });
 
-    if !has_blueprint && !has_ui_task && total_result_bytes >= UI_TRIGGER_BYTES && completed_count >= 2 {
+    if !has_final_state && !has_finalize_task && total_result_bytes >= UI_TRIGGER_BYTES && completed_count >= 2 {
         println!(
-            "  🎨 Governor: UI Builder triggered — {} bytes across {} task(s).",
+            "  🧠 Governor: State Finalizer triggered — {} bytes across {} task(s).",
             total_result_bytes, completed_count
         );
         return Some(ValidationResult::Expand(vec![NewTask {
             description:
-                "Use the build_dynamic_ui tool. The PREVIOUS TASK RESULTS in your context \
-                 contain ALL mission findings — extract every price, option, comparison, and \
-                 status from them. Map each data point into MetricCard, ComparisonTable, \
-                 StatusBadge, or Timeline components. Call build_dynamic_ui EXACTLY ONCE with \
-                 the full components array."
+                "Call finalize_mission_state. Extract ALL findings from the PREVIOUS TASK \
+                 RESULTS in your context. Build a structured_data_payload JSON object where \
+                 each key is a descriptive label (e.g. 'cheapest_flight', 'hotel_options', \
+                 'total_cost') and each value captures the corresponding fact. \
+                 Call finalize_mission_state EXACTLY ONCE with this complete payload."
                     .to_string(),
             role: AgentRole::Analyst,
+            excluded_tools: vec![],
         }]));
     }
 
     println!(
-        "  ⏭️  Governor: Skipping UI Builder — {} bytes (threshold: {} bytes, {} task(s) completed).",
+        "  ⏭️  Governor: Skipping State Finalizer — {} bytes (threshold: {} bytes, {} task(s) completed).",
         total_result_bytes, UI_TRIGGER_BYTES, completed_count
     );
 
@@ -203,6 +213,7 @@ pub fn parse_verdict(response: &str) -> ValidationResult {
                         "Coder"    => AgentRole::Coder,
                         _          => AgentRole::WebSearcher,
                     },
+                    excluded_tools: vec![],
                 })
                 .collect();
             println!("  🔍 Governor: Expanding mission with {} new task(s).", tasks.len());
@@ -227,6 +238,7 @@ pub fn parse_verdict(response: &str) -> ValidationResult {
             ValidationResult::Refine(vec![NewTask {
                 description,
                 role: AgentRole::Analyst,
+                excluded_tools: vec![],
             }])
         }
         Ok(_) => {
@@ -335,9 +347,14 @@ When in doubt, choose SUCCESS."
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
         match role {
             AgentRole::Analyst => {
-                "You are an Analyst agent. Use the 'calculator' tool for arithmetic. \
-Use 'write_file' to save reports. Use 'build_dynamic_ui' for dashboards. \
-Use 'vision' for image analysis. Use 'feedback' to request human input.\n"
+                "You are an Analyst agent.\n\
+- Use 'calculator' for arithmetic.\n\
+- Use 'write_file' to save Markdown reports to disk.\n\
+- Use 'vision' for image analysis.\n\
+- Use 'feedback' to request human input.\n\
+- Use 'finalize_mission_state' as your FINAL step to deliver all findings as a \
+structured JSON payload. Call it exactly once with a complete structured_data_payload \
+object — never write plain text when data is available.\n"
                     .to_string()
             }
             AgentRole::Coder => {

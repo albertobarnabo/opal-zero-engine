@@ -64,30 +64,10 @@ async fn execute(Json(req): Json<TaskRequest>) -> Response {
 
     let intent = req.intent.clone();
     tokio::spawn(async move {
-        // Each request builds a fresh plan. run_mission clears context
-        // defensively, so no state from a previous mission can leak.
-        let mut plan = Plan::new(&intent);
-        let f_id = plan.add_task(
-            "The flight to Rome costs $300. Report this fact: 'Flight cost: $300'.",
-            vec![],
-            AgentRole::WebSearcher,
-        );
-        let h_id = plan.add_task(
-            "The hotel in Rome costs $120 per night for 2 nights ($240 total). Report this fact: 'Hotel cost: $240'.",
-            vec![f_id],
-            AgentRole::WebSearcher,
-        );
-        let s_id = plan.add_task(
-            "Use the calculator tool to add 300 + 240 and report the total trip cost.",
-            vec![h_id],
-            AgentRole::Analyst,
-        );
-        plan.add_task(
-            "Save the trip report to 'trip_report.md' using the write_file tool. \
-             The report must include: Flight cost: $300, Hotel cost: $240 (2 nights at $120), Total: $540.",
-            vec![s_id],
-            AgentRole::Analyst,
-        );
+        // Build a dynamic plan from the user's intent via the LLM planner.
+        // run_mission clears context defensively, so no state from a previous
+        // mission can leak.
+        let mut plan = build_plan_from_intent(&intent, &provider).await;
 
         // tx is dropped when run_mission returns, which closes the SSE stream.
         let _ = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;

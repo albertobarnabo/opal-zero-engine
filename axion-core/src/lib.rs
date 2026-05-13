@@ -17,7 +17,7 @@ pub mod prelude {
     pub use crate::engine::{AiProvider, ImageData, MockProvider, SimpleProvider, ToolResponse};
     pub use crate::governor::{BuiltinGovernor, Governor, NewTask, ValidationResult};
     pub use crate::persistence::MissionSnapshot;
-    pub use crate::planner::Plan;
+    pub use crate::planner::{build_plan_from_intent, Plan};
     pub use crate::protocol::{AgentRole, ContextBus, HandshakeRequest, MissionUpdate, Task, TaskStatus};
     pub use crate::registry::Registry;
     pub use crate::{resume_mission, run_mission};
@@ -25,6 +25,7 @@ pub mod prelude {
 
 const MAX_EXPANSIONS: u8 = 2;
 const MAX_REFINEMENTS: u8 = 1;
+const MAX_REPAIRS: u8 = 1;
 
 /// Execute a pre-built [`Plan`] against an AI provider and a Governor.
 ///
@@ -141,6 +142,7 @@ async fn run_loop(
     let mut retry_attempts: u8 = 0;
     let mut expansion_rounds: u8 = 0;
     let mut refinement_rounds: u8 = 0;
+    let mut repair_rounds: u8 = 0;
 
     loop {
         dispatcher::dispatch_tasks(
@@ -188,11 +190,80 @@ async fn run_loop(
             }
 
             governor::ValidationResult::Retry => {
-                governor::reset_failed_tasks(&mut plan.tasks);
                 retry_attempts += 1;
+
+                // On the second consecutive failure, attempt dynamic re-planning
+                // before falling back to a plain reset+retry.
+                if retry_attempts >= 2 && repair_rounds < MAX_REPAIRS {
+                    let failed: Vec<_> = plan.tasks
+                        .iter()
+                        .filter(|t| matches!(t.status, protocol::TaskStatus::Failed))
+                        .cloned()
+                        .collect();
+
+                    if !failed.is_empty() {
+                        println!(
+                            "\n🔧 Re-planner: {} task(s) failed twice — consulting LLM for alternatives…",
+                            failed.len()
+                        );
+                        let repair = planner::repair_failed_tasks(
+                            &failed,
+                            &plan.original_intent,
+                            provider,
+                        )
+                        .await;
+
+                        if !repair.is_empty() {
+                            // Mark originals as superseded so the Governor no
+                            // longer counts them as failures.
+                            for task in plan.tasks
+                                .iter_mut()
+                                .filter(|t| matches!(t.status, protocol::TaskStatus::Failed))
+                            {
+                                task.status = protocol::TaskStatus::Completed;
+                                task.result =
+                                    Some("[Superseded — repair plan injected]".to_string());
+                            }
+
+                            let completed_ids: Vec<uuid::Uuid> = plan.tasks
+                                .iter()
+                                .filter(|t| matches!(t.status, protocol::TaskStatus::Completed))
+                                .map(|t| t.id)
+                                .collect();
+
+                            if let Some(tx) = tx {
+                                let _ = tx
+                                    .send(protocol::MissionUpdate::GovernorExpand {
+                                        new_task_count: repair.len(),
+                                        descriptions: repair
+                                            .iter()
+                                            .map(|t| t.description.clone())
+                                            .collect(),
+                                    })
+                                    .await;
+                            }
+
+                            for rt in repair {
+                                plan.add_task_excluded(
+                                    &rt.description,
+                                    completed_ids.clone(),
+                                    rt.role,
+                                    rt.excluded_tools,
+                                );
+                            }
+
+                            repair_rounds += 1;
+                            retry_attempts = 0; // fresh budget for the repair tasks
+                            continue;
+                        }
+                    }
+                }
+
                 if retry_attempts >= max_attempts {
                     break;
                 }
+
+                governor::reset_failed_tasks(&mut plan.tasks);
                 println!(
                     "🚨 Failure detected. Attempting self-healing ({}/{})...",
                     retry_attempts, max_attempts
@@ -228,7 +299,7 @@ async fn run_loop(
                 }
 
                 for nt in new_tasks {
-                    plan.add_task(&nt.description, completed_ids.clone(), nt.role);
+                    plan.add_task_excluded(&nt.description, completed_ids.clone(), nt.role, nt.excluded_tools);
                 }
 
                 expansion_rounds += 1;
@@ -262,7 +333,7 @@ async fn run_loop(
                 }
 
                 for nt in new_tasks {
-                    plan.add_task(&nt.description, completed_ids.clone(), nt.role);
+                    plan.add_task_excluded(&nt.description, completed_ids.clone(), nt.role, nt.excluded_tools);
                 }
 
                 refinement_rounds += 1;
@@ -294,13 +365,13 @@ async fn run_loop(
     Err(error)
 }
 
-/// Extract the first valid [`UIBlueprint`] from completed task results, if any.
-fn extract_ui_blueprint(tasks: &[protocol::Task]) -> Option<protocol::UIBlueprint> {
+/// Extract the final [`MissionState`] from completed task results, if any.
+fn extract_mission_state(tasks: &[protocol::Task]) -> Option<protocol::MissionState> {
     tasks
         .iter()
         .filter_map(|t| t.result.as_ref())
-        .filter_map(|r| serde_json::from_str::<protocol::UIBlueprint>(r).ok())
-        .filter(|bp| !bp.components.is_empty())
+        .filter_map(|r| serde_json::from_str::<protocol::MissionState>(r).ok())
+        .filter(|s| !s.data_payload.is_null())
         .last()
 }
 
@@ -310,10 +381,10 @@ async fn finish_success(
     original_task_count: usize,
     tx: Option<&tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
 ) {
-    let ui_blueprint = extract_ui_blueprint(&plan.tasks);
+    let mission_state = extract_mission_state(&plan.tasks);
 
-    let layout_hint = if ui_blueprint.is_some() {
-        "Designed"
+    let layout_hint = if mission_state.is_some() {
+        "Synthesized"
     } else if plan
         .tasks
         .iter()
@@ -340,7 +411,7 @@ async fn finish_success(
                 expanded_task_count: plan.tasks.len().saturating_sub(original_task_count),
                 mission_id,
                 layout_hint: layout_hint.to_string(),
-                ui_blueprint,
+                mission_state,
             })
             .await;
     }

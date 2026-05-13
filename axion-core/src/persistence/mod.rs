@@ -1,5 +1,5 @@
 use crate::planner::Plan;
-use crate::protocol::UIBlueprint;
+use crate::protocol::MissionState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -10,13 +10,13 @@ pub struct MissionSnapshot {
     pub task_count: usize,
     pub expanded_task_count: usize,
     pub status: String,
-    /// `"Designed"` | `"Analytical"` | `"Itinerary"`.
+    /// `"Synthesized"` | `"Analytical"` | `"Itinerary"`.
     #[serde(default)]
     pub layout_hint: String,
     pub context: crate::protocol::ContextBus,
-    /// Present when the mission produced a `build_dynamic_ui` blueprint.
+    /// Present when the mission produced a finalized `MissionState` payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ui_blueprint: Option<UIBlueprint>,
+    pub mission_state: Option<MissionState>,
 }
 
 /// Write the completed plan to `missions/<id>.json`. Returns the mission ID.
@@ -33,16 +33,16 @@ pub fn save_snapshot(
 
     let id = format!("mission_{}_{}", timestamp, slugify(&plan.original_intent, 5));
 
-    let ui_blueprint: Option<UIBlueprint> = plan
+    let mission_state: Option<MissionState> = plan
         .tasks
         .iter()
         .filter_map(|t| t.result.as_ref())
-        .filter_map(|r| serde_json::from_str::<UIBlueprint>(r).ok())
-        .filter(|bp| !bp.components.is_empty())
+        .filter_map(|r| serde_json::from_str::<MissionState>(r).ok())
+        .filter(|s| !s.data_payload.is_null())
         .last();
 
-    let layout_hint = if ui_blueprint.is_some() {
-        "Designed"
+    let layout_hint = if mission_state.is_some() {
+        "Synthesized"
     } else if plan.tasks.iter().any(|t| matches!(t.role, crate::protocol::AgentRole::Coder)) {
         "Analytical"
     } else {
@@ -59,7 +59,7 @@ pub fn save_snapshot(
         status: status.to_string(),
         layout_hint,
         context: plan.context.clone(),
-        ui_blueprint,
+        mission_state,
     };
 
     let dir = std::path::Path::new("missions");
