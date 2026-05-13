@@ -16,6 +16,8 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
         design_tokens: Option<DesignTokens>,
         #[serde(default)]
         verification_logs: Vec<String>,
+        #[serde(default)]
+        suggested_widgets: Vec<String>,
     }
 
     let args: FinalizeArgs = serde_json::from_str(arguments)
@@ -35,9 +37,11 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
         _ => {}
     }
 
-    // Use provided tokens or fall back to defaults; clamp glass_intensity to [0,1].
+    // Use provided tokens or fall back to defaults; clamp ranges.
     let mut tokens = args.design_tokens.unwrap_or_default();
-    tokens.glass_intensity = tokens.glass_intensity.clamp(0.0, 1.0);
+    tokens.glass_intensity  = tokens.glass_intensity.clamp(0.0, 1.0);
+    tokens.surface_opacity  = tokens.surface_opacity.clamp(0.0, 1.0);
+    tokens.border_radius    = tokens.border_radius.min(48);
     if tokens.primary_accent.is_empty() {
         tokens.primary_accent = "#6366f1".to_string();
     }
@@ -57,6 +61,7 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
         data_payload: args.structured_data_payload,
         verification_logs: logs,
         design_tokens: tokens,
+        suggested_widgets: args.suggested_widgets,
     };
 
     serde_json::to_string(&state)

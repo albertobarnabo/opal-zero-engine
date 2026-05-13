@@ -1,3 +1,195 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Base scale — Deep Obsidian background ───────────────────────────────── */
+html {
+  font-size: 16px;
+  background:
+    radial-gradient(ellipse 200% 140% at 30% -10%, #101828 0%, #070910 42%, #030408 100%);
+  min-height: 100%;
+}
+
+/* ── Light-Trace border: rotating "racing light" on command bar ──────────── */
+@property --lt-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes lt-idle {
+  to { --lt-angle: 360deg; }
+}
+@keyframes lt-active {
+  to { --lt-angle: 360deg; }
+}
+
+/* Always-on slow trace — subtle at rest */
+.axion-light-trace {
+  --lt-angle: 0deg;
+  animation: lt-idle 9s linear infinite;
+  background: conic-gradient(
+    from var(--lt-angle),
+    transparent 0%,
+    rgba(180,200,240,0.10) 6%,
+    rgba(220,235,255,0.18) 9%,
+    rgba(180,200,240,0.08) 12%,
+    transparent 18%
+  );
+}
+
+/* Streaming: bright, fast trace */
+.axion-light-trace-active {
+  --lt-angle: 0deg;
+  animation: lt-active 2.4s linear infinite;
+  background: conic-gradient(
+    from var(--lt-angle),
+    transparent 0%,
+    rgba(var(--axion-accent-rgb, 139,156,244), 0.20) 6%,
+    rgba(255,255,255,0.35) 9%,
+    rgba(var(--axion-accent-rgb, 139,156,244), 0.18) 12%,
+    transparent 20%
+  );
+}
+
+/* Keep legacy class working */
+.animate-gradient-border { }
+
+/* ── Logo shimmer pulse ───────────────────────────────────────────────────── */
+@keyframes logo-shimmer {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 0px rgba(200,220,255,0)); }
+  50%       { filter: brightness(1.12) drop-shadow(0 0 18px rgba(180,210,255,0.22)); }
+}
+.axion-logo-pulse {
+  animation: logo-shimmer 5s ease-in-out infinite;
+}
+
+/* ── Card spring entry ────────────────────────────────────────────────────── */
+@keyframes spring-in {
+  0%   { opacity: 0; transform: scale(0.97) translateY(10px); }
+  60%  { opacity: 1; transform: scale(1.005) translateY(-1px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.axion-card-enter {
+  animation: spring-in 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+/* ── Synthesis sheen (one-shot pass on mission complete) ─────────────────── */
+@keyframes sheen-pass {
+  0%   { transform: translateX(-120%) skewX(-12deg); }
+  100% { transform: translateX(220%)  skewX(-12deg); }
+}
+
+.axion-sheen-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+
+.axion-sheen-wrapper::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.045) 50%,
+    transparent 60%
+  );
+  pointer-events: none;
+  animation: sheen-pass 1.4s ease-out 0.2s both;
+}
+
+/* ── Ambient mesh gradient blobs ─────────────────────────────────────────── */
+@keyframes blob-drift-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%       { transform: translate(60px, -45px) scale(1.08); }
+}
+
+@keyframes blob-drift-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%       { transform: translate(-35px, 55px) scale(0.92); }
+  66%       { transform: translate(45px, 20px) scale(1.05); }
+}
+
+.axion-mesh {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.axion-mesh-blob-1 {
+  position: absolute;
+  width: 700px; height: 700px;
+  top: -120px; left: -180px;
+  background: radial-gradient(circle, rgba(139,156,244,0.055) 0%, transparent 65%);
+  border-radius: 50%;
+  filter: blur(50px);
+  animation: blob-drift-1 20s ease-in-out infinite;
+}
+
+.axion-mesh-blob-2 {
+  position: absolute;
+  width: 500px; height: 500px;
+  bottom: 80px; right: -60px;
+  background: radial-gradient(circle, rgba(15,40,100,0.10) 0%, transparent 65%);
+  border-radius: 50%;
+  filter: blur(70px);
+  animation: blob-drift-2 26s ease-in-out infinite;
+}
+
+/* ── Idle widget scatter-out ─────────────────────────────────────────────── */
+@keyframes widget-scatter {
+  0%   { opacity: 1; transform: scale(1) translateY(0); }
+  100% { opacity: 0; transform: scale(0.92) translateY(-16px); }
+}
+
+.idle-scatter {
+  animation: widget-scatter 0.32s ease-in both;
+}
+
+/* ── Idle widget float ───────────────────────────────────────────────────── */
+@keyframes float-widget {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-8px); }
+}
+
+.axion-float {
+  animation: float-widget 6s ease-in-out infinite;
+}
+
+/* ── Sidebar status pulse ────────────────────────────────────────────────── */
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50%       { box-shadow: 0 0 0 4px transparent; opacity: 0.7; }
+}
+
+.status-pulse-dot {
+  animation: status-pulse 1.8s ease-in-out infinite;
+}
+
+/* ── Command bar "Synthesis" breathing glow ──────────────────────────────── */
+@keyframes breathe-glow {
+  0%, 100% {
+    box-shadow:
+      0 8px 40px rgba(0,0,0,0.60),
+      0 0 28px rgba(var(--axion-accent-rgb, 71,100,160), 0.12);
+  }
+  50% {
+    box-shadow:
+      0 8px 40px rgba(0,0,0,0.60),
+      0 0 72px rgba(var(--axion-accent-rgb, 71,100,160), 0.38),
+      0 28px 96px rgba(var(--axion-accent-rgb, 71,100,160), 0.14);
+  }
+}
+
+.axion-breathe-glow {
+  animation: breathe-glow 3.2s ease-in-out infinite;
+}
+
+/* ── Sidebar scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }

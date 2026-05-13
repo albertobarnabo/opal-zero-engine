@@ -12,78 +12,104 @@ interface TimelineProps {
   steps: TimelineStep[];
 }
 
-const STEP: Record<StepStatus, { dotClass: string; lineClass: string; labelClass: string; useAccent?: boolean }> = {
-  completed: {
-    dotClass: "bg-emerald-500 border-emerald-500",
-    lineClass: "bg-emerald-700/50",
-    labelClass: "text-gray-200",
-  },
-  current: {
-    dotClass: "border-2",
-    lineClass: "bg-gray-600",
-    labelClass: "text-white font-semibold",
-    useAccent: true,
-  },
-  upcoming: {
-    dotClass: "bg-transparent border-gray-600",
-    lineClass: "bg-gray-700",
-    labelClass: "text-gray-400",
-  },
-};
-
 export function Timeline({ title, steps }: TimelineProps) {
   return (
     <div
-      className="border rounded-xl"
       style={{
-        background: "var(--axion-glass-bg, rgb(31 41 55 / 0.8))",
-        borderColor: "var(--axion-glass-border, rgb(55 65 81))",
-        backdropFilter: "blur(var(--axion-blur, 0px))",
-        WebkitBackdropFilter: "blur(var(--axion-blur, 0px))",
+        background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+        border: "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
+        borderRadius: "var(--axion-radius, 24px)",
+        backdropFilter: "blur(var(--axion-blur, 80px))",
+        WebkitBackdropFilter: "blur(var(--axion-blur, 80px))",
+        boxShadow: "var(--axion-glass-inset, inset 0 1px 0 rgba(255,255,255,0.15), inset 0 0 0 0.5px rgba(255,255,255,0.06))",
         padding: "var(--axion-pad, 20px)",
       }}
     >
       {title && (
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 mb-5">
+        <p
+          className="text-[11px] font-semibold uppercase tracking-widest mb-6"
+          style={{ color: "rgba(255,255,255,0.55)" }}
+        >
           {title}
         </p>
       )}
       <div>
         {steps.map((step, i) => {
-          const s = STEP[step.status ?? "upcoming"] ?? STEP.upcoming;
+          const s = step.status ?? "upcoming";
           const isLast = i === steps.length - 1;
+
+          const dotStyle: React.CSSProperties =
+            s === "completed"
+              ? { background: "#34d399", borderColor: "#34d399" }
+              : s === "current"
+              ? {
+                  background: "var(--axion-accent, #8b9cf4)",
+                  borderColor: "var(--axion-accent, #8b9cf4)",
+                  boxShadow: "0 0 12px var(--axion-glow, rgba(139,156,244,0.5))",
+                }
+              : { background: "transparent", borderColor: "rgba(255,255,255,0.18)" };
+
+          const labelStyle: React.CSSProperties = {
+            color:
+              s === "completed"
+                ? "rgba(255,255,255,0.80)"
+                : s === "current"
+                ? "rgba(255,255,255,0.95)"
+                : "rgba(255,255,255,0.45)",
+            fontWeight: s === "current" ? 600 : 400,
+          };
+
           return (
             <div key={i} className="flex gap-4">
-              {/* spine */}
               <div className="flex flex-col items-center">
                 <span
-                  className={`w-3 h-3 rounded-full shrink-0 mt-0.5 ${s.dotClass}`}
-                  style={
-                    s.useAccent
-                      ? {
-                          backgroundColor: "var(--axion-accent, #6366f1)",
-                          borderColor: "var(--axion-accent, #6366f1)",
-                          boxShadow: "0 0 8px var(--axion-glow, rgba(99,102,241,0.4))",
-                        }
-                      : undefined
-                  }
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    border: "2px solid",
+                    flexShrink: 0,
+                    marginTop: 3,
+                    ...dotStyle,
+                  }}
                 />
                 {!isLast && (
-                  <span className={`w-0.5 flex-1 my-1 min-h-[16px] ${s.lineClass}`} />
+                  <span
+                    style={{
+                      width: 1,
+                      flex: 1,
+                      margin: "5px 0",
+                      minHeight: 18,
+                      background:
+                        s === "completed"
+                          ? "rgba(52,211,153,0.35)"
+                          : "rgba(255,255,255,0.10)",
+                    }}
+                  />
                 )}
               </div>
-              {/* content */}
-              <div className={`${isLast ? "pb-0" : "pb-4"} min-w-0`}>
+              <div className={`${isLast ? "pb-0" : "pb-5"} min-w-0`}>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-sm ${s.labelClass}`}>{step.label}</span>
+                  <span className="text-sm" style={labelStyle}>
+                    {step.label}
+                  </span>
                   {step.time && (
-                    <span className="text-[11px] text-gray-500 bg-gray-900/60 px-1.5 py-0.5 rounded font-mono">
+                    <span
+                      className="text-[11px] px-2 py-0.5 rounded-md font-mono"
+                      style={{
+                        color: "rgba(255,255,255,0.45)",
+                        background: "rgba(255,255,255,0.07)",
+                      }}
+                    >
                       {step.time}
                     </span>
                   )}
                 </div>
                 {step.description && (
-                  <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                  <p
+                    className="text-xs mt-1.5 leading-relaxed"
+                    style={{ color: "rgba(255,255,255,0.55)" }}
+                  >
                     {step.description}
                   </p>
                 )}

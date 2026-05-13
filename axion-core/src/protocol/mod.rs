@@ -22,37 +22,52 @@ pub struct HandshakeRequest {
 /// Visual theme tokens emitted by the Analyst alongside mission data.
 ///
 /// The frontend consumes these to apply a liquid-glassmorphism theme whose
-/// intensity and colour palette match the nature of the mission (financial,
-/// creative, technical, etc.).
+/// intensity and colour palette match the nature of the mission.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DesignTokens {
-    /// Primary accent hex colour — borders, glows, and active-element highlights.
+    /// Primary accent hex colour — glows and active-element highlights.
+    /// Should be low-saturation, high-luminosity (Apple-inspired).
     #[serde(default = "default_primary_accent")]
     pub primary_accent: String,
     /// Glassmorphism intensity, clamped to [0.0, 1.0].
-    /// 0.0 = solid/opaque cards, 1.0 = maximum blur + transparency.
+    /// 0.0 = solid cards, 1.0 = maximum frosted-glass blur.
     #[serde(default = "default_glass_intensity")]
     pub glass_intensity: f32,
-    /// Narrative theme: `"fintech"` | `"organic"` | `"cyberpunk"` | `"minimalist"`.
+    /// Narrative theme: `"fintech"` | `"organic"` | `"research"` | `"minimalist"` | `"creative"`.
     #[serde(default = "default_theme_preset")]
     pub theme_preset: String,
     /// Card spacing: `"spacious"` or `"compact"`.
     #[serde(default = "default_layout_density")]
     pub layout_density: String,
+    /// Card corner radius in pixels (default 24 for organic softness).
+    #[serde(default = "default_border_radius")]
+    pub border_radius: u32,
+    /// Card surface background opacity (0.0–1.0, default 0.06 for frosted look).
+    #[serde(default = "default_surface_opacity")]
+    pub surface_opacity: f32,
+    /// Frontend layout hint: `"Overview"` | `"FocusOnCharts"` | `"DataHeavy"` | `"Narrative"`.
+    #[serde(default = "default_layout_strategy")]
+    pub layout_strategy: String,
 }
 
-fn default_primary_accent() -> String { "#6366f1".to_string() }
-fn default_glass_intensity() -> f32   { 0.55 }
-fn default_theme_preset()    -> String { "minimalist".to_string() }
-fn default_layout_density()  -> String { "spacious".to_string() }
+fn default_primary_accent()   -> String { "#8b9cf4".to_string() } // soft indigo
+fn default_glass_intensity()  -> f32    { 0.60 }
+fn default_theme_preset()     -> String { "minimalist".to_string() }
+fn default_layout_density()   -> String { "spacious".to_string() }
+fn default_border_radius()    -> u32    { 24 }
+fn default_surface_opacity()  -> f32    { 0.06 }
+fn default_layout_strategy()  -> String { "Overview".to_string() }
 
 impl Default for DesignTokens {
     fn default() -> Self {
         DesignTokens {
-            primary_accent: default_primary_accent(),
-            glass_intensity: default_glass_intensity(),
-            theme_preset:    default_theme_preset(),
-            layout_density:  default_layout_density(),
+            primary_accent:   default_primary_accent(),
+            glass_intensity:  default_glass_intensity(),
+            theme_preset:     default_theme_preset(),
+            layout_density:   default_layout_density(),
+            border_radius:    default_border_radius(),
+            surface_opacity:  default_surface_opacity(),
+            layout_strategy:  default_layout_strategy(),
         }
     }
 }
@@ -81,6 +96,10 @@ pub struct MissionState {
     /// character.  Falls back to the minimalist indigo theme when absent.
     #[serde(default)]
     pub design_tokens: DesignTokens,
+    /// Optional hints for the frontend to render specific component types for
+    /// named payload keys, e.g. `["ChartCard:price_history", "ImageCard:product_visual"]`.
+    #[serde(default)]
+    pub suggested_widgets: Vec<String>,
 }
 
 // ── Agent roles ───────────────────────────────────────────────────────────────

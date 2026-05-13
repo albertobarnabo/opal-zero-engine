@@ -172,28 +172,40 @@ IDENTITY RULE: Every mission MUST conclude with a single call to \
 JSON object. Use descriptive keys (e.g. 'cheapest_flight', 'hotel_options', \
 'total_cost') and capture every fact, number, comparison, and status.\n\
 \n\
-2. VISUAL DIRECTION — Based on the mission's soul, select design_tokens that match \
-its character. You are the Visual Director; the frontend renders whatever you choose:\n\
-   - Financial/market data → theme_preset: 'fintech', primary_accent: '#00d4ff', \
-glass_intensity: 0.8, layout_density: 'compact'\n\
-   - Travel/organic/lifestyle → theme_preset: 'organic', primary_accent: '#f97316', \
-glass_intensity: 0.5, layout_density: 'spacious'\n\
-   - Cyberpunk/tech/hacking → theme_preset: 'cyberpunk', primary_accent: '#ff0080', \
-glass_intensity: 0.9, layout_density: 'compact'\n\
-   - Minimalist/general → theme_preset: 'minimalist', primary_accent: '#6366f1', \
-glass_intensity: 0.35, layout_density: 'spacious'\n\
-   - Scientific/research → theme_preset: 'fintech', primary_accent: '#22c55e', \
-glass_intensity: 0.6, layout_density: 'spacious'\n\
-   - Creative/artistic → theme_preset: 'cyberpunk', primary_accent: '#a855f7', \
-glass_intensity: 0.7, layout_density: 'spacious'\n\
+2. VISUAL DIRECTION — Choose Apple-inspired design_tokens with low-saturation, \
+high-luminosity palettes. Avoid neon or harsh high-contrast colors. Think frosted \
+glass on a dark background — subtle, sophisticated, premium.\n\
+\n\
+   Palette guide (use exact values as starting points):\n\
+   - Financial/market → theme_preset:'fintech', primary_accent:'#5eead4', \
+glass_intensity:0.75, layout_density:'compact', border_radius:16, surface_opacity:0.07\n\
+   - Travel/lifestyle  → theme_preset:'organic', primary_accent:'#fbbf24', \
+glass_intensity:0.55, layout_density:'spacious', border_radius:28, surface_opacity:0.06\n\
+   - Science/research  → theme_preset:'research', primary_accent:'#6ee7b7', \
+glass_intensity:0.60, layout_density:'spacious', border_radius:24, surface_opacity:0.06\n\
+   - Creative/arts     → theme_preset:'creative', primary_accent:'#c084fc', \
+glass_intensity:0.65, layout_density:'spacious', border_radius:28, surface_opacity:0.05\n\
+   - Minimalist/general → theme_preset:'minimalist', primary_accent:'#8b9cf4', \
+glass_intensity:0.40, layout_density:'spacious', border_radius:24, surface_opacity:0.05\n\
+   - Technical/dev     → theme_preset:'fintech', primary_accent:'#94a3b8', \
+glass_intensity:0.55, layout_density:'compact', border_radius:18, surface_opacity:0.07\n\
 \n\
 Tool rules:\n\
 - Use 'calculator' for all arithmetic.\n\
 - Use 'write_file' only when explicitly asked to save a file to disk.\n\
 - Use 'finalize_mission_state' EXACTLY ONCE as your final step with both a complete \
-structured_data_payload AND carefully chosen design_tokens.\n\
+structured_data_payload AND carefully chosen design_tokens (including layout_strategy).\n\
 - Use 'vision' for any image, chart, photo, or screenshot in the uploads/ directory.\n\
-- Use 'memory' first when the task references a previous mission or earlier work.\n"
+- Use 'memory' first when the task references a previous mission or earlier work.\n\
+\n\
+3. LAYOUT DIRECTION — Set layout_strategy in design_tokens:\n\
+   - 'FocusOnCharts': use when payload contains time-series (arrays with date/period keys) \
+or multi-series comparison data. Also add 'ChartCard:key_name' entries in suggested_widgets.\n\
+   - 'DataHeavy': use when payload has ≥3 comparison tables. layout_density must be 'compact'.\n\
+   - 'Narrative': use for travel, biography, or story-driven missions. layout_density 'spacious'.\n\
+   - 'Overview': default balanced layout.\n\
+   - For visual anchors (products, places, scenes) add 'ImageCard:key_name' in suggested_widgets \
+with the value being a descriptive scene string (e.g. 'Tesla Model 3 in Midnight Silver on mountain road').\n"
                     .to_string()
             }
             AgentRole::Coder => {

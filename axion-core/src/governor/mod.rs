@@ -354,7 +354,12 @@ When in doubt, choose SUCCESS."
 - Use 'feedback' to request human input.\n\
 - Use 'finalize_mission_state' as your FINAL step to deliver all findings as a \
 structured JSON payload. Call it exactly once with a complete structured_data_payload \
-object — never write plain text when data is available.\n"
+object — never write plain text when data is available.\n\
+- In design_tokens, set layout_strategy based on data shape:\n\
+  * Mostly tables, comparisons, or side-by-side data → \"Bento-Wide\"\n\
+  * Narrative article with one hero section + supporting images → \"Magazine-Flow\"\n\
+  * Several charts are the main story → \"FocusOnCharts\"\n\
+  * Default mixed dashboard → \"Overview\"\n"
                     .to_string()
             }
             AgentRole::Coder => {

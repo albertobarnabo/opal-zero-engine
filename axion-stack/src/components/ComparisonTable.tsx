@@ -4,23 +4,27 @@ interface ComparisonTableProps {
   rows: (string | number)[][];
 }
 
+const cellBorder = "1px solid var(--axion-glass-border, rgba(255,255,255,0.08))";
+
 export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) {
   return (
     <div
-      className="border rounded-xl overflow-hidden"
+      className="overflow-hidden"
       style={{
-        background: "var(--axion-glass-bg, rgb(31 41 55 / 0.8))",
-        borderColor: "var(--axion-glass-border, rgb(55 65 81))",
-        backdropFilter: "blur(var(--axion-blur, 0px))",
-        WebkitBackdropFilter: "blur(var(--axion-blur, 0px))",
+        background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+        border: "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
+        borderRadius: "var(--axion-radius, 24px)",
+        backdropFilter: "blur(var(--axion-blur, 80px))",
+        WebkitBackdropFilter: "blur(var(--axion-blur, 80px))",
+        boxShadow: "var(--axion-glass-inset, inset 0 1px 0 rgba(255,255,255,0.15), inset 0 0 0 0.5px rgba(255,255,255,0.06))",
       }}
     >
       {title && (
-        <div
-          className="px-5 py-3"
-          style={{ borderBottom: "1px solid var(--axion-glass-border, rgb(55 65 81 / 0.8))" }}
-        >
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+        <div style={{ padding: "14px 24px 12px", borderBottom: cellBorder }}>
+          <p
+            className="text-[11px] font-semibold uppercase tracking-widest"
+            style={{ color: "rgba(255,255,255,0.55)" }}
+          >
             {title}
           </p>
         </div>
@@ -28,13 +32,17 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr style={{ background: "var(--axion-glass-bg, rgb(17 24 39 / 0.5))" }}>
+            <tr style={{ background: "rgba(255,255,255,0.025)" }}>
               {headers.map((h, i) => (
                 <th
                   key={i}
-                  className="text-left text-[11px] font-semibold uppercase tracking-wide
-                             text-gray-400 px-5 py-3 whitespace-nowrap"
-                  style={i === 0 ? { color: "var(--axion-accent, rgb(156 163 175))" } : undefined}
+                  className="text-left text-[11px] font-semibold uppercase tracking-wide px-6 py-4 whitespace-nowrap"
+                  style={{
+                    color:
+                      i === 0
+                        ? "var(--axion-accent, rgba(255,255,255,0.90))"
+                        : "rgba(255,255,255,0.55)",
+                  }}
                 >
                   {h}
                 </th>
@@ -43,15 +51,18 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
           </thead>
           <tbody>
             {rows.map((row, ri) => (
-              <tr
-                key={ri}
-                className="transition-colors"
-                style={{ borderTop: "1px solid var(--axion-glass-border, rgb(55 65 81 / 0.5))" }}
-              >
+              <tr key={ri} style={{ borderTop: cellBorder }}>
                 {row.map((cell, ci) => (
                   <td
                     key={ci}
-                    className={`px-5 py-3 ${ci === 0 ? "font-medium text-gray-200" : "text-gray-400"}`}
+                    className="px-6 py-4"
+                    style={{
+                      color:
+                        ci === 0
+                          ? "rgba(255,255,255,0.90)"
+                          : "rgba(255,255,255,0.60)",
+                      fontWeight: ci === 0 ? 600 : 400,
+                    }}
                   >
                     {cell}
                   </td>

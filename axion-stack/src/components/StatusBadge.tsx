@@ -6,46 +6,58 @@ interface StatusBadgeProps {
   description?: string;
 }
 
-const STYLES: Record<
-  BadgeStatus,
-  { bg: string; border: string; dot: string; text: string }
-> = {
-  info: {
-    bg: "bg-blue-950/50",
-    border: "border-blue-700/60",
-    dot: "bg-blue-400",
-    text: "text-blue-300",
-  },
-  success: {
-    bg: "bg-emerald-950/50",
-    border: "border-emerald-700/60",
-    dot: "bg-emerald-400",
-    text: "text-emerald-300",
-  },
-  warning: {
-    bg: "bg-amber-950/50",
-    border: "border-amber-700/60",
-    dot: "bg-amber-400",
-    text: "text-amber-300",
-  },
-  error: {
-    bg: "bg-red-950/50",
-    border: "border-red-700/60",
-    dot: "bg-red-400",
-    text: "text-red-300",
-  },
+const DOT_COLOR: Record<BadgeStatus, string> = {
+  info:    "#60a5fa",
+  success: "#34d399",
+  warning: "#fbbf24",
+  error:   "#f87171",
+};
+
+const LABEL_COLOR: Record<BadgeStatus, string> = {
+  info:    "rgba(147,197,253,0.95)",
+  success: "rgba(110,231,183,0.95)",
+  warning: "rgba(252,211,77,0.95)",
+  error:   "rgba(252,165,165,0.95)",
 };
 
 export function StatusBadge({ label, status, description }: StatusBadgeProps) {
-  const s = STYLES[status] ?? STYLES.info;
   return (
-    <div className={`${s.bg} border ${s.border} rounded-xl px-5 py-4`}>
-      <div className="flex items-center gap-2.5">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
-        <span className={`font-semibold text-sm ${s.text}`}>{label}</span>
+    <div
+      style={{
+        background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+        border: "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
+        borderRadius: "var(--axion-radius, 24px)",
+        backdropFilter: "blur(var(--axion-blur, 80px))",
+        WebkitBackdropFilter: "blur(var(--axion-blur, 80px))",
+        boxShadow: "var(--axion-glass-inset, inset 0 1px 0 rgba(255,255,255,0.15), inset 0 0 0 0.5px rgba(255,255,255,0.06))",
+        padding: "var(--axion-pad, 20px)",
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: DOT_COLOR[status],
+            boxShadow: `0 0 10px ${DOT_COLOR[status]}99`,
+          }}
+        />
+        <span
+          className="font-semibold text-base"
+          style={{ color: LABEL_COLOR[status] }}
+        >
+          {label}
+        </span>
       </div>
       {description && (
-        <p className="text-xs text-gray-400 mt-2 pl-[18px]">{description}</p>
+        <p
+          className="text-sm mt-2.5 pl-[22px] leading-relaxed"
+          style={{ color: "rgba(255,255,255,0.60)" }}
+        >
+          {description}
+        </p>
       )}
     </div>
   );
