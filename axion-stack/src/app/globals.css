@@ -231,8 +231,83 @@ body {
   animation: breathe-glow 3.2s ease-in-out infinite;
 }
 
-/* ── Sidebar scrollbar ────────────────────────────────────────────────────── */
+/* ── Bento-Snap: reveal pin/dismiss controls on card hover ──────────────── */
+.axion-grain:hover .bento-snap-controls {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* ── Refined card: left accent stripe + one-shot shimmer ────────────────── */
+@keyframes refined-enter {
+  0%   { opacity: 0; transform: scale(0.97) translateY(8px); }
+  60%  { opacity: 1; transform: scale(1.005) translateY(-1px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes refined-shimmer {
+  0%   { transform: translateX(-130%) skewX(-12deg); }
+  100% { transform: translateX(230%)  skewX(-12deg); }
+}
+
+.axion-refined-card {
+  border-left: 2px solid var(--axion-accent, #8b9cf4) !important;
+  animation: refined-enter 0.42s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  position: relative;
+  overflow: hidden;
+}
+
+.axion-refined-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgba(var(--axion-accent-rgb, 139,156,244), 0.10) 50%,
+    transparent 62%
+  );
+  pointer-events: none;
+  animation: refined-shimmer 1.1s ease-out 0.15s both;
+  z-index: 2;
+}
+
+/* Badge chip shown in the top-left corner of refined cards */
+.axion-refined-badge {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 5;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(var(--axion-accent-rgb, 139,156,244), 0.15);
+  border: 0.5px solid rgba(var(--axion-accent-rgb, 139,156,244), 0.35);
+  color: var(--axion-accent, #8b9cf4);
+  pointer-events: none;
+}
+
+
 ::-webkit-scrollbar        { width: 4px; }
 ::-webkit-scrollbar-track  { background: transparent; }
 ::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+/* ── Typewriter cursor ───────────────────────────────────────────────────── */
+
+.axion-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--axion-accent, #8b9cf4);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: axion-blink 0.9s step-end infinite;
+}
+
+@keyframes axion-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}

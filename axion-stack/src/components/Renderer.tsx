@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { MetricCard } from "./MetricCard";
 import { ComparisonTable } from "./ComparisonTable";
 import { StatusBadge } from "./StatusBadge";
@@ -88,7 +88,24 @@ function gridColumns(strategy: string): number {
 
 // ── Renderer ──────────────────────────────────────────────────────────────────
 
-export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
+interface RendererProps {
+  blueprint: UIBlueprint;
+  pinnedCards?: Set<number>;
+  dismissedCards?: Set<number>;
+  /** Indices of cards that were added/updated by a refinement pass. */
+  refinedIndices?: Set<number>;
+  onPin?: (index: number) => void;
+  onDismiss?: (index: number) => void;
+}
+
+export function Renderer({
+  blueprint,
+  pinnedCards = new Set(),
+  dismissedCards = new Set(),
+  refinedIndices = new Set(),
+  onPin,
+  onDismiss,
+}: RendererProps) {
   if (!blueprint.components.length) return null;
 
   const strategy = blueprint.layout_strategy ?? "Overview";
@@ -96,7 +113,16 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
   const cols = gridColumns(strategy);
   const total = blueprint.components.length;
 
+  // Sort so pinned cards appear first, then normal, with dismissed excluded
+  const indices = Array.from({ length: blueprint.components.length }, (_, i) => i);
+  const sortedIndices = [
+    ...indices.filter((i) => pinnedCards.has(i) && !dismissedCards.has(i)),
+    ...indices.filter((i) => !pinnedCards.has(i) && !dismissedCards.has(i)),
+  ];
+  const dismissed = indices.filter((i) => dismissedCards.has(i));
+
   return (
+    <>
     <div
       style={{
         display: "grid",
@@ -105,7 +131,9 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
         gap: "var(--axion-gap, 28px)",
       }}
     >
-      {blueprint.components.map((c, i) => {
+      <AnimatePresence mode="popLayout">
+      {sortedIndices.map((i) => {
+        const c = blueprint.components[i];
         const { col: colSpan, row: rowSpan } = resolveSpan(c, i, strategy, total, hasImageCards);
         const p = c.props;
 
@@ -191,14 +219,18 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
         })();
 
         const sourceUrl = p.source_url as string | undefined;
+        const isPinned   = pinnedCards.has(i);
+        const isRefined  = refinedIndices.has(i);
 
         return (
           <motion.div
             key={i}
+            layout
             initial={{ opacity: 0, y: 20, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.93, y: -12, transition: { duration: 0.22 } }}
             transition={{ type: "spring", stiffness: 240, damping: 22, delay: i * 0.055 }}
-            className="axion-grain"
+            className={`axion-grain${isRefined ? " axion-refined-card" : ""}`}
             style={{
               gridColumn: `span ${colSpan}`,
               gridRow: `span ${rowSpan}`,
@@ -206,10 +238,13 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
               transformStyle: "preserve-3d",
               willChange: "transform",
               transition: "box-shadow 0.2s",
+              // Pinned cards get a subtle accent ring
+              outline: isPinned ? "1.5px solid var(--axion-accent, rgba(139,156,244,0.60))" : "none",
+              outlineOffset: 2,
             }}
             onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => {
               const r = e.currentTarget.getBoundingClientRect();
-              const x = (e.clientX - r.left) / r.width  - 0.5;  // -0.5…0.5
+              const x = (e.clientX - r.left) / r.width  - 0.5;
               const y = (e.clientY - r.top)  / r.height - 0.5;
               e.currentTarget.style.transform =
                 `perspective(700px) rotateY(${x * 7}deg) rotateX(${-y * 7}deg) translateZ(6px)`;
@@ -224,6 +259,68 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
             }}
           >
             {inner}
+
+            {/* ── Refined badge ─────────────────────────────────────────────── */}
+            {isRefined && (
+              <span className="axion-refined-badge">updated</span>
+            )}
+
+            {/* ── Bento-Snap controls (pin + dismiss) — revealed on hover ─── */}
+            {(onPin || onDismiss) && (
+              <div
+                className="bento-snap-controls"
+                style={{
+                  position: "absolute",
+                  top: 8,
+                  left: 10,
+                  zIndex: 20,
+                  display: "flex",
+                  gap: 4,
+                  opacity: 0,
+                  transition: "opacity 0.18s",
+                  pointerEvents: "none",
+                }}
+              >
+                {/* Pin button */}
+                {onPin && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onPin(i); }}
+                    title={isPinned ? "Unpin card" : "Pin card to top"}
+                    style={{
+                      width: 22, height: 22, borderRadius: 6,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      background: isPinned ? "rgba(var(--axion-accent-rgb,139,156,244),0.20)" : "rgba(255,255,255,0.08)",
+                      border: isPinned ? "1px solid rgba(var(--axion-accent-rgb,139,156,244),0.45)" : "0.5px solid rgba(255,255,255,0.15)",
+                      color: isPinned ? "var(--axion-accent,#8b9cf4)" : "rgba(255,255,255,0.50)",
+                      fontSize: 10, fontWeight: 800,
+                      cursor: "pointer",
+                      backdropFilter: "blur(8px)",
+                    }}
+                  >
+                    {isPinned ? "◈" : "◉"}
+                  </button>
+                )}
+                {/* Dismiss button */}
+                {onDismiss && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDismiss(i); }}
+                    title="Dismiss card"
+                    style={{
+                      width: 22, height: 22, borderRadius: 6,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      background: "rgba(255,255,255,0.08)",
+                      border: "0.5px solid rgba(255,255,255,0.15)",
+                      color: "rgba(255,255,255,0.40)",
+                      fontSize: 10, fontWeight: 800,
+                      cursor: "pointer",
+                      backdropFilter: "blur(8px)",
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Source citation — floating link icon ──────────────────────── */}
             {sourceUrl && (
@@ -270,6 +367,46 @@ export function Renderer({ blueprint }: { blueprint: UIBlueprint }) {
           </motion.div>
         );
       })}
+      </AnimatePresence>
     </div>
+
+    {/* Dismissed cards tray — shows count of hidden cards with restore option */}
+    {dismissed.length > 0 && (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        style={{
+          marginTop: 12,
+          padding: "8px 14px",
+          borderRadius: 10,
+          background: "rgba(255,255,255,0.04)",
+          border: "0.5px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", flex: 1 }}>
+          {dismissed.length} card{dismissed.length !== 1 ? "s" : ""} hidden
+        </span>
+        <button
+          onClick={() => {
+            // Signal parent to clear dismissed — handled via onDismiss with a sentinel
+            // For now we emit onPin on all dismissed IDs to bubble the restore intent
+            if (onDismiss) dismissed.forEach((idx) => onDismiss(-idx - 1)); // negative idx = restore signal
+          }}
+          style={{
+            fontSize: 10, color: "rgba(255,255,255,0.45)", cursor: "pointer",
+            padding: "4px 10px", borderRadius: 6,
+            background: "rgba(255,255,255,0.06)",
+            border: "0.5px solid rgba(255,255,255,0.10)",
+            transition: "color 0.15s, background 0.15s",
+          }}
+        >
+          Restore all
+        </button>
+      </motion.div>
+    )}
+    </>
   );
 }

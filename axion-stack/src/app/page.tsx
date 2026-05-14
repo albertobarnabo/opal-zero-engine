@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Renderer, UIBlueprint, UIComponent } from "@/components/Renderer";
 import { ActionBar } from "@/components/ActionBar";
+import { TemplateGallery } from "@/components/TemplateGallery";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,27 @@ interface MissionSummary {
 
 type MissionStatus = "idle" | "streaming" | "complete" | "failed";
 
+// ── Execution trace ───────────────────────────────────────────────────────────
+
+interface TraceEvent {
+  id: string;
+  timestamp: number;
+  type: string;
+  slug?: string;
+  role?: string;
+  label: string;
+  durationMs?: number;
+}
+
+// ── Refinement history ────────────────────────────────────────────────────────
+
+interface RefinementRound {
+  intent: string;
+  timestamp: number;
+  /** data_payload keys that were added or updated by this round. */
+  newPayloadKeys: string[];
+}
+
 // ── MissionState & DesignTokens (the backend's canonical output) ─────────────
 
 interface DesignTokens {
@@ -57,6 +79,19 @@ function accentForMission(m: MissionSummary): string {
     case "Itinerary":   return "#fbbf24";
     default:            return "#6b7280";
   }
+}
+
+// Returns a human-readable relative time string for a Unix-ms timestamp
+// e.g. "just now", "2 min ago", "1 hr ago"
+function timeAgo(timestamp: number): string {
+  const secs = Math.floor((Date.now() - timestamp) / 1000);
+  if (secs < 60)   return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60)   return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)    return `${hrs} hr ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days !== 1 ? "s" : ""} ago`;
 }
 
 // Deterministic sparkline heights from mission id
@@ -425,6 +460,8 @@ export default function Home() {
   const userScrolledRef = useRef(false);
   const [streamCards, setStreamCards] = useState<Record<string, StreamCard>>({});
   const [cardOrder, setCardOrder] = useState<string[]>([]);
+  /** Tracks the animated (partially-revealed) portion of each completed task result. */
+  const [displayedResults, setDisplayedResults] = useState<Record<string, string>>({});
   const [missionMeta, setMissionMeta] = useState<MissionMeta | null>(null);
   const [missionState, setMissionState] = useState<MissionState | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -435,6 +472,39 @@ export default function Home() {
   const [activeMissionId, setActiveMissionId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [slashQuery, setSlashQuery] = useState<string | null>(null); // null = closed
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [pinnedCards, setPinnedCards] = useState<Set<number>>(new Set());
+  const [dismissedCards, setDismissedCards] = useState<Set<number>>(new Set());
+  const [refinementHistory, setRefinementHistory] = useState<RefinementRound[]>([]);
+  const [isRefining, setIsRefining] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
+
+  // ── Image upload ───────────────────────────────────────────────────────────
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedFile, setUploadedFile] = useState<{ filename: string; previewUrl: string } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // ── Settings ────────────────────────────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [configStatus, setConfigStatus] = useState<{ openai: boolean; tavily: boolean } | null>(null);
+  const [draftOpenAI, setDraftOpenAI] = useState("");
+  const [draftTavily, setDraftTavily] = useState("");
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  /** Keys in data_payload that came from the most recent refinement pass. */
+  const [refinedPayloadKeys, setRefinedPayloadKeys] = useState<Set<string>>(new Set());
+  const [showRefinementHistory, setShowRefinementHistory] = useState(false);
+
+  // ── Execution trace ────────────────────────────────────────────────────────
+  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
+  const [traceOpen, setTraceOpen] = useState(false);
+  const taskStartTimes = useRef<Record<string, number>>({});
+
+  // ── History search & clear ─────────────────────────────────────────────────
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyQueryFocused, setHistoryQueryFocused] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   async function deleteMission(id: string) {
     try {
@@ -443,6 +513,18 @@ export default function Home() {
     setHistory((prev) => prev.filter((m) => m.id !== id));
     if (activeMissionId === id) newMission();
     setConfirmDeleteId(null);
+  }
+
+  async function clearAllHistory() {
+    await Promise.all(
+      history.map((m) =>
+        fetch(`http://localhost:8080/missions/${m.id}`, { method: "DELETE" }).catch(() => {})
+      )
+    );
+    setHistory([]);
+    setHistoryQuery("");
+    setConfirmClear(false);
+    if (activeMissionId) newMission();
   }
 
   function newMission() {
@@ -457,6 +539,16 @@ export default function Home() {
     setActiveMissionId(null);
     setIntent("");
     setSidebarOpen(false);
+    setPinnedCards(new Set());
+    setDismissedCards(new Set());
+    setRefinementHistory([]);
+    setIsRefining(false);
+    setRefineError(null);
+    setRefinedPayloadKeys(new Set());
+    setShowRefinementHistory(false);
+    setDisplayedResults({});
+    setHistoryQuery("");
+    setConfirmClear(false);
     resetDesignTokens();
     setTimeout(() => textareaRef.current?.focus(), 100);
   }
@@ -499,6 +591,60 @@ export default function Home() {
     if (stage) stage.scrollTo({ top: stage.scrollHeight, behavior: "smooth" });
   }, [cardOrder, missionStatus]);
 
+  // Drive typewriter animation for each newly-completed task result.
+  useEffect(() => {
+    Object.entries(streamCards).forEach(([slug, card]) => {
+      if (card.status !== "completed" || !card.result) return;
+      // Already fully revealed — nothing to do
+      if (displayedResults[slug] === card.result) return;
+      // Already mid-animation or at full length — skip
+      const alreadyShown = displayedResults[slug] ?? "";
+      if (alreadyShown.length >= card.result.length) return;
+
+      let i = alreadyShown.length;
+      const fullText = card.result;
+      const CHARS_PER_TICK = 3;
+      const INTERVAL_MS   = 16; // ~60 fps
+
+      const timer = setInterval(() => {
+        i += CHARS_PER_TICK;
+        if (i >= fullText.length) {
+          setDisplayedResults(prev => ({ ...prev, [slug]: fullText }));
+          clearInterval(timer);
+        } else {
+          setDisplayedResults(prev => ({ ...prev, [slug]: fullText.slice(0, i) }));
+        }
+      }, INTERVAL_MS);
+
+      // Cleanup note: return inside forEach is a no-op for useEffect cleanup.
+      // The timers are self-terminating via the i >= fullText.length guard.
+      return () => clearInterval(timer);
+    });
+  }, [streamCards]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch /config/status on mount, hydrate draft keys from localStorage, and
+  // auto-open the settings drawer when no OpenAI key is configured anywhere.
+  useEffect(() => {
+    function hydrate(openai: boolean) {
+      const storedOpenAI = localStorage.getItem("axion_openai_key") ?? "";
+      const storedTavily = localStorage.getItem("axion_tavily_key") ?? "";
+      if (storedOpenAI) setDraftOpenAI(storedOpenAI);
+      if (storedTavily) setDraftTavily(storedTavily);
+      if (!openai && !storedOpenAI) setSettingsOpen(true);
+    }
+
+    fetch("http://localhost:8080/config/status")
+      .then((r) => r.json() as Promise<{ openai: boolean; tavily: boolean }>)
+      .then((status) => {
+        setConfigStatus(status);
+        hydrate(status.openai);
+      })
+      .catch(() => {
+        // Server offline on first load — rely solely on localStorage.
+        hydrate(false);
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function loadMission(id: string) {
     if (missionStatus === "streaming") return;
     setActiveMissionId(id);
@@ -536,6 +682,55 @@ export default function Home() {
       if (data.mission_state?.data_payload) {
         setMissionState(data.mission_state as MissionState);
       }
+
+      // Reconstruct a minimal trace from the task slugs.
+      {
+        const syntheticEvents: TraceEvent[] = [];
+        order.forEach((slug, i) => {
+          // Derive a readable role name from the slug, e.g. "web_search_0" → "Web Search"
+          const parts = slug.split("_");
+          const roleParts = parts[parts.length - 1].match(/^\d+$/) ? parts.slice(0, -1) : parts;
+          const roleLabel = roleParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
+          syntheticEvents.push({
+            id: `reconstructed-${slug}-start`,
+            timestamp: i * 2,       // synthetic ordering
+            type: "task_started",
+            slug,
+            role: roleLabel,
+            label: `◷ ${roleLabel}: ${slug}`,
+          });
+          syntheticEvents.push({
+            id: `reconstructed-${slug}-done`,
+            timestamp: i * 2 + 1,
+            type: "task_completed",
+            slug,
+            role: roleLabel,
+            label: `◷ ${roleLabel}: ${slug}`,
+          });
+        });
+        // Add a final mission_complete marker
+        syntheticEvents.push({
+          id: "reconstructed-mission-complete",
+          timestamp: order.length * 2,
+          type: "mission_complete",
+          label: "◉ Mission complete",
+        });
+        setTraceEvents(syntheticEvents);
+        setTraceOpen(false);
+        taskStartTimes.current = {};
+      }
+
+      // Rebuild refinement history from the snapshot intent chain (best-effort).
+      {
+        const raw: string = (data.intent as string) ?? "";
+        const rounds: RefinementRound[] = [];
+        const refineMatch = raw.match(/^REFINE\[([^\]]+)\]:\s*(.+)$/);
+        if (refineMatch) {
+          rounds.push({ intent: refineMatch[2], timestamp: (data.timestamp as number) * 1000, newPayloadKeys: [] });
+        }
+        setRefinementHistory(rounds);
+      }
+      setRefinedPayloadKeys(new Set());
       setMissionStatus("complete");
       setActiveAgent(null);
     } catch (e) {
@@ -557,10 +752,14 @@ export default function Home() {
     setFetchError(null);
     setActiveMissionId(null);
     userScrolledRef.current = false;
+    setTraceEvents([]);
+    setTraceOpen(false);
+    taskStartTimes.current = {};
 
     function handleSSEEvent(eventType: string, raw: string) {
       try {
         const p = JSON.parse(raw);
+        const now = Date.now();
         switch (eventType) {
           case "task_started":
             setStreamCards((prev) => ({
@@ -569,21 +768,55 @@ export default function Home() {
             }));
             setCardOrder((prev) => (prev.includes(p.slug) ? prev : [...prev, p.slug]));
             setActiveAgent({ role: p.role, intent: p.intent });
+            taskStartTimes.current[p.slug] = now;
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${p.slug}`,
+              timestamp: now,
+              type: "task_started",
+              slug: p.slug,
+              role: p.role,
+              label: `▶ ${p.role} started: ${String(p.intent ?? "").slice(0, 48)}`,
+            }]);
             break;
-          case "task_completed":
+          case "task_completed": {
+            const durationMs = now - (taskStartTimes.current[p.slug] ?? now);
             setStreamCards((prev) => ({
               ...prev,
               [p.slug]: { ...prev[p.slug], slug: p.slug, role: p.role, status: "completed", result: p.result },
             }));
             setActiveAgent(null);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${p.slug}-done`,
+              timestamp: now,
+              type: "task_completed",
+              slug: p.slug,
+              role: p.role,
+              label: `✓ ${p.role} completed in ${durationMs}ms`,
+              durationMs,
+            }]);
             break;
+          }
           case "task_failed":
             setStreamCards((prev) => ({ ...prev, [p.slug]: { ...prev[p.slug], status: "failed" } }));
             setActiveAgent(null);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${p.slug}-fail`,
+              timestamp: now,
+              type: "task_failed",
+              slug: p.slug,
+              role: p.role,
+              label: `✗ ${p.role ?? p.slug} failed: ${String(p.intent ?? "").slice(0, 48)}`,
+            }]);
             break;
           case "governor_expand":
             setGovernorBanner(`🔭 Governor expanding mission with ${p.new_task_count} new task(s)`);
             setTimeout(() => setGovernorBanner(null), 6000);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-governor`,
+              timestamp: now,
+              type: "governor_expand",
+              label: `· governor_expand (+${p.new_task_count} tasks)`,
+            }]);
             break;
           case "mission_complete":
             setMissionMeta({
@@ -602,12 +835,31 @@ export default function Home() {
             setMissionStatus("complete");
             setActiveAgent(null);
             fetchHistory();
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-mission-complete`,
+              timestamp: now,
+              type: "mission_complete",
+              label: "◉ Mission complete",
+            }]);
             break;
           case "mission_failed":
             setFetchError(p.error);
             setMissionStatus("failed");
             setActiveAgent(null);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-mission-failed`,
+              timestamp: now,
+              type: "mission_failed",
+              label: "◉ Mission failed",
+            }]);
             break;
+          default:
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${eventType}`,
+              timestamp: now,
+              type: eventType,
+              label: `· ${eventType}`,
+            }]);
         }
       } catch {
         // Ignore malformed events.
@@ -615,10 +867,21 @@ export default function Home() {
     }
 
     try {
+      // Inject vision tool hint when an image has been attached
+      const effectiveIntent = uploadedFile
+        ? `${intent}\n\n[Image attached: ${uploadedFile.filename}. Use the vision tool to analyse this image as part of your research.]`
+        : intent;
+
+      const reqHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      const storedOpenAI = localStorage.getItem("axion_openai_key");
+      const storedTavily = localStorage.getItem("axion_tavily_key");
+      if (storedOpenAI) reqHeaders["X-OpenAI-Key"] = storedOpenAI;
+      if (storedTavily) reqHeaders["X-Tavily-Key"] = storedTavily;
+
       const res = await fetch("http://localhost:8080/execute", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent }),
+        headers: reqHeaders,
+        body: JSON.stringify({ intent: effectiveIntent }),
       });
 
       if (!res.ok) {
@@ -632,6 +895,12 @@ export default function Home() {
         setFetchError("No response body from server.");
         setMissionStatus("failed");
         return;
+      }
+
+      // Mission accepted by the server — release the attachment
+      if (uploadedFile) {
+        URL.revokeObjectURL(uploadedFile.previewUrl);
+        setUploadedFile(null);
       }
 
       const reader = res.body.getReader();
@@ -663,13 +932,348 @@ export default function Home() {
     }
   }
 
+  // ── Image upload ──────────────────────────────────────────────────────────────
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Client-side type guard
+    if (!file.type.startsWith("image/")) {
+      setUploadError("Only image files are accepted");
+      setTimeout(() => setUploadError(null), 3000);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("http://localhost:8080/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        const json = await res.json() as { filename: string };
+        const previewUrl = URL.createObjectURL(file);
+        setUploadedFile({ filename: json.filename, previewUrl });
+      } else {
+        setUploadError("Upload failed — try again");
+      }
+    } catch {
+      setUploadError("Upload failed — try again");
+    }
+
+    setIsUploading(false);
+    // Reset so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  // ── Refinement ────────────────────────────────────────────────────────────────
+
+  async function runRefinement(refinementIntent: string) {
+    const targetId = activeMissionId ?? missionMeta?.mission_id;
+    if (!targetId || isRefining || missionStatus === "streaming") return;
+
+    setIsRefining(true);
+    setRefineError(null);
+
+    // Capture the payload keys that exist BEFORE the refinement so we can diff.
+    const keysBefore = new Set(Object.keys(missionState?.data_payload ?? {}));
+
+    try {
+      const refineHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      const storedOpenAI = localStorage.getItem("axion_openai_key");
+      const storedTavily = localStorage.getItem("axion_tavily_key");
+      if (storedOpenAI) refineHeaders["X-OpenAI-Key"] = storedOpenAI;
+      if (storedTavily) refineHeaders["X-Tavily-Key"] = storedTavily;
+
+      const res = await fetch(`http://localhost:8080/missions/${targetId}/refine`, {
+        method: "POST",
+        headers: refineHeaders,
+        body: JSON.stringify({ intent: refinementIntent }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setRefineError((err as { error?: string }).error ?? `Server error ${res.status}`);
+        setIsRefining(false);
+        return;
+      }
+
+      if (!res.body) {
+        setRefineError("No response body from server.");
+        setIsRefining(false);
+        return;
+      }
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer    = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() ?? "";
+
+        for (const chunk of chunks) {
+          if (!chunk.trim()) continue;
+          let eventType = "";
+          let data = "";
+          for (const line of chunk.split("\n")) {
+            if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+            else if (line.startsWith("data: ")) data = line.slice(6).trim();
+          }
+          if (!eventType || !data) continue;
+
+          try {
+            const p = JSON.parse(data);
+            const now = Date.now();
+            switch (eventType) {
+              case "task_started":
+                setStreamCards((prev) => ({
+                  ...prev,
+                  [p.slug]: { slug: p.slug, role: p.role, intent: p.intent, status: "running" },
+                }));
+                setCardOrder((prev) => (prev.includes(p.slug) ? prev : [...prev, p.slug]));
+                setActiveAgent({ role: p.role, intent: p.intent });
+                taskStartTimes.current[p.slug] = now;
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-${p.slug}`,
+                  timestamp: now,
+                  type: "task_started",
+                  slug: p.slug,
+                  role: p.role,
+                  label: `▶ ${p.role} started: ${String(p.intent ?? "").slice(0, 48)}`,
+                }]);
+                break;
+              case "task_completed": {
+                const durationMs = now - (taskStartTimes.current[p.slug] ?? now);
+                setStreamCards((prev) => ({
+                  ...prev,
+                  [p.slug]: { ...prev[p.slug], slug: p.slug, role: p.role, status: "completed", result: p.result },
+                }));
+                setActiveAgent(null);
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-${p.slug}-done`,
+                  timestamp: now,
+                  type: "task_completed",
+                  slug: p.slug,
+                  role: p.role,
+                  label: `✓ ${p.role} completed in ${durationMs}ms`,
+                  durationMs,
+                }]);
+                break;
+              }
+              case "task_failed":
+                setStreamCards((prev) => ({ ...prev, [p.slug]: { ...prev[p.slug], status: "failed" } }));
+                setActiveAgent(null);
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-${p.slug}-fail`,
+                  timestamp: now,
+                  type: "task_failed",
+                  slug: p.slug,
+                  role: p.role,
+                  label: `✗ ${p.role ?? p.slug} failed: ${String(p.intent ?? "").slice(0, 48)}`,
+                }]);
+                break;
+              case "awaiting_feedback":
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-feedback`,
+                  timestamp: now,
+                  type: "awaiting_feedback",
+                  label: "⏸ Awaiting human input",
+                }]);
+                break;
+              case "mission_complete": {
+                const newMissionState = p.mission_state as (typeof missionState) | undefined;
+                if (newMissionState?.data_payload) {
+                  // Compute which payload keys are genuinely new/changed
+                  const keysAfter = new Set(Object.keys(newMissionState.data_payload));
+                  const newKeys   = new Set([...keysAfter].filter(k => !keysBefore.has(k)));
+                  setRefinedPayloadKeys(newKeys);
+                  setMissionState(newMissionState);
+
+                  // Record this round in the history
+                  setRefinementHistory((prev) => [
+                    ...prev,
+                    {
+                      intent: refinementIntent,
+                      timestamp: now,
+                      newPayloadKeys: [...newKeys],
+                    },
+                  ]);
+                }
+                setMissionStatus("complete");
+                setMissionMeta((prev) => prev
+                  ? { ...prev, task_count: p.task_count ?? prev.task_count }
+                  : prev
+                );
+                setActiveAgent(null);
+                fetchHistory();
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-mission-complete`,
+                  timestamp: now,
+                  type: "mission_complete",
+                  label: "◉ Mission complete",
+                }]);
+                break;
+              }
+              case "mission_failed":
+                setRefineError(p.error ?? "Refinement failed.");
+                setActiveAgent(null);
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-mission-failed`,
+                  timestamp: now,
+                  type: "mission_failed",
+                  label: "◉ Mission failed",
+                }]);
+                break;
+              default:
+                setTraceEvents((prev) => [...prev, {
+                  id: `${now}-${eventType}`,
+                  timestamp: now,
+                  type: eventType,
+                  label: `· ${eventType}`,
+                }]);
+            }
+          } catch { /* ignore malformed events */ }
+        }
+      }
+    } catch (e) {
+      setRefineError(e instanceof Error ? e.message : "Connection error.");
+    } finally {
+      setIsRefining(false);
+    }
+  }
+
   const isIdle = missionStatus === "idle";
   const isStreaming = missionStatus === "streaming";
   const hasCards = cardOrder.length > 0;
 
+  // ── Trace helpers ─────────────────────────────────────────────────────────
+
+  function formatTraceTime(ts: number): string {
+    const d = new Date(ts);
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    const s = String(d.getSeconds()).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+
+  function dotColorForType(type: string): string {
+    if (type === "task_completed")   return "rgba(74,222,128,0.7)";
+    if (type === "task_failed")      return "rgba(248,113,113,0.7)";
+    if (type === "mission_complete") return "var(--axion-accent, #8b9cf4)";
+    if (type === "task_started")     return "rgba(255,255,255,0.25)";
+    return "rgba(255,255,255,0.15)";
+  }
+
+  // Instant-filter: matches intent substring (case-insensitive)
+  const filteredHistory = historyQuery.trim()
+    ? history.filter((m) =>
+        m.intent.toLowerCase().includes(historyQuery.trim().toLowerCase())
+      )
+    : history;
+
+  // ── Slash commands ────────────────────────────────────────────────────────────
+  const SLASH_COMMANDS = [
+    { cmd: "/export md",   icon: "↓", desc: "Export as Markdown", accent: "#6ee7b7",
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=md`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
+    { cmd: "/export csv",  icon: "↓", desc: "Export as CSV",      accent: "#6ee7b7",
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=csv`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
+    { cmd: "/export html", icon: "↓", desc: "Export as HTML",     accent: "#6ee7b7",
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=html`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
+    { cmd: "/clear",       icon: "✕", desc: "Clear current mission & reset", accent: "#f87171",
+      run: () => { newMission(); } },
+    { cmd: "/memo",        icon: "◈", desc: "Save a quick note to disk",     accent: "#8b9cf4",
+      run: () => { const note = intent.replace(/^\/memo\s*/i, "").trim() || "No content"; fetch("http://localhost:8080/execute",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({intent:`Save a memo: "${note}"`})}); newMission(); } },
+  ];
+
+  const filteredSlash = slashQuery !== null
+    ? SLASH_COMMANDS.filter((c) => c.cmd.includes(slashQuery.toLowerCase()))
+    : [];
+
+  function executeSlashCommand(cmd: typeof SLASH_COMMANDS[0]) {
+    setIntent("");
+    setSlashQuery(null);
+    setSlashIndex(0);
+    cmd.run();
+  }
+
   // ── Shared command bar ───────────────────────────────────────────────────────
   // Always lives in the Control Zone at the bottom — never floats/overlaps.
   const commandBarContent = (
+    <div style={{ position: "relative" }}>
+    {/* ── Slash-command popover ─────────────────────────────────────────── */}
+    <AnimatePresence>
+      {slashQuery !== null && filteredSlash.length > 0 && (
+        <motion.div
+          key="slash-popover"
+          initial={{ opacity: 0, y: 8, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 6, scale: 0.97 }}
+          transition={{ type: "spring", stiffness: 400, damping: 28 }}
+          style={{
+            position: "absolute",
+            bottom: "calc(100% + 10px)",
+            left: 0, right: 0,
+            borderRadius: 16,
+            overflow: "hidden",
+            background: "rgba(10,14,28,0.94)",
+            border: "0.5px solid rgba(255,255,255,0.14)",
+            backdropFilter: "blur(60px)",
+            WebkitBackdropFilter: "blur(60px)",
+            boxShadow: "0 16px 48px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.09)",
+            zIndex: 50,
+          }}
+        >
+          {/* Popover header */}
+          <div style={{ padding: "8px 14px 6px", borderBottom: "0.5px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.25)" }}>
+              Commands
+            </span>
+            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.20)" }}>↑↓ navigate · ⏎ execute · Esc close</span>
+          </div>
+          {filteredSlash.map((c, i) => (
+            <button
+              key={c.cmd}
+              onClick={() => executeSlashCommand(c)}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 14px",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: i === slashIndex ? `${c.accent}14` : "transparent",
+                borderLeft: i === slashIndex ? `2px solid ${c.accent}` : "2px solid transparent",
+                transition: "background 0.12s",
+                cursor: "pointer",
+              }}
+              onMouseEnter={() => setSlashIndex(i)}
+            >
+              <span style={{
+                width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: `${c.accent}18`, border: `1px solid ${c.accent}30`,
+                color: c.accent, fontSize: 12, fontWeight: 700,
+              }}>{c.icon}</span>
+              <span style={{ fontFamily: "var(--axion-font-mono, monospace)", fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{c.cmd}</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginLeft: 4 }}>{c.desc}</span>
+            </button>
+          ))}
+        </motion.div>
+      )}
+    </AnimatePresence>
+
     <div
       className={`relative p-[1.5px] rounded-2xl ${
         isStreaming
@@ -692,33 +1296,196 @@ export default function Home() {
           boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)",
         }}
       >
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={intent}
-          onChange={(e) => {
-            setIntent(e.target.value);
-            const el = e.target;
-            el.style.height = "auto";
-            el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              runMission();
-            }
-          }}
-          placeholder={
-            intent === "" && history.length > 0
-              ? `Continue: "${history[0].intent.slice(0, 55)}${history[0].intent.length > 55 ? "…" : ""}"`
-              : "Describe your mission intent…"
-          }
-          disabled={isStreaming}
-          className="flex-1 bg-transparent text-lg text-gray-100 placeholder-gray-500
-                     focus:outline-none resize-none leading-relaxed overflow-hidden
-                     disabled:opacity-50"
-          style={{ minHeight: "28px", maxHeight: "200px" }}
+        {/* Hidden file input — triggered by the upload icon button */}
+        <input
+          type="file"
+          accept="image/*"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          style={{ display: "none" }}
         />
+
+        {/* Upload icon button — leading edge, aligned to bottom */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading || isStreaming}
+          title="Attach image"
+          className="shrink-0 flex items-center justify-center transition-colors"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background: "transparent",
+            border: "none",
+            cursor: isUploading || isStreaming ? "not-allowed" : "pointer",
+            color: isUploading || isStreaming
+              ? "rgba(255,255,255,0.22)"
+              : uploadedFile
+              ? "var(--axion-accent, #8b9cf4)"
+              : "rgba(255,255,255,0.45)",
+            padding: 0,
+          }}
+          onMouseEnter={(e) => {
+            if (!isUploading && !isStreaming)
+              (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.75)";
+          }}
+          onMouseLeave={(e) => {
+            if (!isUploading && !isStreaming)
+              (e.currentTarget as HTMLButtonElement).style.color = uploadedFile
+                ? "var(--axion-accent, #8b9cf4)"
+                : "rgba(255,255,255,0.45)";
+          }}
+        >
+          {isUploading ? (
+            <div
+              className="animate-spin"
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: "50%",
+                border: "2px solid rgba(255,255,255,0.18)",
+                borderTopColor: "rgba(255,255,255,0.65)",
+              }}
+            />
+          ) : (
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          )}
+        </button>
+
+        {/* Column: attachment chip + error + textarea */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* Thumbnail chip */}
+          {uploadedFile && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                background: "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 10,
+                padding: "6px 10px",
+                alignSelf: "flex-start",
+              }}
+            >
+              <img
+                src={uploadedFile.previewUrl}
+                alt=""
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 8,
+                  objectFit: "cover",
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "rgba(255,255,255,0.65)",
+                  fontFamily: "var(--font-mono, monospace)",
+                  maxWidth: 180,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {uploadedFile.filename.length > 24
+                  ? uploadedFile.filename.slice(0, 24) + "…"
+                  : uploadedFile.filename}
+              </span>
+              <button
+                onClick={() => {
+                  URL.revokeObjectURL(uploadedFile.previewUrl);
+                  setUploadedFile(null);
+                }}
+                title="Remove attachment"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "rgba(255,255,255,0.40)",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  lineHeight: 1,
+                  padding: "0 2px",
+                  flexShrink: 0,
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
+
+          {/* Inline upload error */}
+          {uploadError && (
+            <p style={{ fontSize: 11, color: "rgba(255,80,80,0.85)", margin: 0 }}>
+              {uploadError}
+            </p>
+          )}
+
+          {/* Textarea */}
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={intent}
+            onChange={(e) => {
+              const v = e.target.value;
+              setIntent(v);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+              // Slash-command detection: open popover when input starts with "/"
+              if (v.startsWith("/")) {
+                setSlashQuery(v.slice(1));
+                setSlashIndex(0);
+              } else {
+                setSlashQuery(null);
+              }
+            }}
+            onKeyDown={(e) => {
+              // Navigate / execute slash commands
+              if (slashQuery !== null && filteredSlash.length > 0) {
+                if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % filteredSlash.length); return; }
+                if (e.key === "ArrowUp")   { e.preventDefault(); setSlashIndex((i) => (i - 1 + filteredSlash.length) % filteredSlash.length); return; }
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                  e.preventDefault();
+                  executeSlashCommand(filteredSlash[slashIndex]);
+                  return;
+                }
+                if (e.key === "Escape") { e.preventDefault(); setSlashQuery(null); return; }
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                runMission();
+              }
+            }}
+            placeholder={
+              intent === "" && history.length > 0
+                ? `Continue: "${history[0].intent.slice(0, 55)}${history[0].intent.length > 55 ? "…" : ""}"`
+                : "Describe your mission intent…"
+            }
+            disabled={isStreaming}
+            className="bg-transparent text-lg text-gray-100 placeholder-gray-500
+                       focus:outline-none resize-none leading-relaxed overflow-hidden
+                       disabled:opacity-50"
+            style={{ minHeight: "28px", maxHeight: "200px", width: "100%" }}
+          />
+        </div>
+
+        {/* Execute button */}
         <button
           onClick={runMission}
           disabled={isStreaming || !intent.trim()}
@@ -738,7 +1505,31 @@ export default function Home() {
         </button>
       </div>
     </div>
+    </div>
   );
+
+  // ── Settings helpers ─────────────────────────────────────────────────────────
+
+  function saveSettings() {
+    const openAITrimmed = draftOpenAI.trim();
+    const tavilyTrimmed = draftTavily.trim();
+    if (openAITrimmed) {
+      localStorage.setItem("axion_openai_key", openAITrimmed);
+    } else {
+      localStorage.removeItem("axion_openai_key");
+    }
+    if (tavilyTrimmed) {
+      localStorage.setItem("axion_tavily_key", tavilyTrimmed);
+    } else {
+      localStorage.removeItem("axion_tavily_key");
+    }
+    setSettingsSaved(true);
+    setTimeout(() => setSettingsSaved(false), 2000);
+    setSettingsOpen(false);
+  }
+
+  // Badge: shown when OpenAI is not configured via env AND not stored locally
+  const showConfigBadge = configStatus?.openai === false && !draftOpenAI.trim();
 
   return (
     <div
@@ -751,6 +1542,261 @@ export default function Home() {
         <div className="axion-mesh-blob-1" />
         <div className="axion-mesh-blob-2" />
       </div>
+
+      {/* ── Settings gear button ─────────────────────────────────────────── */}
+      <button
+        onClick={() => setSettingsOpen((v) => !v)}
+        title="Settings"
+        style={{
+          position: "fixed",
+          top: 20,
+          right: 24,
+          zIndex: 200,
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "rgba(255,255,255,0.06)",
+          border: "0.5px solid rgba(255,255,255,0.10)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          color: "rgba(255,255,255,0.35)",
+          cursor: "pointer",
+          transition: "color 0.15s, background 0.15s",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.70)";
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.10)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)";
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
+                   a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
+                   A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
+                   l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+                   A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
+                   l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
+                   a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
+                   l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+                   a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        {/* Red dot badge — shown when OpenAI is unconfigured */}
+        {showConfigBadge && (
+          <span style={{
+            position: "absolute",
+            top: 5,
+            right: 5,
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: "#f87171",
+            pointerEvents: "none",
+          }} />
+        )}
+      </button>
+
+      {/* ── Settings backdrop ─────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {settingsOpen && (
+          <motion.div
+            key="settings-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setSettingsOpen(false)}
+            style={{
+              position: "fixed", inset: 0,
+              background: "rgba(0,0,0,0.30)",
+              zIndex: 189,
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── Settings drawer ───────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {settingsOpen && (
+          <motion.div
+            key="settings-drawer"
+            initial={{ x: 360 }}
+            animate={{ x: 0 }}
+            exit={{ x: 360 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              height: "100%",
+              width: 360,
+              zIndex: 190,
+              background: "rgba(12, 12, 20, 0.96)",
+              backdropFilter: "blur(40px)",
+              WebkitBackdropFilter: "blur(40px)",
+              borderLeft: "1px solid rgba(255,255,255,0.10)",
+              display: "flex",
+              flexDirection: "column",
+              padding: "28px 28px 32px",
+              overflowY: "auto",
+            }}
+          >
+            {/* Header row */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+              <p style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.9)", margin: 0 }}>
+                Settings
+              </p>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                style={{
+                  background: "none", border: "none",
+                  color: "rgba(255,255,255,0.35)",
+                  fontSize: 20, lineHeight: 1,
+                  cursor: "pointer", padding: "0 2px",
+                  transition: "color 0.15s",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.80)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* OpenAI Key */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>
+                OpenAI API Key
+              </label>
+              <input
+                type="password"
+                value={draftOpenAI}
+                onChange={(e) => setDraftOpenAI(e.target.value)}
+                placeholder="sk-..."
+                style={{
+                  width: "100%",
+                  background: "rgba(255,255,255,0.07)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 10,
+                  padding: "10px 14px",
+                  color: "rgba(255,255,255,0.9)",
+                  fontSize: 13,
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color 0.15s",
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #8b9cf4)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+              />
+              {configStatus?.openai && !draftOpenAI ? (
+                <p style={{ fontSize: 11, color: "rgba(74,222,128,0.8)", marginTop: 6, margin: "6px 0 0" }}>
+                  ✓ Configured via environment
+                </p>
+              ) : (
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>
+                  Required for all missions.
+                </p>
+              )}
+            </div>
+
+            {/* Tavily Key */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>
+                Tavily Search Key
+              </label>
+              <input
+                type="password"
+                value={draftTavily}
+                onChange={(e) => setDraftTavily(e.target.value)}
+                placeholder="tvly-..."
+                style={{
+                  width: "100%",
+                  background: "rgba(255,255,255,0.07)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 10,
+                  padding: "10px 14px",
+                  color: "rgba(255,255,255,0.9)",
+                  fontSize: 13,
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color 0.15s",
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #8b9cf4)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+              />
+              {configStatus?.tavily && !draftTavily ? (
+                <p style={{ fontSize: 11, color: "rgba(74,222,128,0.8)", marginTop: 6, margin: "6px 0 0" }}>
+                  ✓ Configured via environment
+                </p>
+              ) : (
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>
+                  Optional — enables live web search.
+                </p>
+              )}
+            </div>
+
+            {/* Save button */}
+            <button
+              onClick={saveSettings}
+              style={{
+                width: "100%",
+                background: "var(--axion-accent, #8b9cf4)",
+                color: "#000",
+                fontWeight: 600,
+                fontSize: 14,
+                borderRadius: 10,
+                padding: "11px 0",
+                marginTop: 8,
+                border: "none",
+                cursor: "pointer",
+                transition: "opacity 0.15s",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.85"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
+            >
+              Save
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Saved toast ───────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {settingsSaved && (
+          <motion.div
+            key="settings-saved-toast"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ type: "spring", stiffness: 360, damping: 28 }}
+            style={{
+              position: "fixed",
+              bottom: 96,
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 300,
+              background: "rgba(255,255,255,0.10)",
+              border: "0.5px solid rgba(255,255,255,0.18)",
+              backdropFilter: "blur(24px)",
+              WebkitBackdropFilter: "blur(24px)",
+              borderRadius: 10,
+              padding: "8px 18px",
+              fontSize: 13,
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.85)",
+              pointerEvents: "none",
+            }}
+          >
+            ✓ Saved
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Sidebar backdrop ──────────────────────────────────────────────── */}
       <AnimatePresence>
@@ -883,7 +1929,59 @@ export default function Home() {
             </div>
 
             {/* History list */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "6px 8px 20px" }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "6px 8px 20px", display: "flex", flexDirection: "column" }}>
+
+              {/* Search input */}
+              {history.length > 0 && (
+                <div style={{ position: "relative", marginBottom: 8, flexShrink: 0 }}>
+                  {/* Magnifier icon */}
+                  <span
+                    style={{
+                      position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
+                      fontSize: 12, color: "rgba(255,255,255,0.28)", pointerEvents: "none",
+                      lineHeight: 1,
+                    }}
+                  >
+                    ⌕
+                  </span>
+                  <input
+                    type="text"
+                    value={historyQuery}
+                    onChange={(e) => setHistoryQuery(e.target.value)}
+                    onFocus={() => setHistoryQueryFocused(true)}
+                    onBlur={() => setHistoryQueryFocused(false)}
+                    placeholder="Search missions…"
+                    style={{
+                      width: "100%",
+                      padding: "7px 28px 7px 28px",
+                      borderRadius: 10,
+                      background: historyQueryFocused
+                        ? "rgba(255,255,255,0.08)"
+                        : "rgba(255,255,255,0.05)",
+                      border: `0.5px solid ${historyQueryFocused ? "rgba(var(--axion-accent-rgb, 139,156,244), 0.45)" : "rgba(255,255,255,0.10)"}`,
+                      color: "rgba(255,255,255,0.82)",
+                      fontSize: 12,
+                      outline: "none",
+                      transition: "background 0.15s, border-color 0.15s",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  {/* Clear ×  */}
+                  {historyQuery && (
+                    <button
+                      onClick={() => setHistoryQuery("")}
+                      style={{
+                        position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                        fontSize: 13, lineHeight: 1, color: "rgba(255,255,255,0.35)",
+                        background: "none", border: "none", cursor: "pointer", padding: 2,
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              )}
+
               {history.length === 0 ? (
                 <div style={{ padding: "36px 16px", textAlign: "center" }}>
                   <div style={{ fontSize: 24, opacity: 0.18, marginBottom: 8 }}>◈</div>
@@ -891,10 +1989,20 @@ export default function Home() {
                     No missions yet.<br />Run your first to begin.
                   </p>
                 </div>
+              ) : filteredHistory.length === 0 ? (
+                <div style={{ padding: "28px 16px", textAlign: "center" }}>
+                  <div style={{ fontSize: 20, opacity: 0.20, marginBottom: 6 }}>◈</div>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", lineHeight: 1.6 }}>
+                    No matches for<br />
+                    <span style={{ color: "rgba(255,255,255,0.40)", fontStyle: "italic" }}>
+                      "{historyQuery}"
+                    </span>
+                  </p>
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <AnimatePresence initial={false}>
-                  {history.map((m) => {
+                  {filteredHistory.map((m) => {
                     const accent = accentForMission(m);
                     const isActive = activeMissionId === m.id;
                     const heights = sparklineHeights(m.id, m.task_count);
@@ -993,6 +2101,52 @@ export default function Home() {
                     );
                   })}
                   </AnimatePresence>
+                </div>
+              )}
+
+              {/* Clear all — only when there are missions */}
+              {history.length > 0 && (
+                <div style={{ marginTop: "auto", paddingTop: 14, flexShrink: 0 }}>
+                  <button
+                    onClick={() => {
+                      if (confirmClear) {
+                        clearAllHistory();
+                      } else {
+                        setConfirmClear(true);
+                        // Auto-reset confirmation after 3 s
+                        setTimeout(() => setConfirmClear(false), 3000);
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.04em",
+                      cursor: "pointer",
+                      background: confirmClear
+                        ? "rgba(239,68,68,0.14)"
+                        : "rgba(255,255,255,0.04)",
+                      border: `0.5px solid ${confirmClear ? "rgba(239,68,68,0.40)" : "rgba(255,255,255,0.10)"}`,
+                      color: confirmClear ? "#f87171" : "rgba(255,255,255,0.28)",
+                      transition: "background 0.15s, border-color 0.15s, color 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!confirmClear) {
+                        (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.50)";
+                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.07)";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!confirmClear) {
+                        (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.28)";
+                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+                      }
+                    }}
+                  >
+                    {confirmClear ? "⚠ Confirm — delete all missions" : "Clear all history"}
+                  </button>
                 </div>
               )}
             </div>
@@ -1119,165 +2273,21 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        {/* Idle: discovery widgets */}
+        {/* Idle: template gallery */}
         <AnimatePresence>
           {isIdle && (
             <motion.div
               key="idle-widgets"
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ delay: 0.1, duration: 0.4, exit: { duration: 0.18 } }}
-              style={{
-                paddingTop: "3rem",
-                paddingBottom: "2.5rem",
-                paddingLeft: 24,
-                paddingRight: 24,
-              }}
+              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.18 } }}
             >
-              <div style={{ maxWidth: 1040, margin: "0 auto", width: "100%" }}>
-
-                {/* Quick-start cards */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16, marginBottom: 16 }}>
-                  {[
-                    {
-                      title: "Market Deep-Dive",
-                      desc: "Research a stock, sector, or company in depth — financials, outlook, competitive landscape.",
-                      accent: "#5eead4",
-                      icon: "📈",
-                      intent: "Research Tesla's current market position and financial outlook",
-                    },
-                    {
-                      title: "Code Architect",
-                      desc: "Design, review, or analyze any software system with multi-agent precision.",
-                      accent: "#a78bfa",
-                      icon: "⚙️",
-                      intent: "Design a scalable microservice architecture for a fintech app",
-                    },
-                    {
-                      title: "Research Synthesis",
-                      desc: "Synthesize knowledge across a complex topic into a structured, cited report.",
-                      accent: "#6ee7b7",
-                      icon: "🔬",
-                      intent: "Synthesize recent advances in quantum computing for 2025",
-                    },
-                  ].map((tpl) => (
-                    <motion.button
-                      key={tpl.title}
-                      onClick={() => setIntent(tpl.intent)}
-                      whileHover={{ y: -4, boxShadow: `inset 0 1px 0 rgba(255,255,255,0.22), 0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px ${tpl.accent}33` }}
-                      whileTap={{ scale: 0.98 }}
-                      transition={{ type: "spring", stiffness: 320, damping: 28 }}
-                      style={{
-                        textAlign: "left",
-                        borderRadius: 20,
-                        padding: "28px 28px 32px",
-                        background: "rgba(255,255,255,0.055)",
-                        border: "1px solid rgba(255,255,255,0.11)",
-                        backdropFilter: "blur(64px)",
-                        WebkitBackdropFilter: "blur(64px)",
-                        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.14), 0 12px 40px rgba(0,0,0,0.40)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "inline-flex", alignItems: "center", justifyContent: "center",
-                          width: 48, height: 48, borderRadius: 14, marginBottom: 20,
-                          background: `${tpl.accent}18`,
-                          border: `1px solid ${tpl.accent}30`,
-                          fontSize: 22,
-                        }}
-                      >
-                        {tpl.icon}
-                      </div>
-                      <p style={{ fontSize: 17, fontWeight: 700, marginBottom: 8, color: "rgba(255,255,255,0.92)", letterSpacing: "-0.01em" }}>
-                        {tpl.title}
-                      </p>
-                      <p style={{ fontSize: 13, lineHeight: 1.65, color: "rgba(255,255,255,0.48)" }}>
-                        {tpl.desc}
-                      </p>
-                      <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: tpl.accent, opacity: 0.7 }} />
-                        <span style={{ fontSize: 11, color: tpl.accent, opacity: 0.7, letterSpacing: "0.04em", fontWeight: 500 }}>Launch mission →</span>
-                      </div>
-                    </motion.button>
-                  ))}
-                </div>
-
-                {/* Bottom row: Kernel Status + Recent Themes */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16 }}>
-
-                  {/* Kernel Status */}
-                  <div
-                    style={{
-                      borderRadius: 20,
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.09)",
-                      backdropFilter: "blur(64px)",
-                      WebkitBackdropFilter: "blur(64px)",
-                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 8px 24px rgba(0,0,0,0.30)",
-                      padding: "24px",
-                    }}
-                  >
-                    <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.25)", marginBottom: 16 }}>
-                      Kernel Status
-                    </p>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                      <span className="status-pulse-dot w-2 h-2 rounded-full shrink-0" style={{ background: "#34d399", color: "#34d399" }} />
-                      <span style={{ fontSize: 13, color: "rgba(255,255,255,0.70)" }}>axion-core online</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(255,255,255,0.18)", flexShrink: 0 }} />
-                      <span style={{ fontSize: 13, color: "rgba(255,255,255,0.35)" }}>Awaiting mission</span>
-                    </div>
-                  </div>
-
-                  {/* Recent Themes */}
-                  {history.length > 0 && (() => {
-                    const words = history
-                      .flatMap((m) => m.intent.toLowerCase().split(/\W+/))
-                      .filter((w) => w.length > 4)
-                      .reduce((acc, w) => { acc[w] = (acc[w] ?? 0) + 1; return acc; }, {} as Record<string, number>);
-                    const tags = Object.entries(words).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([w]) => w);
-                    return (
-                      <div
-                        style={{
-                          borderRadius: 20,
-                          background: "rgba(255,255,255,0.04)",
-                          border: "1px solid rgba(255,255,255,0.09)",
-                          backdropFilter: "blur(64px)",
-                          WebkitBackdropFilter: "blur(64px)",
-                          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 8px 24px rgba(0,0,0,0.30)",
-                          padding: "24px",
-                        }}
-                      >
-                        <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.25)", marginBottom: 16 }}>
-                          Recent Themes
-                        </p>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          {tags.map((tag) => (
-                            <button
-                              key={tag}
-                              onClick={() => setIntent(tag.charAt(0).toUpperCase() + tag.slice(1))}
-                              style={{
-                                fontSize: 12, padding: "6px 14px", borderRadius: 999, fontWeight: 500,
-                                background: "rgba(139,156,244,0.12)",
-                                color: "rgba(139,156,244,0.80)",
-                                border: "0.5px solid rgba(139,156,244,0.22)",
-                                backdropFilter: "blur(20px)",
-                                cursor: "pointer",
-                              }}
-                            >
-                              {tag}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
+              <TemplateGallery
+                onSelect={(selectedIntent) => {
+                  setIntent(selectedIntent);
+                  // Delay focus by one tick so the textarea has re-rendered
+                  // with the new value before we move the cursor into it.
+                  setTimeout(() => textareaRef.current?.focus(), 50);
+                }}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1383,6 +2393,133 @@ export default function Home() {
                     <p className="text-xs text-gray-500 italic -mt-3">{missionMeta.intent}</p>
                   )}
 
+                  {/* ── Refinement history timeline ──────────────────────────── */}
+                  {refinementHistory.length > 0 && (
+                    <div style={{
+                      borderRadius: 12,
+                      background: "rgba(139,156,244,0.05)",
+                      border: "0.5px solid rgba(139,156,244,0.18)",
+                      overflow: "hidden",
+                    }}>
+                      {/* Toggle header */}
+                      <button
+                        onClick={() => setShowRefinementHistory(v => !v)}
+                        style={{
+                          width: "100%",
+                          padding: "9px 14px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          background: "transparent",
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--axion-accent, rgba(139,156,244,0.70))" }}>
+                          Refinement history ({refinementHistory.length})
+                        </span>
+                        <span style={{ flex: 1 }} />
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.28)" }}>
+                          {showRefinementHistory ? "▲" : "▼"}
+                        </span>
+                      </button>
+
+                      {/* Collapsible rows */}
+                      <AnimatePresence>
+                        {showRefinementHistory && (
+                          <motion.div
+                            key="refine-history"
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ type: "spring", stiffness: 360, damping: 32 }}
+                            style={{ overflow: "hidden", borderTop: "0.5px solid rgba(139,156,244,0.12)" }}
+                          >
+                            <div style={{ padding: "8px 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+                              {refinementHistory.map((round, ri) => (
+                                <div
+                                  key={ri}
+                                  style={{
+                                    display: "flex",
+                                    gap: 10,
+                                    alignItems: "flex-start",
+                                    padding: "8px 10px",
+                                    borderRadius: 8,
+                                    background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+                                    borderLeft: "2px solid var(--axion-accent, #8b9cf4)",
+                                  }}
+                                >
+                                  {/* R{n} badge */}
+                                  <span style={{
+                                    flexShrink: 0,
+                                    fontSize: 9,
+                                    fontWeight: 800,
+                                    letterSpacing: "0.04em",
+                                    padding: "2px 6px",
+                                    borderRadius: 5,
+                                    background: "rgba(139,156,244,0.18)",
+                                    border: "0.5px solid rgba(139,156,244,0.35)",
+                                    color: "var(--axion-accent, #8b9cf4)",
+                                    lineHeight: 1.5,
+                                    marginTop: 1,
+                                  }}>
+                                    R{ri + 1}
+                                  </span>
+
+                                  {/* Intent + meta row */}
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <p style={{
+                                      fontSize: 12,
+                                      color: "rgba(255,255,255,0.78)",
+                                      fontWeight: 500,
+                                      lineHeight: 1.4,
+                                      marginBottom: 4,
+                                      // 2-line clamp
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                    } as React.CSSProperties}>
+                                      {round.intent}
+                                    </p>
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                      {/* Relative timestamp */}
+                                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.28)", fontFamily: "var(--font-mono, monospace)" }}>
+                                        {timeAgo(round.timestamp)}
+                                      </span>
+                                      {/* Key chip: "no new data" or "+N new keys" */}
+                                      {round.newPayloadKeys.length === 0 ? (
+                                        <span style={{
+                                          fontSize: 9, padding: "1px 6px", borderRadius: 4,
+                                          background: "rgba(255,255,255,0.05)",
+                                          border: "0.5px solid rgba(255,255,255,0.10)",
+                                          color: "rgba(255,255,255,0.28)",
+                                          fontWeight: 600,
+                                        }}>
+                                          no new data
+                                        </span>
+                                      ) : (
+                                        <span style={{
+                                          fontSize: 9, padding: "1px 6px", borderRadius: 4,
+                                          background: "rgba(139,156,244,0.12)",
+                                          border: "0.5px solid rgba(139,156,244,0.25)",
+                                          color: "var(--axion-accent, #8b9cf4)",
+                                          fontWeight: 600,
+                                        }}>
+                                          +{round.newPayloadKeys.length} new key{round.newPayloadKeys.length !== 1 ? "s" : ""}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
                   {/* Dashboard */}
                   {missionState && (() => {
                     const blueprint = applicationMapper(
@@ -1403,41 +2540,122 @@ export default function Home() {
                             {showDetails ? "Hide agent reasoning" : "Show agent reasoning"}
                           </button>
                         </div>
-                        <div className={missionStatus === "complete" && missionState ? "axion-sheen-wrapper" : ""}>
-                          <Renderer blueprint={blueprint} />
+                        <div className={missionStatus === "complete" && missionState && !isRefining ? "axion-sheen-wrapper" : ""}>
+                          <Renderer
+                            blueprint={blueprint}
+                            pinnedCards={pinnedCards}
+                            dismissedCards={dismissedCards}
+                            refinedIndices={(() => {
+                              // Map refined payload-keys → component indices
+                              const idxSet = new Set<number>();
+                              if (refinedPayloadKeys.size > 0) {
+                                blueprint.components.forEach((c, idx) => {
+                                  const title = (c.props.title as string | undefined) ?? "";
+                                  // Check if the component's data key was refined
+                                  // by matching formatted key → title heuristic
+                                  for (const key of refinedPayloadKeys) {
+                                    const formattedKey = key.replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+                                    if (title === formattedKey || title.toLowerCase().includes(key.toLowerCase())) {
+                                      idxSet.add(idx);
+                                    }
+                                  }
+                                });
+                              }
+                              return idxSet;
+                            })()}
+                            onPin={(i) => setPinnedCards((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; })}
+                            onDismiss={(i) => {
+                              if (i < 0) {
+                                setDismissedCards(new Set());
+                              } else {
+                                setDismissedCards((prev) => { const n = new Set(prev); n.add(i); return n; });
+                              }
+                            }}
+                          />
                         </div>
 
                         {/* Conflict badge — when Analyst flagged conflicting data */}
-                        {Array.isArray((missionState.data_payload as Record<string,unknown>).data_conflicts) && (
-                          <div style={{
-                            marginTop: 16,
-                            padding: "12px 16px",
-                            borderRadius: 14,
-                            background: "rgba(251,191,36,0.08)",
-                            border: "1px solid rgba(251,191,36,0.28)",
-                            backdropFilter: "blur(20px)",
-                            display: "flex", alignItems: "flex-start", gap: 10,
-                          }}>
-                            <span style={{ fontSize: 15, flexShrink: 0 }}>⚠️</span>
-                            <div>
-                              <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(251,191,36,0.90)", marginBottom: 4 }}>
-                                Conflicting Data Detected
-                              </p>
-                              {((missionState.data_payload as Record<string,unknown>).data_conflicts as {field:string; values:string[]; sources:string[]}[]).map((c, i) => (
-                                <p key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 2 }}>
-                                  <strong style={{ color: "rgba(255,255,255,0.75)" }}>{c.field}:</strong>{" "}
-                                  {c.values.join(" vs ")} — {c.sources.join(", ")}
-                                </p>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        {Array.isArray((missionState.data_payload as Record<string,unknown>).data_conflicts) && (() => {
+                          const conflicts = (missionState.data_payload as Record<string,unknown>).data_conflicts as {field:string; values:string[]; sources:string[]}[];
+                          const conflictSummary = conflicts.map(c => `${c.field}: ${c.values.join(" vs ")}`).join("; ");
+                          return (
+                            <motion.div
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              style={{
+                                marginTop: 16,
+                                padding: "14px 16px",
+                                borderRadius: 14,
+                                background: "rgba(251,191,36,0.07)",
+                                border: "1px solid rgba(251,191,36,0.25)",
+                                backdropFilter: "blur(20px)",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                                <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+                                <div style={{ flex: 1 }}>
+                                  <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(251,191,36,0.90)", marginBottom: 6 }}>
+                                    Data Conflicts Detected
+                                  </p>
+                                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px" }}>
+                                    {conflicts.map((c, i) => (
+                                      <div key={i} style={{
+                                        padding: "8px 10px",
+                                        borderRadius: 8,
+                                        background: "rgba(251,191,36,0.06)",
+                                        border: "0.5px solid rgba(251,191,36,0.15)",
+                                      }}>
+                                        <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.80)", marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.06em" }}>{c.field}</p>
+                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                          {c.values.map((v, vi) => (
+                                            <span key={vi} style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: vi === 0 ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.07)", color: vi === 0 ? "rgba(251,191,36,0.85)" : "rgba(255,255,255,0.55)", fontWeight: 600 }}>{v}</span>
+                                          ))}
+                                        </div>
+                                        {c.sources?.length > 0 && (
+                                          <p style={{ fontSize: 9, color: "rgba(255,255,255,0.28)", marginTop: 3 }}>{c.sources.join(", ")}</p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const resolveIntent = `Verify and resolve these conflicting data points: ${conflictSummary}. Find authoritative sources and return the correct values.`;
+                                  setIntent(resolveIntent);
+                                  setSidebarOpen(false);
+                                  setTimeout(() => textareaRef.current?.focus(), 80);
+                                }}
+                                style={{
+                                  marginTop: 4,
+                                  padding: "7px 14px",
+                                  borderRadius: 8,
+                                  background: "rgba(251,191,36,0.12)",
+                                  border: "1px solid rgba(251,191,36,0.30)",
+                                  color: "rgba(251,191,36,0.85)",
+                                  fontSize: 11, fontWeight: 700,
+                                  cursor: "pointer",
+                                  letterSpacing: "0.04em",
+                                  transition: "background 0.15s",
+                                }}
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(251,191,36,0.20)"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(251,191,36,0.12)"; }}
+                              >
+                                🔍 Launch Conflict Resolution Mission →
+                              </button>
+                            </motion.div>
+                          );
+                        })()}
 
                         {/* Action Bar — completed missions only */}
-                        {missionStatus === "complete" && (
+                        {(missionStatus === "complete" || isRefining) && (
                           <ActionBar
                             intent={missionMeta?.intent ?? intent}
                             missionState={missionState}
+                            missionId={activeMissionId ?? missionMeta?.mission_id}
+                            onRefine={runRefinement}
+                            isRefining={isRefining}
+                            refineError={refineError}
                             onNewMission={(newIntent) => { setIntent(newIntent); setSidebarOpen(false); setTimeout(() => textareaRef.current?.focus(), 80); }}
                           />
                         )}
@@ -1523,9 +2741,48 @@ export default function Home() {
                                   ))}
                                 </div>
                               ) : showDetails && card.result ? (
-                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                                  {card.result}
-                                </ReactMarkdown>
+                                (() => {
+                                  const displayed = displayedResults[slug];
+                                  const isAnimating =
+                                    card.status === "completed" &&
+                                    displayed !== undefined &&
+                                    displayed.length < card.result.length;
+                                  const isDone =
+                                    card.status === "completed" &&
+                                    displayed === card.result;
+
+                                  if (isDone) {
+                                    // Animation finished — render full markdown
+                                    return (
+                                      <ReactMarkdown
+                                        remarkPlugins={[remarkGfm]}
+                                        components={mdComponents}
+                                      >
+                                        {card.result}
+                                      </ReactMarkdown>
+                                    );
+                                  }
+
+                                  if (card.status === "completed" && displayed !== undefined) {
+                                    // Animating — raw text + blinking cursor
+                                    return (
+                                      <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed break-words">
+                                        {displayed}
+                                        <span className="axion-cursor" />
+                                      </p>
+                                    );
+                                  }
+
+                                  // Fallback (no displayedResults entry yet) — full result
+                                  return (
+                                    <ReactMarkdown
+                                      remarkPlugins={[remarkGfm]}
+                                      components={mdComponents}
+                                    >
+                                      {card.result}
+                                    </ReactMarkdown>
+                                  );
+                                })()
                               ) : null}
                             </motion.article>
                           );
@@ -1533,6 +2790,94 @@ export default function Home() {
                       </div>
                     );
                   })()}
+
+                  {/* ── Execution Trace Panel ───────────────────────────── */}
+                  {traceEvents.length > 0 && (
+                    <div style={{ marginTop: 24, paddingBottom: 8 }}>
+                      {/* Toggle header */}
+                      <div
+                        onClick={() => setTraceOpen((o) => !o)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          cursor: "pointer",
+                          padding: "10px 0",
+                          borderTop: "1px solid rgba(255,255,255,0.07)",
+                          userSelect: "none",
+                        }}
+                      >
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                          Execution trace ({traceEvents.length} events)
+                        </span>
+                        <span style={{
+                          marginLeft: "auto",
+                          fontSize: 11,
+                          color: "rgba(255,255,255,0.25)",
+                          display: "inline-block",
+                          transform: traceOpen ? "rotate(180deg)" : "none",
+                          transition: "transform 0.2s",
+                        }}>
+                          ▾
+                        </span>
+                      </div>
+
+                      {/* Collapsible body */}
+                      {traceOpen && (
+                        <div style={{ paddingTop: 4 }}>
+                          {traceEvents.map((event) => (
+                            <div
+                              key={event.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: 12,
+                                padding: "5px 0",
+                                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                              }}
+                            >
+                              {/* Timestamp */}
+                              <span style={{
+                                fontSize: 10,
+                                color: "rgba(255,255,255,0.2)",
+                                minWidth: 52,
+                                fontVariantNumeric: "tabular-nums",
+                                paddingTop: 1,
+                                fontFamily: "monospace",
+                              }}>
+                                {event.timestamp < 10
+                                  ? `#${event.timestamp}`    // synthetic from loadMission
+                                  : formatTraceTime(event.timestamp)}
+                              </span>
+                              {/* Dot */}
+                              <div style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: "50%",
+                                marginTop: 4,
+                                flexShrink: 0,
+                                background: dotColorForType(event.type),
+                              }} />
+                              {/* Label + optional duration */}
+                              <span style={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.55)",
+                                lineHeight: 1.4,
+                                flex: 1,
+                              }}>
+                                {event.label}
+                                {event.durationMs !== undefined && (
+                                  <span style={{ marginLeft: 8, fontSize: 10, color: "rgba(255,255,255,0.25)" }}>
+                                    {event.durationMs}ms
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                 </section>
               )}
