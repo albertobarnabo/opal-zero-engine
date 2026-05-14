@@ -109,36 +109,47 @@ impl Governor for AxionGovernor {
         };
 
         let prompt = format!(
-            "You are the Quality Controller for an autonomous AI agent swarm.\n\
-Review the mission intent and completed task results below. Determine whether:\n\
-1. The mission is truly complete and results are high quality (SUCCESS).\n\
-2. New research is needed that is genuinely absent (EXPAND).\n\
-3. The existing results are of poor quality and need improvement (REVISE) — for example:\n\
-   the results are vague, no numbers were calculated, important data was missed, or the\n\
-   format is wrong for the user's goal.\n\n\
+            "You are the Axion Quality Controller — an Auditor evaluating whether an \
+autonomous agent swarm has fully and correctly completed a user's mission.\n\n\
 MISSION INTENT: {intent}\n\n\
-{summary}\n\
+{summary}\
 {context_section}\
-{ui_note}\n\
-Respond ONLY with valid JSON in exactly one of these three formats (no markdown):\n\
-{{\"verdict\":\"SUCCESS\",\"reasoning\":\"brief sentence\",\"new_tasks\":[],\
-\"issues\":\"\",\"refinement_instructions\":\"\"}}\n\
-{{\"verdict\":\"EXPAND\",\"reasoning\":\"brief sentence\",\
-\"new_tasks\":[{{\"description\":\"task description\",\"role\":\"WebSearcher\"}}],\
-\"issues\":\"\",\"refinement_instructions\":\"\"}}\n\
-{{\"verdict\":\"REVISE\",\"reasoning\":\"brief sentence\",\"new_tasks\":[],\
-\"issues\":\"describe quality problems\",\
-\"refinement_instructions\":\"specific fix instructions for the agent\"}}\n\n\
-Available roles for new_tasks (EXPAND only):\n\
-- \"WebSearcher\" — look up information on the web\n\
-- \"Analyst\"     — summarise, compare, or run calculations\n\
-- \"Coder\"       — write and execute Python 3 code\n\n\
-Rules:\n\
-- Limit new_tasks to 2 maximum.\n\
-- Only EXPAND if something genuinely critical is MISSING.\n\
-- Only REVISE if quality is clearly poor (vague, uncalculated, wrong format).\n\
-- Do NOT use EXPAND or REVISE to add UI/visualisation tasks — handled automatically.\n\
-- When in doubt, choose SUCCESS."
+{ui_note}\
+Evaluate the mission output against the five criteria below. \
+For each criterion rate it PASS or FAIL with one sentence of reasoning, \
+then choose a verdict using the rule table.\n\n\
+CRITERION 1 — INTENT_COVERAGE\n\
+Does the output address every distinct aspect of the user's original intent? \
+If the intent asked for N things and the output covers fewer, this fails.\n\n\
+CRITERION 2 — DATA_DENSITY\n\
+Is data_payload populated with specific, concrete values — not prose summaries? \
+Chart arrays must have ≥3 data points. Metric values must be numbers, not strings \
+like \"varies\" or \"N/A\". Comparison tables must have ≥2 rows.\n\n\
+CRITERION 3 — STRUCTURAL_VALIDITY\n\
+Does data_payload conform to the expected schema? Time-series arrays must have a \
+`period` key. Metric objects must have `title` and `value`. Comparison rows must \
+have identical keys across all entries. No empty arrays or null values in required fields.\n\n\
+CRITERION 4 — CLAIM_SPECIFICITY\n\
+Are factual claims backed by specific figures, dates, or named sources — not hedged \
+with phrases like \"approximately\", \"it is believed\", or \"some sources suggest\"?\n\n\
+CRITERION 5 — SYNTHESIS_COMPLETENESS\n\
+For missions with multiple agents: has every agent's result been incorporated into the \
+final payload? If a WebSearcher found specific data the Analyst ignored, this fails.\n\n\
+Verdict rules (apply exactly, in order):\n\
+- 0 FAILs → SUCCESS\n\
+- 1 FAIL on SYNTHESIS_COMPLETENESS or CLAIM_SPECIFICITY only → SUCCESS (minor issue)\n\
+- 1 FAIL on INTENT_COVERAGE, DATA_DENSITY, or STRUCTURAL_VALIDITY → REVISE\n\
+- 2+ FAILs → REVISE\n\n\
+Do NOT use REVISE for missing UI/visualisation — handled automatically by the system.\n\
+Be precise. A REVISE verdict is not a failure — it is how Axion improves.\n\n\
+Respond ONLY with valid JSON (no markdown, no prose):\n\
+{{\"rubric\":{{\"INTENT_COVERAGE\":{{\"pass\":true,\"reason\":\"…\"}},\
+\"DATA_DENSITY\":{{\"pass\":false,\"reason\":\"…\"}},\
+\"STRUCTURAL_VALIDITY\":{{\"pass\":true,\"reason\":\"…\"}},\
+\"CLAIM_SPECIFICITY\":{{\"pass\":true,\"reason\":\"…\"}},\
+\"SYNTHESIS_COMPLETENESS\":{{\"pass\":true,\"reason\":\"…\"}}}},\
+\"verdict\":\"REVISE\",\"reason\":\"DATA_DENSITY failed: fewer than 3 data points.\",\
+\"suggested_tasks\":[]}}"
         );
 
         println!(

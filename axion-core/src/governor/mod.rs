@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use serde::Deserialize;
 
 use crate::engine::{AiProvider, ToolResponse};
 use crate::protocol::{AgentRole, ContextBus, MissionState, Task, TaskStatus};
@@ -237,83 +236,91 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
 
 // ── JSON parsing helpers (shared with axion-kernel) ───────────────────────────
 
-#[derive(Deserialize)]
-struct VerdictJson {
-    verdict: String,
-    #[serde(default)]
-    new_tasks: Vec<NewTaskJson>,
-    #[serde(default)]
-    issues: String,
-    #[serde(default)]
-    refinement_instructions: String,
-}
-
-#[derive(Deserialize)]
-struct NewTaskJson {
-    description: String,
-    #[serde(default)]
-    role: String,
-}
-
 /// Parse a Governor verdict from the raw LLM response text.
+///
+/// Handles the structured five-rubric JSON format (primary) and falls back
+/// to plain-text keyword matching for backwards compatibility.
 ///
 /// Exported so `axion-kernel`'s `AxionGovernor` can reuse the same parsing
 /// logic without duplicating it.
 pub fn parse_verdict(response: &str) -> ValidationResult {
-    let json = extract_json(response).unwrap_or_default();
-    match serde_json::from_str::<VerdictJson>(&json) {
-        Ok(v) if v.verdict == "EXPAND" && !v.new_tasks.is_empty() => {
-            let tasks: Vec<NewTask> = v
-                .new_tasks
-                .into_iter()
-                .map(|t| NewTask {
-                    description: t.description,
-                    role: match t.role.as_str() {
-                        "Analyst"  => AgentRole::Analyst,
-                        "Planner"  => AgentRole::Planner,
-                        "Coder"    => AgentRole::Coder,
-                        _          => AgentRole::WebSearcher,
-                    },
-                    excluded_tools: vec![],
-                })
-                .collect();
-            println!("  🔍 Governor: Expanding mission with {} new task(s).", tasks.len());
-            for t in &tasks {
-                println!("  ➕ New task [{}]: {}", t.role.as_str(), t.description);
+    // ── Structured rubric JSON (primary path) ─────────────────────────────────
+    if let Some(json_str) = extract_json(response) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            let verdict = val["verdict"].as_str().unwrap_or("").to_uppercase();
+            let reason  = val["reason"].as_str().unwrap_or("").to_string();
+
+            // Log every failing criterion for observability.
+            if let Some(rubric) = val["rubric"].as_object() {
+                for (criterion, result) in rubric {
+                    let pass   = result["pass"].as_bool().unwrap_or(true);
+                    let reason = result["reason"].as_str().unwrap_or("");
+                    if !pass {
+                        eprintln!("[Governor] FAIL {criterion}: {reason}");
+                    }
+                }
             }
-            ValidationResult::Expand(tasks)
-        }
-        Ok(v) if v.verdict == "REVISE" => {
-            let description = if v.refinement_instructions.is_empty() {
-                format!("Synthesize and fix the following quality issues: {}", v.issues)
-            } else {
-                format!(
-                    "Synthesize and fix: {}. Instructions: {}",
-                    v.issues, v.refinement_instructions
-                )
+
+            return match verdict.as_str() {
+                "SUCCESS" => {
+                    println!("  ✅ Governor: Rubric passed — SUCCESS.");
+                    ValidationResult::Success
+                }
+                "REVISE" => {
+                    // Build expansion tasks from suggested_tasks if the LLM provided any.
+                    let new_tasks: Vec<NewTask> = val["suggested_tasks"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                               .filter_map(|t| {
+                                   // Accept both "intent" and "description" keys from the JSON.
+                                   let desc = t["intent"].as_str()
+                                       .or_else(|| t["description"].as_str())?;
+                                   let role = match t["role"].as_str().unwrap_or("") {
+                                       "Analyst" => AgentRole::Analyst,
+                                       "Coder"   => AgentRole::Coder,
+                                       _         => AgentRole::WebSearcher,
+                                   };
+                                   Some(NewTask {
+                                       description:    desc.to_string(),
+                                       role,
+                                       excluded_tools: vec![],
+                                   })
+                               })
+                               .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if new_tasks.is_empty() {
+                        eprintln!("[Governor] REVISE — {reason}");
+                        ValidationResult::Retry
+                    } else {
+                        eprintln!(
+                            "[Governor] EXPAND with {} new task(s) — {reason}",
+                            new_tasks.len()
+                        );
+                        ValidationResult::Expand(new_tasks)
+                    }
+                }
+                _ => {
+                    eprintln!(
+                        "[Governor] Unrecognised verdict '{}', defaulting to Success.",
+                        verdict
+                    );
+                    ValidationResult::Success
+                }
             };
-            println!("  🔧 Governor: Quality issues detected — requesting refinement.");
-            if !v.issues.is_empty() {
-                println!("     Issues: {}", v.issues);
-            }
-            ValidationResult::Refine(vec![NewTask {
-                description,
-                role: AgentRole::Analyst,
-                excluded_tools: vec![],
-            }])
-        }
-        Ok(_) => {
-            println!("  ✅ Governor: Mission quality approved (SUCCESS).");
-            ValidationResult::Success
-        }
-        Err(e) => {
-            println!(
-                "  ⚠️  Governor: Could not parse verdict ('{}') — defaulting to SUCCESS.",
-                e
-            );
-            ValidationResult::Success
         }
     }
+
+    // ── Plain-text fallback (backwards compatibility) ─────────────────────────
+    let upper = response.to_uppercase();
+    if upper.contains("SUCCESS") { return ValidationResult::Success; }
+    if upper.contains("EXPAND")  { return ValidationResult::Expand(vec![]); }
+    if upper.contains("REVISE") || upper.contains("RETRY") {
+        return ValidationResult::Retry;
+    }
+    ValidationResult::Success
 }
 
 /// Find and return the first well-formed JSON object in `text`.
@@ -416,18 +423,44 @@ impl Governor for BuiltinGovernor {
         }
 
         let prompt = format!(
-            "You are a mission quality reviewer.\n\
+            "You are a mission quality reviewer for an autonomous AI agent swarm.\n\
 Review the completed tasks for mission: {intent}\n\n\
 {summary}\n\n\
-Respond ONLY with valid JSON (no markdown):\n\
-{{\"verdict\":\"SUCCESS\",\"reasoning\":\"...\",\"new_tasks\":[],\
-\"issues\":\"\",\"refinement_instructions\":\"\"}}\n\
-{{\"verdict\":\"EXPAND\",\"reasoning\":\"...\",\
-\"new_tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\"}}],\
-\"issues\":\"\",\"refinement_instructions\":\"\"}}\n\
-{{\"verdict\":\"REVISE\",\"reasoning\":\"...\",\"new_tasks\":[],\
-\"issues\":\"...\",\"refinement_instructions\":\"...\"}}\n\n\
-When in doubt, choose SUCCESS."
+Evaluate the mission output against the five criteria below. \
+For each criterion rate it PASS or FAIL with one sentence of reasoning, \
+then choose a verdict using the rule table.\n\n\
+CRITERION 1 — INTENT_COVERAGE\n\
+Does the output address every distinct aspect of the user's original intent? \
+If the intent asked for N things and the output covers fewer, this fails.\n\n\
+CRITERION 2 — DATA_DENSITY\n\
+Is data_payload populated with specific, concrete values — not prose summaries? \
+Chart arrays must have ≥3 data points. Metric values must be numbers, not strings \
+like \"varies\" or \"N/A\". Comparison tables must have ≥2 rows.\n\n\
+CRITERION 3 — STRUCTURAL_VALIDITY\n\
+Does data_payload conform to the expected schema? Time-series arrays must have a \
+`period` key. Metric objects must have `title` and `value`. Comparison rows must \
+have identical keys across all entries. No empty arrays or null values in required fields.\n\n\
+CRITERION 4 — CLAIM_SPECIFICITY\n\
+Are factual claims backed by specific figures, dates, or named sources — not hedged \
+with phrases like \"approximately\", \"it is believed\", or \"some sources suggest\"?\n\n\
+CRITERION 5 — SYNTHESIS_COMPLETENESS\n\
+For missions with multiple agents: has every agent's result been incorporated into \
+the final payload? If a WebSearcher found specific data the Analyst ignored, this fails.\n\n\
+Verdict rules (apply exactly, in order):\n\
+- 0 FAILs → SUCCESS\n\
+- 1 FAIL on SYNTHESIS_COMPLETENESS or CLAIM_SPECIFICITY only → SUCCESS (minor issue)\n\
+- 1 FAIL on INTENT_COVERAGE, DATA_DENSITY, or STRUCTURAL_VALIDITY → REVISE\n\
+- 2+ FAILs → REVISE\n\n\
+Do NOT use REVISE for missing UI/visualisation — handled automatically by the system.\n\
+Be precise. A REVISE verdict is not a failure — it is how Axion improves.\n\n\
+Respond ONLY with valid JSON (no markdown, no prose):\n\
+{{\"rubric\":{{\"INTENT_COVERAGE\":{{\"pass\":true,\"reason\":\"…\"}},\
+\"DATA_DENSITY\":{{\"pass\":false,\"reason\":\"…\"}},\
+\"STRUCTURAL_VALIDITY\":{{\"pass\":true,\"reason\":\"…\"}},\
+\"CLAIM_SPECIFICITY\":{{\"pass\":true,\"reason\":\"…\"}},\
+\"SYNTHESIS_COMPLETENESS\":{{\"pass\":true,\"reason\":\"…\"}}}},\
+\"verdict\":\"REVISE\",\"reason\":\"DATA_DENSITY failed: fewer than 3 data points.\",\
+\"suggested_tasks\":[]}}"
         );
 
         match provider.generate_response(&prompt, None).await {
