@@ -513,6 +513,11 @@ export default function Home() {
   const [draftOpenAI, setDraftOpenAI] = useState("");
   const [draftTavily, setDraftTavily] = useState("");
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">(
+    typeof window !== "undefined" && "Notification" in window
+      ? Notification.permission
+      : "unsupported"
+  );
   /** Keys in data_payload that came from the most recent refinement pass. */
   const [refinedPayloadKeys, setRefinedPayloadKeys] = useState<Set<string>>(new Set());
   const [showRefinementHistory, setShowRefinementHistory] = useState(false);
@@ -762,8 +767,35 @@ export default function Home() {
     }
   }
 
+  // ── Browser notifications ──────────────────────────────────────────────────
+
+  function showMissionNotification(status: "complete" | "failed", intentText: string) {
+    if (typeof window === "undefined") return;
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    if (document.visibilityState === "visible") return; // tab is focused — skip
+
+    const title = status === "complete" ? "Mission complete" : "Mission failed";
+    const body  = intentText.length > 80 ? intentText.slice(0, 77) + "…" : intentText;
+    const icon  = "/axion-logo.png";
+
+    try {
+      const n = new Notification(title, { body, icon });
+      setTimeout(() => n.close(), 6000);
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch {
+      // OS may block even with permission granted — ignore silently
+    }
+  }
+
   async function runMission() {
     if (!intent.trim() || missionStatus === "streaming") return;
+
+    // Request notification permission on first Execute — fire-and-forget, non-blocking
+    if (typeof window !== "undefined" && "Notification" in window
+        && Notification.permission === "default") {
+      Notification.requestPermission().then((perm) => setNotifPermission(perm));
+    }
 
     setMissionStatus("streaming");
     setStreamCards({});
@@ -857,6 +889,7 @@ export default function Home() {
               setShowDetails(true);
             }
             setMissionStatus("complete");
+            showMissionNotification("complete", intent);
             setActiveAgent(null);
             fetchHistory();
             setTraceEvents((prev) => [...prev, {
@@ -869,6 +902,7 @@ export default function Home() {
           case "mission_failed":
             setFetchError(p.error);
             setMissionStatus("failed");
+            showMissionNotification("failed", intent);
             setActiveAgent(null);
             setTraceEvents((prev) => [...prev, {
               id: `${now}-mission-failed`,
@@ -951,10 +985,14 @@ setUploadedFile(null);
         }
       }
 
-      setMissionStatus((prev) => (prev === "streaming" ? "failed" : prev));
+      setMissionStatus((prev) => {
+        if (prev === "streaming") { showMissionNotification("failed", intent); return "failed"; }
+        return prev;
+      });
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Connection error.");
       setMissionStatus("failed");
+      showMissionNotification("failed", intent);
     }
   }
 
@@ -1148,6 +1186,7 @@ setUploadedFile(null);
                   ]);
                 }
                 setMissionStatus("complete");
+                showMissionNotification("complete", refinementIntent);
                 setMissionMeta((prev) => prev
                   ? { ...prev, task_count: p.task_count ?? prev.task_count }
                   : prev
@@ -1164,6 +1203,7 @@ setUploadedFile(null);
               }
               case "mission_failed":
                 setRefineError(p.error ?? "Refinement failed.");
+                showMissionNotification("failed", refinementIntent);
                 setActiveAgent(null);
                 setTraceEvents((prev) => [...prev, {
                   id: `${now}-mission-failed`,
@@ -1926,6 +1966,52 @@ setUploadedFile(null);
             >
               Save
             </button>
+
+            {/* ── Notification permission row ──────────────────────────────── */}
+            {notifPermission !== "unsupported" && (
+              <div
+                style={{
+                  marginTop: 20,
+                  paddingTop: 16,
+                  borderTop: "1px solid rgba(255,255,255,0.07)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>
+                    Mission notifications
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2, lineHeight: 1.4 }}>
+                    {notifPermission === "granted" && "Enabled — you’ll be notified when missions complete"}
+                    {notifPermission === "denied"  && "Blocked — enable in your browser settings"}
+                    {notifPermission === "default" && "Not yet requested — start a mission to prompt"}
+                  </div>
+                </div>
+                {notifPermission === "default" && (
+                  <button
+                    onClick={() =>
+                      Notification.requestPermission().then((perm) => setNotifPermission(perm))
+                    }
+                    style={{
+                      flexShrink: 0,
+                      fontSize: 11,
+                      padding: "5px 12px",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      background: "rgba(255,255,255,0.08)",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      color: "rgba(255,255,255,0.65)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Enable
+                  </button>
+                )}
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
