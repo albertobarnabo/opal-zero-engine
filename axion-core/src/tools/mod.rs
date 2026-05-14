@@ -86,6 +86,7 @@ pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String>
     match name {
         "calculator"              => execute_calculator(arguments),
         "write_file"              => execute_write_file(arguments),
+        "read_file"               => execute_read_file(arguments),
         "generate_document"       => execute_generate_document(arguments),
         "python_interpreter"      => python::execute_python(arguments),
         "finalize_mission_state"  => ui_builder::finalize_mission_state(arguments),
@@ -404,6 +405,62 @@ fn execute_write_file(arguments: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to write '{}': {}", final_name, e))?;
 
     Ok(format!("File 'missions/{}' written successfully.", final_name))
+}
+
+fn execute_read_file(arguments: &str) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct ReadArgs {
+        filename: String,
+    }
+
+    let args: ReadArgs = serde_json::from_str(arguments)
+        .map_err(|e| format!("Failed to parse read_file arguments: {}", e))?;
+
+    let name = args.filename.trim();
+
+    // Security: reject empty names, path traversal, and directory separators.
+    if name.is_empty()
+        || name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return Err(format!("Invalid filename: '{}'", name));
+    }
+
+    // Only allow the extensions we accept at the upload endpoint.
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if !matches!(ext.as_str(), "csv" | "json" | "txt") {
+        return Err(format!(
+            "read_file only supports CSV, JSON, and TXT files (got '.{}').",
+            ext
+        ));
+    }
+
+    let path = std::path::Path::new("uploads").join(name);
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read '{}': {}", name, e))?;
+
+    // Cap output to avoid flooding the context window.
+    const MAX_BYTES: usize = 32_768;
+    if content.len() > MAX_BYTES {
+        let truncated = &content[..MAX_BYTES];
+        println!("  📂 read_file: '{}' ({} bytes, truncated to {})", name, content.len(), MAX_BYTES);
+        return Ok(format!(
+            "File: {}\nSize: {} bytes (showing first {} bytes)\n\n{}",
+            name,
+            content.len(),
+            MAX_BYTES,
+            truncated
+        ));
+    }
+
+    println!("  📂 read_file: '{}' ({} bytes)", name, content.len());
+    Ok(format!("File: {}\nSize: {} bytes\n\n{}", name, content.len(), content))
 }
 
 async fn execute_web_search(arguments: &str) -> Result<String, String> {

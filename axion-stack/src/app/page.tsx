@@ -498,7 +498,12 @@ export default function Home() {
 
   // ── Image upload ───────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadedFile, setUploadedFile] = useState<{ filename: string; previewUrl: string } | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<{
+    filename: string;
+    originalName: string;
+    fileType: "image" | "data";
+    previewUrl: string | null;
+  } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -888,7 +893,9 @@ export default function Home() {
     try {
       // Inject vision tool hint when an image has been attached
       const effectiveIntent = uploadedFile
-        ? `${intent}\n\n[Image attached: ${uploadedFile.filename}. Use the vision tool to analyse this image as part of your research.]`
+        ? uploadedFile.fileType === "image"
+          ? `${intent}\n\n[Image attached: ${uploadedFile.filename}. Use the vision tool to analyse this image as part of your research.]`
+          : `${intent}\n\n[Data file attached: ${uploadedFile.filename} (original: ${uploadedFile.originalName}). Use the read_file tool with filename="${uploadedFile.filename}" to load its contents before analysis.]`
         : intent;
 
       const reqHeaders: Record<string, string> = { "Content-Type": "application/json" };
@@ -918,8 +925,8 @@ export default function Home() {
 
       // Mission accepted by the server — release the attachment
       if (uploadedFile) {
-        URL.revokeObjectURL(uploadedFile.previewUrl);
-        setUploadedFile(null);
+        if (uploadedFile.previewUrl) URL.revokeObjectURL(uploadedFile.previewUrl);
+setUploadedFile(null);
       }
 
       const reader = res.body.getReader();
@@ -957,9 +964,14 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Client-side type guard
-    if (!file.type.startsWith("image/")) {
-      setUploadError("Only image files are accepted");
+    // Client-side type guard — allow images + data files
+    const isImage = file.type.startsWith("image/");
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const isData = ["csv", "json", "txt"].includes(ext) ||
+      ["text/csv", "application/json", "text/plain"].includes(file.type);
+
+    if (!isImage && !isData) {
+      setUploadError("Accepted: images, CSV, JSON, TXT");
       setTimeout(() => setUploadError(null), 3000);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
@@ -978,9 +990,14 @@ export default function Home() {
       });
 
       if (res.ok) {
-        const json = await res.json() as { filename: string };
-        const previewUrl = URL.createObjectURL(file);
-        setUploadedFile({ filename: json.filename, previewUrl });
+        const json = await res.json() as { filename: string; file_type: "image" | "data"; original_name: string };
+        const previewUrl = json.file_type === "image" ? URL.createObjectURL(file) : null;
+        setUploadedFile({
+          filename: json.filename,
+          originalName: json.original_name ?? file.name,
+          fileType: json.file_type ?? (isImage ? "image" : "data"),
+          previewUrl,
+        });
       } else {
         setUploadError("Upload failed — try again");
       }
@@ -1386,7 +1403,7 @@ export default function Home() {
         {/* Hidden file input — triggered by the upload icon button */}
         <input
           type="file"
-          accept="image/*"
+          accept="image/*,.csv,.json,.txt,text/csv,application/json,text/plain"
           ref={fileInputRef}
           onChange={handleFileUpload}
           style={{ display: "none" }}
@@ -1468,35 +1485,64 @@ export default function Home() {
                 alignSelf: "flex-start",
               }}
             >
-              <img
-                src={uploadedFile.previewUrl}
-                alt=""
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 8,
-                  objectFit: "cover",
-                  flexShrink: 0,
-                }}
-              />
-              <span
-                style={{
-                  fontSize: 12,
-                  color: "rgba(255,255,255,0.65)",
-                  fontFamily: "var(--font-mono, monospace)",
-                  maxWidth: 180,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {uploadedFile.filename.length > 24
-                  ? uploadedFile.filename.slice(0, 24) + "…"
-                  : uploadedFile.filename}
-              </span>
+              {/* Image: thumbnail preview. Data: file-type icon. */}
+              {uploadedFile.fileType === "image" && uploadedFile.previewUrl ? (
+                <img
+                  src={uploadedFile.previewUrl}
+                  alt=""
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    objectFit: "cover",
+                    flexShrink: 0,
+                  }}
+                />
+              ) : (
+                <span
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    background: "rgba(167,202,220,0.12)",
+                    border: "1px solid rgba(167,202,220,0.20)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    fontSize: 18,
+                  }}
+                >
+                  {uploadedFile.filename.endsWith(".csv") ? "📊"
+                    : uploadedFile.filename.endsWith(".json") ? "{ }"
+                    : "📄"}
+                </span>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.75)",
+                    fontFamily: "var(--font-mono, monospace)",
+                    maxWidth: 180,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {(uploadedFile.originalName ?? uploadedFile.filename).length > 24
+                    ? (uploadedFile.originalName ?? uploadedFile.filename).slice(0, 24) + "…"
+                    : (uploadedFile.originalName ?? uploadedFile.filename)}
+                </span>
+                {uploadedFile.fileType === "data" && (
+                  <span style={{ fontSize: 10, color: "rgba(167,202,220,0.60)", fontFamily: "var(--font-mono, monospace)" }}>
+                    data file
+                  </span>
+                )}
+              </div>
               <button
                 onClick={() => {
-                  URL.revokeObjectURL(uploadedFile.previewUrl);
+                  if (uploadedFile.previewUrl) URL.revokeObjectURL(uploadedFile.previewUrl);
                   setUploadedFile(null);
                 }}
                 title="Remove attachment"

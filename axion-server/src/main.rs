@@ -563,23 +563,37 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
             continue;
         }
 
-        // ── Content-Type guard ────────────────────────────────────────────────
+        // ── Content-Type + extension allow-list ──────────────────────────────
         let content_type = field.content_type().unwrap_or("").to_string();
-        if !content_type.starts_with("image/") {
+        let original_name = field.file_name().unwrap_or("upload.bin").to_string();
+        let ext = std::path::Path::new(&original_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // Accepted: images + common data file types.
+        let is_image = content_type.starts_with("image/");
+        let is_data  = matches!(ext.as_str(), "csv" | "json" | "txt")
+            || matches!(
+                content_type.as_str(),
+                "text/csv" | "application/json" | "text/plain"
+            );
+
+        if !is_image && !is_data {
             return (
                 StatusCode::BAD_REQUEST,
-                "Only image files are accepted",
+                "Only image, CSV, JSON, and TXT files are accepted",
             )
                 .into_response();
         }
 
-        // ── Derive safe filename ──────────────────────────────────────────────
-        let original_name = field.file_name().unwrap_or("upload.jpg").to_string();
-        let ext = std::path::Path::new(&original_name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("jpg")
-            .to_lowercase();
+        // Derive a safe extension: fall back to type-specific defaults.
+        let ext = if ext.is_empty() {
+            if is_image { "jpg" } else { "txt" }.to_string()
+        } else {
+            ext
+        };
 
         let filename = format!("{}.{}", uuid::Uuid::new_v4(), ext);
 
@@ -612,8 +626,13 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
                 .into_response();
         }
 
-        println!("📎 Upload saved: uploads/{}", filename);
-        return (StatusCode::OK, Json(json!({ "filename": filename }))).into_response();
+        let file_type = if is_image { "image" } else { "data" };
+        println!("📎 Upload saved: uploads/{} ({})", filename, file_type);
+        return (StatusCode::OK, Json(json!({
+            "filename": filename,
+            "file_type": file_type,
+            "original_name": original_name,
+        }))).into_response();
     }
 
     (
