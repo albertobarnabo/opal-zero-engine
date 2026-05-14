@@ -2,6 +2,30 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use crate::protocol::Tool;
 
+// ── Environment-driven defaults ───────────────────────────────────────────────
+
+fn default_max_tokens() -> u32 {
+    std::env::var("AXION_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
+}
+
+fn default_temperature() -> f32 {
+    std::env::var("AXION_TEMPERATURE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.1)
+}
+
+fn request_timeout() -> std::time::Duration {
+    let secs = std::env::var("AXION_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(90);
+    std::time::Duration::from_secs(secs)
+}
+
 // ── Multimodal image carrier ──────────────────────────────────────────────────
 
 /// Image payload for vision-capable requests.
@@ -338,7 +362,10 @@ impl AiProvider for SimpleProvider {
         prompt: &str,
         tools: Option<Vec<Tool>>,
     ) -> Result<ToolResponse, String> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         let sp_tools = sp_build_tools(tools);
         let body = SpRequest {
             model: self.model.clone(),
@@ -348,8 +375,8 @@ impl AiProvider for SimpleProvider {
                 tool_calls: None,
                 tool_call_id: None,
             }],
-            temperature: 0.0,
-            max_tokens: 1024,
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
             tool_choice: sp_tools.as_ref().map(|_| "auto".to_string()),
             tools: sp_tools,
         };
@@ -365,7 +392,10 @@ impl AiProvider for SimpleProvider {
         tool_arguments: &str,
         tool_result: &str,
     ) -> Result<ToolResponse, String> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         let sp_tools = sp_build_tools(tools);
         let body = SpRequest {
             model: self.model.clone(),
@@ -396,8 +426,8 @@ impl AiProvider for SimpleProvider {
                     tool_call_id: Some(tool_call_id.to_string()),
                 },
             ],
-            temperature: 0.0,
-            max_tokens: 1024,
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
             tool_choice: sp_tools.as_ref().map(|_| "auto".to_string()),
             tools: sp_tools,
         };
@@ -419,7 +449,10 @@ impl AiProvider for SimpleProvider {
             return Err("ImageData has neither base64 nor url".to_string());
         };
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         let body = SpRequest {
             model: self.model.clone(),
             messages: vec![SpMessage {
@@ -431,8 +464,8 @@ impl AiProvider for SimpleProvider {
                 tool_calls: None,
                 tool_call_id: None,
             }],
-            temperature: 0.0,
-            max_tokens: 1024,
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
             tools: None,
             tool_choice: None,
         };

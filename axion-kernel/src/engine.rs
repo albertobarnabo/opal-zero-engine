@@ -10,6 +10,30 @@ use std::env;
 use axion_core::engine::{AiProvider, ImageData, ToolResponse};
 use axion_core::protocol::Tool;
 
+// ── Environment-driven defaults ───────────────────────────────────────────────
+
+fn default_max_tokens() -> u32 {
+    std::env::var("AXION_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
+}
+
+fn default_temperature() -> f32 {
+    std::env::var("AXION_TEMPERATURE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.1)
+}
+
+fn request_timeout() -> std::time::Duration {
+    let secs = std::env::var("AXION_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(90);
+    std::time::Duration::from_secs(secs)
+}
+
 // ── Public struct ─────────────────────────────────────────────────────────────
 
 pub struct OpenAIProvider {
@@ -198,7 +222,10 @@ impl AiProvider for OpenAIProvider {
         prompt: &str,
         tools: Option<Vec<Tool>>,
     ) -> Result<ToolResponse, String> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         let openai_tools = build_tools(tools);
 
         let body = OpenAIRequest {
@@ -209,8 +236,8 @@ impl AiProvider for OpenAIProvider {
                 tool_calls: None,
                 tool_call_id: None,
             }],
-            temperature: 0.0,
-            max_tokens: 1024,
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
             tool_choice: openai_tools.as_ref().map(|_| "auto".to_string()),
             tools: openai_tools,
         };
@@ -227,7 +254,10 @@ impl AiProvider for OpenAIProvider {
         tool_arguments: &str,
         tool_result: &str,
     ) -> Result<ToolResponse, String> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         let openai_tools = build_tools(tools);
 
         let body = OpenAIRequest {
@@ -259,8 +289,8 @@ impl AiProvider for OpenAIProvider {
                     tool_call_id: Some(tool_call_id.to_string()),
                 },
             ],
-            temperature: 0.0,
-            max_tokens: 1024,
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
             tool_choice: openai_tools.as_ref().map(|_| "auto".to_string()),
             tools: openai_tools,
         };
@@ -282,7 +312,10 @@ impl AiProvider for OpenAIProvider {
             return Err("ImageData has neither base64 nor url".to_string());
         };
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         let body = OpenAIRequest {
             model: "gpt-4o".to_string(), // Vision requires gpt-4o
             messages: vec![Message {
@@ -298,8 +331,8 @@ impl AiProvider for OpenAIProvider {
                 tool_calls: None,
                 tool_call_id: None,
             }],
-            temperature: 0.0,
-            max_tokens: 1024,
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
             tools: None,
             tool_choice: None,
         };

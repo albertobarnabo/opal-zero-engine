@@ -1,6 +1,46 @@
+use std::cmp::Reverse;
+
 use crate::engine::{AiProvider, ToolResponse};
 use crate::governor::Governor;
 use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool};
+
+// Maximum characters of prior-task context to include in an agent's prompt.
+// At ~4 chars/token this is ≈1 500 tokens, leaving ≥2 500 tokens of headroom
+// for the agent's own reasoning at the default 4 096 max_tokens ceiling.
+const CONTEXT_CHAR_BUDGET: usize = 6_000;
+
+/// Build a context string from the bus that fits within `char_budget` characters.
+///
+/// Prioritises entries whose slug keys are longer (a rough proxy for recency,
+/// since later-planned tasks tend to have more descriptive, longer slugs).
+/// Individual entries are truncated at 600 characters rather than dropped
+/// entirely, so every task always contributes at least a summary.
+fn build_context_window(bus: &ContextBus, char_budget: usize) -> String {
+    const ENTRY_CAP: usize = 600;
+
+    // Collect all entries and sort longest-key-first (recency heuristic).
+    let mut entries: Vec<(&String, &String)> = bus.data.iter().collect();
+    entries.sort_by_key(|(k, _)| Reverse(k.len()));
+
+    let mut out   = String::new();
+    let mut spent = 0usize;
+
+    for (slug, result) in &entries {
+        let body: String = if result.len() > ENTRY_CAP {
+            format!("{}… [truncated]", &result[..ENTRY_CAP])
+        } else {
+            result.to_string()
+        };
+        let entry = format!("[{}]: {}\n", slug, body);
+        if spent + entry.len() > char_budget {
+            break;
+        }
+        out.push_str(&entry);
+        spent += entry.len();
+    }
+
+    out
+}
 
 pub async fn dispatch_tasks(
     tasks: &mut Vec<Task>,
@@ -109,9 +149,7 @@ async fn execute_with_role(
 
     if !context.data.is_empty() {
         prompt.push_str("\nPREVIOUS TASK RESULTS:\n");
-        for (key, value) in &context.data {
-            prompt.push_str(&format!("{}: {}\n", key, value));
-        }
+        prompt.push_str(&build_context_window(context, CONTEXT_CHAR_BUDGET));
     }
 
     prompt.push_str(&format!("\nTASK: {}", task.intent));

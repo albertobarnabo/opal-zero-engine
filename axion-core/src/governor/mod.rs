@@ -260,7 +260,7 @@ struct NewTaskJson {
 /// Exported so `axion-kernel`'s `AxionGovernor` can reuse the same parsing
 /// logic without duplicating it.
 pub fn parse_verdict(response: &str) -> ValidationResult {
-    let json = extract_json(response);
+    let json = extract_json(response).unwrap_or_default();
     match serde_json::from_str::<VerdictJson>(&json) {
         Ok(v) if v.verdict == "EXPAND" && !v.new_tasks.is_empty() => {
             let tasks: Vec<NewTask> = v
@@ -316,13 +316,47 @@ pub fn parse_verdict(response: &str) -> ValidationResult {
     }
 }
 
-/// Strip markdown code fences and extract the first JSON object in the response.
-pub fn extract_json(text: &str) -> String {
-    let stripped = text.trim();
-    if let (Some(start), Some(end)) = (stripped.find('{'), stripped.rfind('}')) {
-        return stripped[start..=end].to_string();
+/// Find and return the first well-formed JSON object in `text`.
+///
+/// Scans forward character by character, attempts a structural parse at each
+/// `{`, and returns the first candidate that `serde_json` validates.  This
+/// correctly handles:
+/// - Nested objects: `{ "payload": { "a": 1 } }`
+/// - Strings containing braces: `{ "text": "result is {ok}" }`
+/// - Multiple JSON objects in a single response (returns the first valid one)
+///
+/// Returns `None` when no valid JSON object is found (e.g. the LLM returned
+/// plain prose).
+pub fn extract_json(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    for start in 0..bytes.len() {
+        if bytes[start] != b'{' {
+            continue;
+        }
+        let slice = &text[start..];
+        // Walk forward tracking brace depth to find candidate end positions.
+        let mut depth:  i32  = 0;
+        let mut in_str: bool = false;
+        let mut escape: bool = false;
+        for (i, ch) in slice.char_indices() {
+            if escape           { escape = false; continue; }
+            if ch == '\\'       { escape = true;  continue; }
+            if ch == '"'        { in_str = !in_str; continue; }
+            if in_str           { continue; }
+            if ch == '{'        { depth += 1; }
+            if ch == '}'        { depth -= 1; }
+            if depth == 0 && i > 0 {
+                let candidate = &slice[..=i];
+                if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                    return Some(candidate.to_string());
+                }
+                // This start position produced a balanced but invalid object —
+                // advance to the next `{` and try again.
+                break;
+            }
+        }
     }
-    stripped.to_string()
+    None
 }
 
 // ── BuiltinGovernor ───────────────────────────────────────────────────────────

@@ -79,7 +79,7 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
         #[derive(Deserialize)]
         struct TaskJson { description: String, role: String }
 
-        let json_str = crate::governor::extract_json(&text);
+        let json_str = crate::governor::extract_json(&text).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
             if !parsed.tasks.is_empty() {
                 let mut prev_ids: Vec<Uuid> = vec![];
@@ -149,7 +149,7 @@ pub async fn build_refinement_plan(
         #[derive(Deserialize)]
         struct TaskJson { description: String, role: String }
 
-        let json_str = crate::governor::extract_json(&text);
+        let json_str = crate::governor::extract_json(&text).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
             if !parsed.tasks.is_empty() {
                 let mut prev_ids: Vec<uuid::Uuid> = vec![];
@@ -265,7 +265,7 @@ Call finalize_mission_state EXACTLY ONCE."
             vec![]
         };
 
-        let json_str = crate::governor::extract_json(&text);
+        let json_str = crate::governor::extract_json(&text).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<RepairJson>(&json_str) {
             let repaired: Vec<crate::governor::NewTask> = parsed
                 .tasks

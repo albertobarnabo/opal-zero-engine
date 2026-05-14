@@ -725,6 +725,12 @@ async fn main() {
         .nest("/api/v1", api_routes)
         .layer(cors);
 
+    println!(
+        "Axion server starting — max_tokens={}, temperature={}",
+        std::env::var("AXION_MAX_TOKENS").unwrap_or_else(|_| "4096".into()),
+        std::env::var("AXION_TEMPERATURE").unwrap_or_else(|_| "0.1".into()),
+    );
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
         .expect("Failed to bind to 0.0.0.0:8080");
