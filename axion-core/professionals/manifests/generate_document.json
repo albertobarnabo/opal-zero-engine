@@ -1,0 +1,55 @@
+{
+  "name": "generate_document",
+  "description": "Export mission findings as a formatted document file (Markdown, CSV, or HTML). Use this when asked to export, download, or share a report. Produces a file in missions/ that the server can stream back to the user.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "required": ["title", "format", "sections"],
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Document title shown as the H1 / page title."
+      },
+      "format": {
+        "type": "string",
+        "enum": ["md", "csv", "html"],
+        "description": "'md' for Markdown, 'csv' for comma-separated values, 'html' for a styled HTML page."
+      },
+      "sections": {
+        "type": "array",
+        "description": "Ordered list of content sections to include.",
+        "items": {
+          "type": "object",
+          "required": ["heading", "content"],
+          "properties": {
+            "heading": {
+              "type": "string",
+              "description": "Section heading (becomes H2 in md/html, sheet name prefix in csv)."
+            },
+            "content": {
+              "type": "string",
+              "description": "Section body text — prose, bullet points, or a short summary."
+            },
+            "table": {
+              "type": "object",
+              "description": "Optional tabular data to render under this section.",
+              "required": ["headers", "rows"],
+              "properties": {
+                "headers": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Column header labels."
+                },
+                "rows": {
+                  "type": "array",
+                  "items": { "type": "array" },
+                  "description": "Array of row arrays. Each inner array must have the same length as headers."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

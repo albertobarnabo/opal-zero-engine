@@ -103,6 +103,85 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
     plan
 }
 
+/// Build a [`Plan`] for a *refinement* pass on a previously-completed mission.
+///
+/// The prompt is enriched with a plain-text summary of the prior
+/// `data_payload` so the planner generates only the incremental tasks
+/// needed to address `refinement_intent`, not a fresh mission from scratch.
+pub async fn build_refinement_plan(
+    original_intent: &str,
+    refinement_intent: &str,
+    prior_summary: &str,
+    provider: &dyn AiProvider,
+) -> Plan {
+    // The "intent" stored on the plan is the refinement description so that the
+    // context bus and snapshot reflect what this refinement actually does.
+    let combined_intent = format!("REFINE: {}", refinement_intent);
+    let mut plan = Plan::new(&combined_intent);
+
+    let prompt = format!(
+        "You are a mission planner. A previous mission has already produced the following findings:\n\
+         ---\n\
+         {prior_summary}\n\
+         ---\n\
+         The user now wants to refine/extend those findings with this follow-up request:\n\
+         \"{refinement_intent}\"\n\n\
+         Original mission intent for context: \"{original_intent}\"\n\n\
+         Generate ONLY the incremental tasks required to address the refinement. \
+         Do NOT repeat research that is already captured in the existing findings above. \
+         Focus exclusively on what is NEW or EXTENDED.\n\n\
+         Available roles:\n\
+         - WebSearcher: searches the web for factual information\n\
+         - Analyst: synthesizes, compares, and finalises findings\n\
+         - Coder: writes and executes Python code\n\n\
+         Rules:\n\
+         - 1-4 tasks maximum (refinements are targeted, not full missions).\n\
+         - Always end with an Analyst task that calls finalize_mission_state with \
+           BOTH the prior findings AND the new findings merged into one payload.\n\
+         - Do NOT add a build_dynamic_ui step.\n\n\
+         Respond ONLY with valid JSON, no markdown:\n\
+         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\"}}]}}"
+    );
+
+    if let Ok(ToolResponse::Text(text)) = provider.generate_response(&prompt, None).await {
+        #[derive(Deserialize)]
+        struct PlanJson { tasks: Vec<TaskJson> }
+        #[derive(Deserialize)]
+        struct TaskJson { description: String, role: String }
+
+        let json_str = crate::governor::extract_json(&text);
+        if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
+            if !parsed.tasks.is_empty() {
+                let mut prev_ids: Vec<uuid::Uuid> = vec![];
+                for t in parsed.tasks {
+                    let role = match t.role.as_str() {
+                        "Analyst" => AgentRole::Analyst,
+                        "Coder"   => AgentRole::Coder,
+                        _         => AgentRole::WebSearcher,
+                    };
+                    let id = plan.add_task(&t.description, prev_ids.clone(), role);
+                    prev_ids.push(id);
+                }
+                return plan;
+            }
+        }
+    }
+
+    // Fallback: single Analyst task that merges prior + refinement.
+    println!("  ⚠️  Planner: refinement plan failed — using single-task fallback.");
+    plan.add_task(
+        &format!(
+            "Extend the existing mission findings with this refinement: '{}'. \
+             Prior data is already in context. Call finalize_mission_state once with \
+             both the prior findings and the new findings merged.",
+            refinement_intent
+        ),
+        vec![],
+        AgentRole::Analyst,
+    );
+    plan
+}
+
 /// Ask the LLM to generate alternative tasks for failed ones (dynamic re-planning).
 ///
 /// Called by `run_loop` after the second consecutive failure round. Returns an

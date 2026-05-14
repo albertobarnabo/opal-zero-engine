@@ -6,7 +6,8 @@ edition = "2024"
 [dependencies]
 axion-core   = { path = "../axion-core" }
 axion-kernel = { path = "../axion-kernel" }
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
+uuid = { version = "1", features = ["v4"] }
 tower-http = { version = "0.5", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

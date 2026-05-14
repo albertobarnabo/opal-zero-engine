@@ -16,15 +16,19 @@ pub mod tools;
 pub mod prelude {
     pub use crate::engine::{AiProvider, ImageData, MockProvider, SimpleProvider, ToolResponse};
     pub use crate::governor::{BuiltinGovernor, Governor, NewTask, ValidationResult};
-    pub use crate::persistence::MissionSnapshot;
+    pub use crate::persistence::{load_snapshot, MissionSnapshot};
     pub use crate::planner::{build_plan_from_intent, Plan};
     pub use crate::protocol::{AgentRole, ContextBus, HandshakeRequest, MissionUpdate, Task, TaskStatus};
     pub use crate::registry::Registry;
-    pub use crate::{resume_mission, run_mission};
+    pub use crate::{refine_mission, resume_mission, run_mission};
 }
 
 const MAX_EXPANSIONS: u8 = 2;
-const MAX_REFINEMENTS: u8 = 1;
+/// Maximum number of *Governor-triggered* auto-refinement rounds within a single
+/// `run_loop` execution.  This is intentionally separate from the number of
+/// *user-triggered* refinements (each call to `refine_mission()` / `POST
+/// /missions/:id/refine` is an independent request and is never counted here).
+const MAX_REFINEMENTS: u8 = 3;
 const MAX_REPAIRS: u8 = 1;
 
 /// Execute a pre-built [`Plan`] against an AI provider and a Governor.
@@ -126,6 +130,233 @@ pub async fn resume_mission(
 
     // ── 4. Continue the loop WITHOUT clearing context ─────────────────────────
     run_loop(plan, provider, governor, original_task_count, max_attempts, tx.as_ref()).await
+}
+
+/// Run a targeted refinement against an existing completed mission.
+///
+/// - Summarises the prior `data_payload` and injects it into the Planner prompt
+///   so only incremental tasks are generated.
+/// - Pre-populates the context bus with the prior task results so the Analyst
+///   can merge old + new findings in `finalize_mission_state`.
+/// - Intercepts the internal `MissionComplete` event and replaces the generated
+///   snapshot ID with the *original* mission ID so the frontend history entry
+///   stays stable.
+/// - After all tasks finish, back-fills any prior `data_payload` keys that the
+///   refinement Analyst did not explicitly include, then overwrites the original
+///   `missions/<id>.json` with the merged snapshot.
+pub async fn refine_mission(
+    snapshot: &persistence::MissionSnapshot,
+    refinement_intent: &str,
+    provider: &dyn engine::AiProvider,
+    governor: &dyn governor::Governor,
+    max_attempts: u8,
+    tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+) -> Result<Option<protocol::HandshakeRequest>, String> {
+    use std::sync::{Arc, Mutex};
+
+    let original_id    = snapshot.id.clone();
+    let original_intent = snapshot
+        .intent
+        .trim_start_matches("REFINE[")   // strip nested REFINE[] wrappers
+        .split("]: ")
+        .last()
+        .unwrap_or(&snapshot.intent)
+        .to_string();
+
+    // ── 1. Build a human-readable summary of what already exists ─────────────
+    let prior_summary = match &snapshot.mission_state {
+        Some(ms) if !ms.data_payload.is_null() => summarise_payload(&ms.data_payload),
+        _ => snapshot
+            .context
+            .data
+            .iter()
+            .take(6)
+            .map(|(k, v)| format!("• {}: {}", k, v.chars().take(120).collect::<String>()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+
+    println!(
+        "\n🔄 Refine '{}' — request: {}\n   Prior summary ({} chars)",
+        original_id,
+        refinement_intent,
+        prior_summary.len()
+    );
+
+    // ── 2. Build a refinement-aware plan (incremental tasks only) ─────────────
+    let mut plan = planner::build_refinement_plan(
+        &original_intent,
+        refinement_intent,
+        &prior_summary,
+        provider,
+    )
+    .await;
+
+    // ── 3. Pre-populate context bus with prior task results ───────────────────
+    for (k, v) in &snapshot.context.data {
+        plan.context.data.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+    // Inject the structured prior payload so the Analyst can reference it
+    // by name when writing its finalize_mission_state call.
+    if let Some(ms) = &snapshot.mission_state {
+        if let Ok(json) = serde_json::to_string(&ms.data_payload) {
+            plan.context
+                .data
+                .insert("prior_mission_state".to_string(), json);
+        }
+    }
+
+    // Label the plan so snapshots/logs show the full refinement chain.
+    plan.original_intent = format!(
+        "REFINE[{}]: {}",
+        original_intent.chars().take(60).collect::<String>(),
+        refinement_intent
+    );
+
+    let original_task_count = plan.tasks.len();
+
+    // ── 4. Intercept events — replace generated ID with the original ──────────
+    let (inner_tx, mut inner_rx) = tokio::sync::mpsc::channel::<protocol::MissionUpdate>(64);
+    let outer_tx       = tx.clone();
+    let oid            = original_id.clone();
+    let oint           = original_intent.clone();
+    let captured_id: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let cap_clone      = captured_id.clone();
+
+    let forward_handle = tokio::spawn(async move {
+        while let Some(event) = inner_rx.recv().await {
+            let patched = match event {
+                protocol::MissionUpdate::MissionComplete {
+                    task_count,
+                    expanded_task_count,
+                    layout_hint,
+                    mission_state,
+                    mission_id: gen_id,
+                    ..
+                } => {
+                    if let Ok(mut guard) = cap_clone.lock() {
+                        *guard = gen_id;
+                    }
+                    protocol::MissionUpdate::MissionComplete {
+                        intent: oint.clone(),
+                        task_count,
+                        expanded_task_count,
+                        mission_id: oid.clone(),
+                        layout_hint,
+                        mission_state,
+                    }
+                }
+                other => other,
+            };
+            if let Some(ref t) = outer_tx {
+                t.send(patched).await.ok();
+            }
+        }
+    });
+
+    // ── 5. Execute the plan ───────────────────────────────────────────────────
+    let result = run_loop(
+        &mut plan,
+        provider,
+        governor,
+        original_task_count,
+        max_attempts,
+        Some(&inner_tx),
+    )
+    .await;
+
+    // Signal forwarder to drain, then wait for it to finish.
+    drop(inner_tx);
+    forward_handle.await.ok();
+
+    // ── 6. Merge prior keys + overwrite original snapshot ─────────────────────
+    if result.is_ok() {
+        // Delete the temp snapshot that finish_success created.
+        if let Ok(gen_id) = captured_id.lock() {
+            if !gen_id.is_empty() && *gen_id != original_id {
+                let _ = std::fs::remove_file(
+                    std::path::Path::new("missions").join(format!("{}.json", *gen_id)),
+                );
+            }
+        }
+
+        // Back-fill any prior data_payload keys that the new Analyst omitted.
+        backfill_prior_keys(&mut plan, &snapshot.mission_state);
+
+        plan.original_intent = original_intent;
+        if let Err(e) = persistence::save_snapshot_with_id(
+            &plan,
+            original_task_count,
+            "completed",
+            &original_id,
+        ) {
+            println!("  ⚠️  Could not overwrite snapshot '{}': {}", original_id, e);
+        }
+    }
+
+    result
+}
+
+/// Summarise a `data_payload` JSON object into a compact bullet list (≤ 1 500 chars).
+fn summarise_payload(payload: &serde_json::Value) -> String {
+    let obj = match payload.as_object() {
+        Some(o) => o,
+        None    => return payload.to_string().chars().take(800).collect(),
+    };
+    let mut lines: Vec<String> = Vec::new();
+    for (k, v) in obj.iter().take(12) {
+        let val_str = match v {
+            serde_json::Value::String(s) => s.chars().take(160).collect::<String>(),
+            serde_json::Value::Array(a)  => format!("[{} items]", a.len()),
+            serde_json::Value::Object(_) => "[object]".to_string(),
+            other                        => other.to_string().chars().take(120).collect(),
+        };
+        lines.push(format!("• {}: {}", k, val_str));
+    }
+    let text = lines.join("\n");
+    if text.len() > 1_500 { text[..1_500].to_string() } else { text }
+}
+
+/// Back-fill prior `data_payload` keys that this refinement did not explicitly
+/// set, so the updated snapshot contains all historical findings.
+fn backfill_prior_keys(
+    plan: &mut planner::Plan,
+    prior_state: &Option<protocol::MissionState>,
+) {
+    let prior_ms = match prior_state {
+        Some(ms) => ms,
+        None     => return,
+    };
+    let prior_obj = match prior_ms.data_payload.as_object() {
+        Some(o) => o,
+        None    => return,
+    };
+
+    // Find the last task result that is a valid MissionState with data.
+    let idx = plan.tasks.iter().rposition(|t| {
+        t.result
+            .as_ref()
+            .and_then(|r| serde_json::from_str::<protocol::MissionState>(r).ok())
+            .filter(|s| !s.data_payload.is_null())
+            .is_some()
+    });
+
+    if let Some(idx) = idx {
+        if let Some(ref mut result_str) = plan.tasks[idx].result.clone().take() {
+            // Need to work around borrow checker — re-read after cloning.
+            let cloned = result_str.clone();
+            if let Ok(mut new_ms) = serde_json::from_str::<protocol::MissionState>(&cloned) {
+                if let Some(new_obj) = new_ms.data_payload.as_object_mut() {
+                    for (k, v) in prior_obj {
+                        new_obj.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+                if let Ok(patched) = serde_json::to_string(&new_ms) {
+                    plan.tasks[idx].result = Some(patched);
+                }
+            }
+        }
+    }
 }
 
 /// Core dispatch-validate loop shared by [`run_mission`] and [`resume_mission`].

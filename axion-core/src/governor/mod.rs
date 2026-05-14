@@ -166,6 +166,67 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
         }]));
     }
 
+    // ── 4. Conflict Verifier ──────────────────────────────────────────────────
+    // When finalize_mission_state reported data_conflicts, auto-inject a
+    // targeted WebSearcher to find the ground truth, then let the Governor
+    // re-run finalize with the clarification appended to context.
+    if has_final_state {
+        let conflicts: Option<Vec<serde_json::Value>> = tasks
+            .iter()
+            .filter_map(|t| t.result.as_ref())
+            .find_map(|r| {
+                let state: MissionState = serde_json::from_str(r).ok()?;
+                if let Some(arr) = state.data_payload.get("data_conflicts") {
+                    if arr.is_array() && !arr.as_array().unwrap().is_empty() {
+                        return arr.as_array().cloned();
+                    }
+                }
+                None
+            });
+
+        if let Some(conflicts) = conflicts {
+            // Only inject once — skip if a conflict-resolution task already exists.
+            let already_resolving = tasks.iter().any(|t| {
+                t.intent.contains("CONFLICT_RESOLVE")
+            });
+
+            if !already_resolving {
+                let conflict_summary: Vec<String> = conflicts
+                    .iter()
+                    .take(3)
+                    .filter_map(|c| {
+                        let field = c["field"].as_str()?;
+                        let vals: Vec<String> = c["values"]
+                            .as_array()
+                            .unwrap_or(&vec![])
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                        Some(format!("{}: {}", field, vals.join(" vs ")))
+                    })
+                    .collect();
+
+                println!(
+                    "  🔍 Governor: Conflict Verifier triggered — {} conflict(s) found. Injecting resolution task.",
+                    conflicts.len()
+                );
+
+                let query = format!(
+                    "CONFLICT_RESOLVE — Verify these conflicting data points with an authoritative \
+                     web search and return the correct value for each: {}. \
+                     Append your findings to context so the Analyst can update the mission state.",
+                    conflict_summary.join("; ")
+                );
+
+                return Some(ValidationResult::Expand(vec![NewTask {
+                    description: query,
+                    role: AgentRole::WebSearcher,
+                    excluded_tools: vec![],
+                }]));
+            }
+        }
+    }
+
     println!(
         "  ⏭️  Governor: Skipping State Finalizer — {} bytes (threshold: {} bytes, {} task(s) completed).",
         total_result_bytes, UI_TRIGGER_BYTES, completed_count
