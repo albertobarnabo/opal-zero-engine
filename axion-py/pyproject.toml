@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "axion-sdk"
+version = "0.1.0"
+description = "Python client SDK for the Axion Intelligence Kernel"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx[http2]>=0.27",
+    "httpx-sse>=0.4",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "mypy"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["axion"]
