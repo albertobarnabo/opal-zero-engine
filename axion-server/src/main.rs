@@ -20,6 +20,20 @@ use tokio::sync::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use tower_http::cors::CorsLayer;
 
+// ── Standard API error type ───────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct ApiError {
+    error: String,
+    code:  String,
+}
+
+impl ApiError {
+    fn new(code: &str, msg: impl Into<String>) -> axum::Json<Self> {
+        axum::Json(Self { error: msg.into(), code: code.into() })
+    }
+}
+
 /// Shared set of mission IDs currently undergoing a refinement SSE stream.
 /// Used to return HTTP 409 when a concurrent refinement is attempted.
 type InFlight = Arc<Mutex<HashSet<String>>>;
@@ -44,6 +58,38 @@ struct MissionSummary {
     #[serde(default)]
     layout_hint: String,
 }
+
+// ── Auth middleware ───────────────────────────────────────────────────────────
+
+async fn auth_middleware(
+    headers: axum::http::HeaderMap,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let required_key = std::env::var("AXION_API_KEY").unwrap_or_default();
+
+    // If no key is configured, auth is disabled (local dev mode).
+    if required_key.is_empty() {
+        return next.run(request).await;
+    }
+
+    let provided = headers
+        .get("x-axion-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if provided != required_key {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            ApiError::new("UNAUTHORIZED", "Missing or invalid X-Axion-Key header"),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
+// ── Handlers ─────────────────────────────────────────────────────────────────
 
 async fn health() -> &'static str {
     "OK"
@@ -78,7 +124,7 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Provider init failed: {}", e) })),
+                ApiError::new("PROVIDER_ERROR", format!("Provider init failed: {}", e)),
             )
                 .into_response();
         }
@@ -140,7 +186,7 @@ async fn delete_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Invalid mission ID" })),
+            ApiError::new("INVALID_MISSION_ID", "Invalid mission ID"),
         )
             .into_response();
     }
@@ -149,13 +195,13 @@ async fn delete_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
         Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
         Err(_) => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Mission not found" })),
+            ApiError::new("MISSION_NOT_FOUND", "Mission not found"),
         )
             .into_response(),
     }
 }
 
-/// `GET /missions/:id/export?format=md|csv|html`
+/// `GET /api/v1/missions/:id/export?format=md|csv|html`
 ///
 /// Reads the saved mission snapshot, derives a human-readable document from
 /// the `mission_state.data_payload`, and streams it back as a file download.
@@ -166,7 +212,7 @@ async fn export_mission(
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Invalid mission ID" })),
+            ApiError::new("INVALID_MISSION_ID", "Invalid mission ID"),
         )
             .into_response();
     }
@@ -179,7 +225,7 @@ async fn export_mission(
     if !matches!(format.as_str(), "md" | "csv" | "html") {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "format must be md, csv, or html" })),
+            ApiError::new("INVALID_FORMAT", "format must be md, csv, or html"),
         )
             .into_response();
     }
@@ -190,7 +236,7 @@ async fn export_mission(
         Err(_) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Mission not found" })),
+                ApiError::new("MISSION_NOT_FOUND", "Mission not found"),
             )
                 .into_response();
         }
@@ -201,7 +247,7 @@ async fn export_mission(
         Err(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Corrupt snapshot" })),
+                ApiError::new("CORRUPT_SNAPSHOT", "Corrupt snapshot"),
             )
                 .into_response();
         }
@@ -404,7 +450,7 @@ async fn get_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Invalid mission ID" })),
+            ApiError::new("INVALID_MISSION_ID", "Invalid mission ID"),
         )
             .into_response();
     }
@@ -415,19 +461,19 @@ async fn get_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
             Ok(v) => (StatusCode::OK, Json(v)).into_response(),
             Err(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Corrupt snapshot" })),
+                ApiError::new("CORRUPT_SNAPSHOT", "Corrupt snapshot"),
             )
                 .into_response(),
         },
         Err(_) => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Mission not found" })),
+            ApiError::new("MISSION_NOT_FOUND", "Mission not found"),
         )
             .into_response(),
     }
 }
 
-/// `POST /missions/:id/refine`
+/// `POST /api/v1/missions/:id/refine`
 ///
 /// Loads an existing mission snapshot and runs a targeted refinement pass
 /// against it, streaming `MissionUpdate` SSE events back to the caller.
@@ -457,14 +503,14 @@ async fn refine_mission_handler(
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Invalid mission ID" })),
+            ApiError::new("INVALID_MISSION_ID", "Invalid mission ID"),
         )
             .into_response();
     }
     if req.intent.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Refinement intent must not be empty" })),
+            ApiError::new("INVALID_INTENT", "Refinement intent must not be empty"),
         )
             .into_response();
     }
@@ -475,7 +521,7 @@ async fn refine_mission_handler(
         if set.contains(&id) {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({ "error": "A refinement for this mission is already in progress" })),
+                ApiError::new("ALREADY_REFINING", "A refinement for this mission is already in progress"),
             )
                 .into_response();
         }
@@ -489,7 +535,7 @@ async fn refine_mission_handler(
             in_flight.lock().await.remove(&id);
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({ "error": e })),
+                ApiError::new("MISSION_NOT_FOUND", e),
             )
                 .into_response();
         }
@@ -501,7 +547,7 @@ async fn refine_mission_handler(
             in_flight.lock().await.remove(&id);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Provider init failed: {}", e) })),
+                ApiError::new("PROVIDER_ERROR", format!("Provider init failed: {}", e)),
             )
                 .into_response();
         }
@@ -537,7 +583,7 @@ async fn refine_mission_handler(
         .into_response()
 }
 
-/// `GET /config/status`
+/// `GET /api/v1/config/status`
 ///
 /// Reports which API keys are currently configured via environment variables.
 /// Returns HTTP 200 JSON `{ "openai": bool, "tavily": bool }` — always succeeds.
@@ -551,11 +597,11 @@ async fn config_status_handler() -> impl IntoResponse {
     Json(json!({ "openai": openai, "tavily": tavily }))
 }
 
-/// `POST /upload`
+/// `POST /api/v1/upload`
 ///
 /// Accepts a `multipart/form-data` body with a single field named `"file"`.
-/// Validates that the file is an image (`Content-Type: image/*`), writes it to
-/// `uploads/<uuid>.<ext>`, and returns `{ "filename": "<uuid>.<ext>" }`.
+/// Validates that the file is an image or data file, writes it to
+/// `uploads/<uuid>.<ext>`, and returns `{ "filename", "file_type", "original_name" }`.
 async fn upload_handler(mut multipart: Multipart) -> Response {
     while let Ok(Some(field)) = multipart.next_field().await {
         // Only process the named "file" field; skip everything else.
@@ -583,7 +629,7 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
         if !is_image && !is_data {
             return (
                 StatusCode::BAD_REQUEST,
-                "Only image, CSV, JSON, and TXT files are accepted",
+                ApiError::new("UPLOAD_TYPE_REJECTED", "Only image, CSV, JSON, and TXT files are accepted"),
             )
                 .into_response();
         }
@@ -603,7 +649,7 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to read upload: {}", e) })),
+                    ApiError::new("UPLOAD_READ_FAILED", format!("Failed to read upload: {}", e)),
                 )
                     .into_response();
             }
@@ -613,7 +659,7 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
         if let Err(e) = tokio::fs::create_dir_all("uploads").await {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to create uploads directory: {}", e) })),
+                ApiError::new("UPLOAD_IO_ERROR", format!("Failed to create uploads directory: {}", e)),
             )
                 .into_response();
         }
@@ -621,7 +667,7 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
         if let Err(e) = tokio::fs::write(format!("uploads/{}", filename), &bytes).await {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to write file: {}", e) })),
+                ApiError::new("UPLOAD_IO_ERROR", format!("Failed to write file: {}", e)),
             )
                 .into_response();
         }
@@ -637,7 +683,7 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
 
     (
         StatusCode::BAD_REQUEST,
-        Json(json!({ "error": "No field named 'file' found in the request" })),
+        ApiError::new("UPLOAD_MISSING_FILE", "No field named 'file' found in the request"),
     )
         .into_response()
 }
@@ -650,24 +696,34 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
-        // Allow any request header so X-OpenAI-Key / X-Tavily-Key pass through.
-        .allow_headers(tower_http::cors::Any);
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::HeaderName::from_static("x-axion-key"),
+            axum::http::header::HeaderName::from_static("x-openai-key"),
+            axum::http::header::HeaderName::from_static("x-tavily-key"),
+        ]);
 
     // Shared set tracking mission IDs that currently have an open refinement
     // SSE stream.  Prevents concurrent refinements for the same mission.
     let in_flight: InFlight = Arc::new(Mutex::new(HashSet::new()));
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/config/status", get(config_status_handler))
-        .route("/upload", post(upload_handler))
+    // All routes except /health are versioned under /api/v1 and protected by
+    // the auth middleware (auth is disabled when AXION_API_KEY is not set in env).
+    let api_routes = Router::new()
         .route("/execute", post(execute))
         .route("/missions", get(list_missions))
         .route("/missions/:id", get(get_mission).delete(delete_mission))
         .route("/missions/:id/export", get(export_mission))
         .route("/missions/:id/refine", post(refine_mission_handler))
-        .layer(cors)
+        .route("/upload", post(upload_handler))
+        .route("/config/status", get(config_status_handler))
+        .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(in_flight);
+
+    let app = Router::new()
+        .route("/health", get(health))
+        .nest("/api/v1", api_routes)
+        .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await

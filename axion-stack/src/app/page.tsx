@@ -510,6 +510,7 @@ export default function Home() {
   // ── Settings ────────────────────────────────────────────────────────────────
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [configStatus, setConfigStatus] = useState<{ openai: boolean; tavily: boolean } | null>(null);
+  const [draftAxionKey, setDraftAxionKey] = useState("");
   const [draftOpenAI, setDraftOpenAI] = useState("");
   const [draftTavily, setDraftTavily] = useState("");
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -534,7 +535,11 @@ export default function Home() {
 
   async function deleteMission(id: string) {
     try {
-      await fetch(`http://localhost:8080/missions/${id}`, { method: "DELETE" });
+      const axionKey = localStorage.getItem("axion_api_key");
+      await fetch(`http://localhost:8080/api/v1/missions/${id}`, {
+        method: "DELETE",
+        headers: axionKey ? { "X-Axion-Key": axionKey } : undefined,
+      });
     } catch { /* ignore if server is down */ }
     setHistory((prev) => prev.filter((m) => m.id !== id));
     if (activeMissionId === id) newMission();
@@ -542,9 +547,13 @@ export default function Home() {
   }
 
   async function clearAllHistory() {
+    const axionKey = localStorage.getItem("axion_api_key");
     await Promise.all(
       history.map((m) =>
-        fetch(`http://localhost:8080/missions/${m.id}`, { method: "DELETE" }).catch(() => {})
+        fetch(`http://localhost:8080/api/v1/missions/${m.id}`, {
+          method: "DELETE",
+          headers: axionKey ? { "X-Axion-Key": axionKey } : undefined,
+        }).catch(() => {})
       )
     );
     setHistory([]);
@@ -584,7 +593,9 @@ export default function Home() {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8080/missions");
+      const axionKey = localStorage.getItem("axion_api_key");
+      const res = await fetch("http://localhost:8080/api/v1/missions",
+        axionKey ? { headers: { "X-Axion-Key": axionKey } } : undefined);
       if (res.ok) setHistory(await res.json());
     } catch {
       // Server may not be running yet — ignore.
@@ -655,14 +666,18 @@ export default function Home() {
   // auto-open the settings drawer when no OpenAI key is configured anywhere.
   useEffect(() => {
     function hydrate(openai: boolean) {
+      const storedAxionKey = localStorage.getItem("axion_api_key") ?? "";
       const storedOpenAI = localStorage.getItem("axion_openai_key") ?? "";
       const storedTavily = localStorage.getItem("axion_tavily_key") ?? "";
+      if (storedAxionKey) setDraftAxionKey(storedAxionKey);
       if (storedOpenAI) setDraftOpenAI(storedOpenAI);
       if (storedTavily) setDraftTavily(storedTavily);
       if (!openai && !storedOpenAI) setSettingsOpen(true);
     }
 
-    fetch("http://localhost:8080/config/status")
+    const axionKey = localStorage.getItem("axion_api_key");
+    fetch("http://localhost:8080/api/v1/config/status",
+      axionKey ? { headers: { "X-Axion-Key": axionKey } } : undefined)
       .then((r) => r.json() as Promise<{ openai: boolean; tavily: boolean }>)
       .then((status) => {
         setConfigStatus(status);
@@ -683,7 +698,9 @@ export default function Home() {
     setShowDetails(false);
 
     try {
-      const res = await fetch(`http://localhost:8080/missions/${id}`);
+      const axionKey = localStorage.getItem("axion_api_key");
+      const res = await fetch(`http://localhost:8080/api/v1/missions/${id}`,
+        axionKey ? { headers: { "X-Axion-Key": axionKey } } : undefined);
       const data = await res.json();
       if (!res.ok) {
         setFetchError(data.error ?? "Failed to load mission.");
@@ -933,12 +950,14 @@ export default function Home() {
         : intent;
 
       const reqHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      const storedAxionKey = localStorage.getItem("axion_api_key");
       const storedOpenAI = localStorage.getItem("axion_openai_key");
       const storedTavily = localStorage.getItem("axion_tavily_key");
+      if (storedAxionKey) reqHeaders["X-Axion-Key"] = storedAxionKey;
       if (storedOpenAI) reqHeaders["X-OpenAI-Key"] = storedOpenAI;
       if (storedTavily) reqHeaders["X-Tavily-Key"] = storedTavily;
 
-      const res = await fetch("http://localhost:8080/execute", {
+      const res = await fetch("http://localhost:8080/api/v1/execute", {
         method: "POST",
         headers: reqHeaders,
         body: JSON.stringify({ intent: effectiveIntent }),
@@ -1022,8 +1041,10 @@ setUploadedFile(null);
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("http://localhost:8080/upload", {
+      const uploadAxionKey = localStorage.getItem("axion_api_key");
+      const res = await fetch("http://localhost:8080/api/v1/upload", {
         method: "POST",
+        headers: uploadAxionKey ? { "X-Axion-Key": uploadAxionKey } : undefined,
         body: formData,
       });
 
@@ -1062,12 +1083,14 @@ setUploadedFile(null);
 
     try {
       const refineHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      const storedAxionKey = localStorage.getItem("axion_api_key");
       const storedOpenAI = localStorage.getItem("axion_openai_key");
       const storedTavily = localStorage.getItem("axion_tavily_key");
+      if (storedAxionKey) refineHeaders["X-Axion-Key"] = storedAxionKey;
       if (storedOpenAI) refineHeaders["X-OpenAI-Key"] = storedOpenAI;
       if (storedTavily) refineHeaders["X-Tavily-Key"] = storedTavily;
 
-      const res = await fetch(`http://localhost:8080/missions/${targetId}/refine`, {
+      const res = await fetch(`http://localhost:8080/api/v1/missions/${targetId}/refine`, {
         method: "POST",
         headers: refineHeaders,
         body: JSON.stringify({ intent: refinementIntent }),
@@ -1262,15 +1285,15 @@ setUploadedFile(null);
   // ── Slash commands ────────────────────────────────────────────────────────────
   const SLASH_COMMANDS = [
     { cmd: "/export md",   icon: "↓", desc: "Download mission results as Markdown",  accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=md`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { const k=localStorage.getItem("axion_api_key"); fetch(`http://localhost:8080/api/v1/missions/${id}/export?format=md`,k?{headers:{"X-Axion-Key":k}}:undefined).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/export csv",  icon: "↓", desc: "Download mission results as CSV",        accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=csv`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { const k=localStorage.getItem("axion_api_key"); fetch(`http://localhost:8080/api/v1/missions/${id}/export?format=csv`,k?{headers:{"X-Axion-Key":k}}:undefined).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/export html", icon: "↓", desc: "Download mission results as HTML page",  accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=html`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { const k=localStorage.getItem("axion_api_key"); fetch(`http://localhost:8080/api/v1/missions/${id}/export?format=html`,k?{headers:{"X-Axion-Key":k}}:undefined).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/clear",       icon: "✕", desc: "Clear the current mission and start fresh", accent: "#f87171", category: "mission" as const,
       run: () => { newMission(); } },
     { cmd: "/memo",        icon: "◈", desc: "Save a note about this mission",         accent: "#a7cadc", category: "memo"    as const,
-      run: () => { const note = intent.replace(/^\/memo\s*/i, "").trim() || "No content"; fetch("http://localhost:8080/execute",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({intent:`Save a memo: "${note}"`})}); newMission(); } },
+      run: () => { const note = intent.replace(/^\/memo\s*/i, "").trim() || "No content"; const k=localStorage.getItem("axion_api_key"); fetch("http://localhost:8080/api/v1/execute",{method:"POST",headers:{"Content-Type":"application/json",...(k?{"X-Axion-Key":k}:{})},body:JSON.stringify({intent:`Save a memo: "${note}"`})}); newMission(); } },
   ];
 
   const filteredSlash = slashQuery !== null
@@ -1715,8 +1738,14 @@ setUploadedFile(null);
   // ── Settings helpers ─────────────────────────────────────────────────────────
 
   function saveSettings() {
+    const axionKeyTrimmed = draftAxionKey.trim();
     const openAITrimmed = draftOpenAI.trim();
     const tavilyTrimmed = draftTavily.trim();
+    if (axionKeyTrimmed) {
+      localStorage.setItem("axion_api_key", axionKeyTrimmed);
+    } else {
+      localStorage.removeItem("axion_api_key");
+    }
     if (openAITrimmed) {
       localStorage.setItem("axion_openai_key", openAITrimmed);
     } else {
@@ -1871,6 +1900,36 @@ setUploadedFile(null);
               >
                 ×
               </button>
+            </div>
+
+            {/* Axion API Key */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>
+                Axion API Key
+              </label>
+              <input
+                type="password"
+                value={draftAxionKey}
+                onChange={(e) => setDraftAxionKey(e.target.value)}
+                placeholder="axion_sk_..."
+                style={{
+                  width: "100%",
+                  background: "rgba(255,255,255,0.07)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 10,
+                  padding: "10px 14px",
+                  color: "rgba(255,255,255,0.9)",
+                  fontSize: 13,
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color 0.15s",
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #a7cadc)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+              />
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>
+                Required when the server has AXION_API_KEY set. Leave blank for local dev.
+              </p>
             </div>
 
             {/* OpenAI Key */}
