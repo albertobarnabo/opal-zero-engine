@@ -37,6 +37,14 @@ interface MissionSummary {
 
 type MissionStatus = "idle" | "streaming" | "complete" | "failed";
 
+// ── Slash command discovery ───────────────────────────────────────────────────
+
+interface SlashCommand {
+  command: string;      // the full slash command text, e.g. "/export md"
+  description: string;  // shown in the discovery popover
+  category: "export" | "mission" | "memo";
+}
+
 // ── Execution trace ───────────────────────────────────────────────────────────
 
 interface TraceEvent {
@@ -74,7 +82,7 @@ interface DesignTokens {
 function accentForMission(m: MissionSummary): string {
   if (m.status === "failed") return "#f87171";
   switch (m.layout_hint) {
-    case "Synthesized": return "#8b9cf4";
+    case "Synthesized": return "#a7cadc";
     case "Analytical":  return "#6ee7b7";
     case "Itinerary":   return "#fbbf24";
     default:            return "#6b7280";
@@ -127,23 +135,27 @@ function applyDesignTokens(tokens: DesignTokens) {
   const root = document.documentElement;
   const [r, g, b] = hexToRgb(tokens.primary_accent);
   const gi = Math.max(0, Math.min(1, tokens.glass_intensity));
-  const blur = Math.round(56 + gi * 24);            // 56–80 px (Pearl Glass)
+  // Landing-page range: 28–40 px
+  const blur = Math.round(28 + gi * 12);
   const so = Math.max(0, Math.min(1, tokens.surface_opacity ?? 0.04));
-  // Pearl Glass: white-tinted bg — subtle but luminous on Deep Obsidian
-  const bgAlpha = Math.min(so + gi * 0.025, 0.08).toFixed(3);
-  const borderAlpha = (0.10 + gi * 0.08).toFixed(3);
-  const insetAlpha = (0.12 + gi * 0.06).toFixed(3); // stronger specular
+  const bgAlpha = Math.min(so + gi * 0.02, 0.06).toFixed(3);
+  const borderAlpha = (0.07 + gi * 0.04).toFixed(3);
   const compact = tokens.layout_density === "compact";
-  const radius = Math.min(tokens.border_radius ?? 24, 48);
+  const radius = Math.min(tokens.border_radius ?? 14, 22);
+
+  // Determine foreground colour for accent-background buttons (WCAG contrast)
+  // Relative luminance of accent: 0.2126R + 0.7152G + 0.0722B (linearised)
+  const toLinear = (c: number) => c / 255 <= 0.04045 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4;
+  const lum = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+  const accentFg = lum > 0.35 ? "#07090c" : "#f0f4f8";
 
   root.style.setProperty("--axion-accent",       tokens.primary_accent);
   root.style.setProperty("--axion-accent-rgb",   `${r},${g},${b}`);
+  root.style.setProperty("--axion-accent-fg",    accentFg);
   root.style.setProperty("--axion-blur",         `${blur}px`);
-  // Pearl Glass: pure white micro-tint (the accent lives in glow, not bg)
   root.style.setProperty("--axion-glass-bg",     `rgba(255,255,255,${bgAlpha})`);
   root.style.setProperty("--axion-glass-border", `rgba(255,255,255,${borderAlpha})`);
-  // Specular top highlight (simulates light hitting the top glass edge) + subtle overall edge
-  root.style.setProperty("--axion-glass-inset",  `inset 0 1px 0 rgba(255,255,255,0.18), inset 0 0 0 0.5px rgba(255,255,255,${insetAlpha})`);
+  root.style.setProperty("--axion-glass-inset",  `0 1px 0 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.05), 0 40px 80px -30px rgba(0,0,0,0.70)`);
   root.style.setProperty("--axion-glow",         `rgba(${r},${g},${b},0.35)`);
   root.style.setProperty("--axion-pad",          compact ? "16px" : "24px");
   root.style.setProperty("--axion-gap",          compact ? "20px" : "36px");
@@ -152,9 +164,9 @@ function applyDesignTokens(tokens: DesignTokens) {
 
 function resetDesignTokens() {
   const props = [
-    "--axion-accent", "--axion-accent-rgb", "--axion-blur", "--axion-glass-bg",
-    "--axion-glass-border", "--axion-glass-inset", "--axion-glow", "--axion-pad",
-    "--axion-gap", "--axion-radius",
+    "--axion-accent", "--axion-accent-rgb", "--axion-accent-fg", "--axion-blur",
+    "--axion-glass-bg", "--axion-glass-border", "--axion-glass-inset", "--axion-glow",
+    "--axion-pad", "--axion-gap", "--axion-radius",
   ];
   props.forEach((p) => document.documentElement.style.removeProperty(p));
 }
@@ -474,6 +486,10 @@ export default function Home() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [slashQuery, setSlashQuery] = useState<string | null>(null); // null = closed
   const [slashIndex, setSlashIndex] = useState(0);
+  // Discovery popover state (separate from execution state above)
+  const [slashPopoverOpen, setSlashPopoverOpen] = useState(false);
+  const [slashPopoverIndex, setSlashPopoverIndex] = useState(0);
+  const [slashFilter, setSlashFilter] = useState("");
   const [pinnedCards, setPinnedCards] = useState<Set<number>>(new Set());
   const [dismissedCards, setDismissedCards] = useState<Set<number>>(new Set());
   const [refinementHistory, setRefinementHistory] = useState<RefinementRound[]>([]);
@@ -549,6 +565,9 @@ export default function Home() {
     setDisplayedResults({});
     setHistoryQuery("");
     setConfirmClear(false);
+    setSlashPopoverOpen(false);
+    setSlashFilter("");
+    setSlashPopoverIndex(0);
     resetDesignTokens();
     setTimeout(() => textareaRef.current?.focus(), 100);
   }
@@ -1171,7 +1190,7 @@ export default function Home() {
   function dotColorForType(type: string): string {
     if (type === "task_completed")   return "rgba(74,222,128,0.7)";
     if (type === "task_failed")      return "rgba(248,113,113,0.7)";
-    if (type === "mission_complete") return "var(--axion-accent, #8b9cf4)";
+    if (type === "mission_complete") return "var(--axion-accent, #a7cadc)";
     if (type === "task_started")     return "rgba(255,255,255,0.25)";
     return "rgba(255,255,255,0.15)";
   }
@@ -1185,21 +1204,29 @@ export default function Home() {
 
   // ── Slash commands ────────────────────────────────────────────────────────────
   const SLASH_COMMANDS = [
-    { cmd: "/export md",   icon: "↓", desc: "Export as Markdown", accent: "#6ee7b7",
+    { cmd: "/export md",   icon: "↓", desc: "Download mission results as Markdown",  accent: "#6ee7b7", category: "export"   as const,
       run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=md`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
-    { cmd: "/export csv",  icon: "↓", desc: "Export as CSV",      accent: "#6ee7b7",
+    { cmd: "/export csv",  icon: "↓", desc: "Download mission results as CSV",        accent: "#6ee7b7", category: "export"   as const,
       run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=csv`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
-    { cmd: "/export html", icon: "↓", desc: "Export as HTML",     accent: "#6ee7b7",
+    { cmd: "/export html", icon: "↓", desc: "Download mission results as HTML page",  accent: "#6ee7b7", category: "export"   as const,
       run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { fetch(`http://localhost:8080/missions/${id}/export?format=html`).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
-    { cmd: "/clear",       icon: "✕", desc: "Clear current mission & reset", accent: "#f87171",
+    { cmd: "/clear",       icon: "✕", desc: "Clear the current mission and start fresh", accent: "#f87171", category: "mission" as const,
       run: () => { newMission(); } },
-    { cmd: "/memo",        icon: "◈", desc: "Save a quick note to disk",     accent: "#8b9cf4",
+    { cmd: "/memo",        icon: "◈", desc: "Save a note about this mission",         accent: "#a7cadc", category: "memo"    as const,
       run: () => { const note = intent.replace(/^\/memo\s*/i, "").trim() || "No content"; fetch("http://localhost:8080/execute",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({intent:`Save a memo: "${note}"`})}); newMission(); } },
   ];
 
   const filteredSlash = slashQuery !== null
     ? SLASH_COMMANDS.filter((c) => c.cmd.includes(slashQuery.toLowerCase()))
     : [];
+
+  // Discovery popover: show all commands when only "/" typed, filter when longer
+  const filteredCommands = slashFilter.length > 1
+    ? SLASH_COMMANDS.filter((c) =>
+        c.cmd.toLowerCase().includes(slashFilter.toLowerCase()) ||
+        c.desc.toLowerCase().includes(slashFilter.slice(1).toLowerCase())
+      )
+    : SLASH_COMMANDS;
 
   function executeSlashCommand(cmd: typeof SLASH_COMMANDS[0]) {
     setIntent("");
@@ -1208,68 +1235,128 @@ export default function Home() {
     cmd.run();
   }
 
+  /** Insert a command from the discovery popover — arms slashQuery so Enter executes. */
+  function selectSlashCommand(cmd: typeof SLASH_COMMANDS[0]) {
+    setIntent(cmd.cmd);
+    setSlashPopoverOpen(false);
+    setSlashFilter("");
+    setSlashPopoverIndex(0);
+    // Prime the execution state: next Enter will run the command via existing handler
+    setSlashQuery(cmd.cmd.slice(1));
+    setSlashIndex(0);
+    setTimeout(() => textareaRef.current?.focus(), 20);
+  }
+
   // ── Shared command bar ───────────────────────────────────────────────────────
   // Always lives in the Control Zone at the bottom — never floats/overlaps.
   const commandBarContent = (
     <div style={{ position: "relative" }}>
-    {/* ── Slash-command popover ─────────────────────────────────────────── */}
+    {/* ── Slash-command discovery popover ──────────────────────────────── */}
     <AnimatePresence>
-      {slashQuery !== null && filteredSlash.length > 0 && (
+      {slashPopoverOpen && filteredCommands.length > 0 && (
         <motion.div
-          key="slash-popover"
-          initial={{ opacity: 0, y: 8, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 6, scale: 0.97 }}
-          transition={{ type: "spring", stiffness: 400, damping: 28 }}
+          key="slash-discovery"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 6 }}
+          transition={{ duration: 0.15 }}
           style={{
             position: "absolute",
-            bottom: "calc(100% + 10px)",
+            bottom: "calc(100% + 8px)",
             left: 0, right: 0,
-            borderRadius: 16,
+            background: "rgba(14,14,22,0.97)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 14,
+            backdropFilter: "blur(40px)",
+            WebkitBackdropFilter: "blur(40px)",
             overflow: "hidden",
-            background: "rgba(10,14,28,0.94)",
-            border: "0.5px solid rgba(255,255,255,0.14)",
-            backdropFilter: "blur(60px)",
-            WebkitBackdropFilter: "blur(60px)",
-            boxShadow: "0 16px 48px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.09)",
-            zIndex: 50,
+            zIndex: 300,
+            boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
           }}
         >
-          {/* Popover header */}
-          <div style={{ padding: "8px 14px 6px", borderBottom: "0.5px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.25)" }}>
-              Commands
-            </span>
-            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.20)" }}>↑↓ navigate · ⏎ execute · Esc close</span>
+          {/* Header */}
+          <div style={{
+            padding: "8px 14px 6px",
+            fontSize: 10,
+            color: "rgba(255,255,255,0.25)",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+          }}>
+            Commands
           </div>
-          {filteredSlash.map((c, i) => (
-            <button
+
+          {/* Command rows */}
+          {filteredCommands.map((c, i) => (
+            <div
               key={c.cmd}
-              onClick={() => executeSlashCommand(c)}
+              onMouseDown={() => selectSlashCommand(c)}
+              onMouseEnter={() => setSlashPopoverIndex(i)}
               style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "10px 14px",
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                background: i === slashIndex ? `${c.accent}14` : "transparent",
-                borderLeft: i === slashIndex ? `2px solid ${c.accent}` : "2px solid transparent",
-                transition: "background 0.12s",
+                padding: "9px 14px",
                 cursor: "pointer",
+                background: i === slashPopoverIndex ? "rgba(255,255,255,0.07)" : "transparent",
+                borderBottom: i < filteredCommands.length - 1
+                  ? "1px solid rgba(255,255,255,0.04)"
+                  : "none",
+                transition: "background 0.1s",
               }}
-              onMouseEnter={() => setSlashIndex(i)}
             >
+              {/* Command chip */}
               <span style={{
-                width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: `${c.accent}18`, border: `1px solid ${c.accent}30`,
-                color: c.accent, fontSize: 12, fontWeight: 700,
-              }}>{c.icon}</span>
-              <span style={{ fontFamily: "var(--axion-font-mono, monospace)", fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{c.cmd}</span>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginLeft: 4 }}>{c.desc}</span>
-            </button>
+                fontSize: 12,
+                fontWeight: 600,
+                color: i === slashPopoverIndex
+                  ? "var(--axion-accent, #a7cadc)"
+                  : "rgba(255,255,255,0.75)",
+                fontFamily: "var(--axion-font-mono, monospace)",
+                minWidth: 110,
+                flexShrink: 0,
+              }}>
+                {c.cmd}
+              </span>
+              {/* Description */}
+              <span style={{
+                fontSize: 12,
+                color: "rgba(255,255,255,0.35)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                flex: 1,
+              }}>
+                {c.desc}
+              </span>
+              {/* Category tag */}
+              <span style={{
+                marginLeft: "auto",
+                fontSize: 10,
+                padding: "2px 7px",
+                borderRadius: 6,
+                background: "rgba(255,255,255,0.06)",
+                color: "rgba(255,255,255,0.25)",
+                flexShrink: 0,
+              }}>
+                {c.category}
+              </span>
+            </div>
           ))}
+
+          {/* Footer hint */}
+          <div style={{
+            padding: "6px 14px",
+            fontSize: 10,
+            color: "rgba(255,255,255,0.18)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            display: "flex",
+            gap: 12,
+          }}>
+            <span>↑↓ navigate</span>
+            <span>↵ select</span>
+            <span>esc dismiss</span>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>
@@ -1281,19 +1368,19 @@ export default function Home() {
           : "axion-light-trace"
       }`}
       style={{
-        boxShadow: "0 8px 40px rgba(0,0,0,0.75)",
-        border: "0.5px solid rgba(255,255,255,0.16)",
+        boxShadow: "0 8px 50px rgba(0,0,0,0.70), 0 0 0 1px rgba(255,255,255,0.06)",
+        border: "none",
       }}
     >
       {/* Glass inner — visibly lifted off the page bg */}
       <div
         className="relative rounded-2xl flex items-end gap-3 px-5 py-4"
         style={{
-          background: "rgba(22,28,46,0.97)",
-          backdropFilter: "blur(80px)",
-          WebkitBackdropFilter: "blur(80px)",
-          border: "0.5px solid rgba(255,255,255,0.10)",
-          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)",
+          background: "rgba(10,14,20,0.97)",
+          backdropFilter: "blur(40px) saturate(150%)",
+          WebkitBackdropFilter: "blur(40px) saturate(150%)",
+          border: "0.5px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 1px 0 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.04)",
         }}
       >
         {/* Hidden file input — triggered by the upload icon button */}
@@ -1321,7 +1408,7 @@ export default function Home() {
             color: isUploading || isStreaming
               ? "rgba(255,255,255,0.22)"
               : uploadedFile
-              ? "var(--axion-accent, #8b9cf4)"
+              ? "var(--axion-accent, #a7cadc)"
               : "rgba(255,255,255,0.45)",
             padding: 0,
           }}
@@ -1332,7 +1419,7 @@ export default function Home() {
           onMouseLeave={(e) => {
             if (!isUploading && !isStreaming)
               (e.currentTarget as HTMLButtonElement).style.color = uploadedFile
-                ? "var(--axion-accent, #8b9cf4)"
+                ? "var(--axion-accent, #a7cadc)"
                 : "rgba(255,255,255,0.45)";
           }}
         >
@@ -1447,19 +1534,46 @@ export default function Home() {
               const el = e.target;
               el.style.height = "auto";
               el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-              // Slash-command detection: open popover when input starts with "/"
+              // Slash-command detection: drive both execution state and discovery popover
               if (v.startsWith("/")) {
                 setSlashQuery(v.slice(1));
                 setSlashIndex(0);
+                setSlashPopoverOpen(true);
+                setSlashFilter(v);
+                setSlashPopoverIndex(0);
               } else {
                 setSlashQuery(null);
+                setSlashPopoverOpen(false);
+                setSlashFilter("");
               }
             }}
             onKeyDown={(e) => {
-              // Navigate / execute slash commands
-              if (slashQuery !== null && filteredSlash.length > 0) {
-                if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % filteredSlash.length); return; }
-                if (e.key === "ArrowUp")   { e.preventDefault(); setSlashIndex((i) => (i - 1 + filteredSlash.length) % filteredSlash.length); return; }
+              // Discovery popover navigation / insertion
+              if (slashPopoverOpen && filteredCommands.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashPopoverIndex((i) => Math.min(i + 1, filteredCommands.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashPopoverIndex((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  selectSlashCommand(filteredCommands[slashPopoverIndex]);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setSlashPopoverOpen(false);
+                  setSlashFilter("");
+                  return;
+                }
+              }
+              // Execute inserted slash command (popover closed, slashQuery armed)
+              if (!slashPopoverOpen && slashQuery !== null && filteredSlash.length > 0) {
                 if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
                   e.preventDefault();
                   executeSlashCommand(filteredSlash[slashIndex]);
@@ -1471,6 +1585,10 @@ export default function Home() {
                 e.preventDefault();
                 runMission();
               }
+            }}
+            onBlur={() => {
+              // Delay so onMouseDown on a popover row fires before the popover unmounts
+              setTimeout(() => { setSlashPopoverOpen(false); setSlashFilter(""); }, 150);
             }}
             placeholder={
               intent === "" && history.length > 0
@@ -1494,11 +1612,11 @@ export default function Home() {
           style={{
             background: isStreaming
               ? "rgba(255,255,255,0.06)"
-              : "var(--axion-accent, #8b9cf4)",
-            color: isStreaming ? "rgba(255,255,255,0.4)" : "#fff",
+              : "var(--axion-accent, #a7cadc)",
+            color: isStreaming ? "rgba(255,255,255,0.4)" : "var(--axion-accent-fg, #07090c)",
             boxShadow: isStreaming
               ? "none"
-              : "0 0 20px rgba(var(--axion-accent-rgb, 139,156,244), 0.30)",
+              : "0 0 20px rgba(var(--axion-accent-rgb, 167,202,220), 0.30)",
           }}
         >
           {isStreaming ? "Running…" : "Execute"}
@@ -1638,10 +1756,10 @@ export default function Home() {
               height: "100%",
               width: 360,
               zIndex: 190,
-              background: "rgba(12, 12, 20, 0.96)",
-              backdropFilter: "blur(40px)",
-              WebkitBackdropFilter: "blur(40px)",
-              borderLeft: "1px solid rgba(255,255,255,0.10)",
+              background: "rgba(8,10,14,0.96)",
+              backdropFilter: "blur(40px) saturate(150%)",
+              WebkitBackdropFilter: "blur(40px) saturate(150%)",
+              borderLeft: "1px solid rgba(255,255,255,0.07)",
               display: "flex",
               flexDirection: "column",
               padding: "28px 28px 32px",
@@ -1691,7 +1809,7 @@ export default function Home() {
                   boxSizing: "border-box",
                   transition: "border-color 0.15s",
                 }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #8b9cf4)"; }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #a7cadc)"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
               />
               {configStatus?.openai && !draftOpenAI ? (
@@ -1727,7 +1845,7 @@ export default function Home() {
                   boxSizing: "border-box",
                   transition: "border-color 0.15s",
                 }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #8b9cf4)"; }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #a7cadc)"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
               />
               {configStatus?.tavily && !draftTavily ? (
@@ -1746,7 +1864,7 @@ export default function Home() {
               onClick={saveSettings}
               style={{
                 width: "100%",
-                background: "var(--axion-accent, #8b9cf4)",
+                background: "var(--axion-accent, #a7cadc)",
                 color: "#000",
                 fontWeight: 600,
                 fontSize: 14,
@@ -1835,11 +1953,11 @@ export default function Home() {
               zIndex: 40,
               display: "flex",
               flexDirection: "column",
-              background: "rgba(4,8,20,0.85)",
-              backdropFilter: "blur(64px)",
-              WebkitBackdropFilter: "blur(64px)",
-              borderRight: "0.5px solid rgba(255,255,255,0.10)",
-              boxShadow: "4px 0 48px rgba(0,0,0,0.50), inset -1px 0 0 rgba(255,255,255,0.04)",
+              background: "rgba(6,8,11,0.88)",
+              backdropFilter: "blur(40px) saturate(150%)",
+              WebkitBackdropFilter: "blur(40px) saturate(150%)",
+              borderRight: "1px solid rgba(255,255,255,0.07)",
+              boxShadow: "4px 0 60px rgba(0,0,0,0.60), inset -1px 0 0 rgba(255,255,255,0.04)",
             }}
           >
             {/* Drawer header */}
@@ -1898,29 +2016,30 @@ export default function Home() {
                   width: "100%",
                   padding: "12px 16px",
                   borderRadius: 14,
-                  background: "rgba(51,65,85,0.55)",
-                  color: "rgba(255,255,255,0.92)",
-                  fontWeight: 700,
+                  background: "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
+                  color: "rgba(235,239,242,0.92)",
+                  fontWeight: 600,
                   fontSize: 14,
+                  fontFamily: "var(--axion-font-main)",
                   textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  backdropFilter: "blur(20px)",
-                  WebkitBackdropFilter: "blur(20px)",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.14)",
+                  border: "1px solid rgba(255,255,255,0.11)",
+                  backdropFilter: "blur(28px) saturate(130%)",
+                  WebkitBackdropFilter: "blur(28px) saturate(130%)",
+                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.04)",
                   transition: "background 0.2s, border-color 0.2s",
                 }}
                 onMouseEnter={(e) => {
                   const el = e.currentTarget as HTMLButtonElement;
-                  el.style.background = "rgba(71,85,105,0.65)";
-                  el.style.borderColor = "rgba(255,255,255,0.28)";
+                  el.style.background = "linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.05))";
+                  el.style.borderColor = "rgba(255,255,255,0.16)";
                 }}
                 onMouseLeave={(e) => {
                   const el = e.currentTarget as HTMLButtonElement;
-                  el.style.background = "rgba(51,65,85,0.55)";
-                  el.style.borderColor = "rgba(255,255,255,0.18)";
+                  el.style.background = "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))";
+                  el.style.borderColor = "rgba(255,255,255,0.11)";
                 }}
               >
                 <span style={{ fontSize: 18, lineHeight: 1, opacity: 0.80 }}>＋</span>
@@ -1958,7 +2077,7 @@ export default function Home() {
                       background: historyQueryFocused
                         ? "rgba(255,255,255,0.08)"
                         : "rgba(255,255,255,0.05)",
-                      border: `0.5px solid ${historyQueryFocused ? "rgba(var(--axion-accent-rgb, 139,156,244), 0.45)" : "rgba(255,255,255,0.10)"}`,
+                      border: `0.5px solid ${historyQueryFocused ? "rgba(var(--axion-accent-rgb, 167,202,220), 0.45)" : "rgba(255,255,255,0.10)"}`,
                       color: "rgba(255,255,255,0.82)",
                       fontSize: 12,
                       outline: "none",
@@ -1995,7 +2114,7 @@ export default function Home() {
                   <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", lineHeight: 1.6 }}>
                     No matches for<br />
                     <span style={{ color: "rgba(255,255,255,0.40)", fontStyle: "italic" }}>
-                      "{historyQuery}"
+                      &ldquo;{historyQuery}&rdquo;
                     </span>
                   </p>
                 </div>
@@ -2167,10 +2286,10 @@ export default function Home() {
           zIndex: 50,
           width: 40, height: 40,
           borderRadius: 12,
-          background: "rgba(255,255,255,0.055)",
-          border: "0.5px solid rgba(255,255,255,0.12)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
+          background: "linear-gradient(rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
+          border: "1px solid rgba(255,255,255,0.08)",
+          backdropFilter: "blur(28px) saturate(130%)",
+          WebkitBackdropFilter: "blur(28px) saturate(130%)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -2203,33 +2322,58 @@ export default function Home() {
                 minHeight: "44vh",
                 textAlign: "center",
                 pointerEvents: "none",
+                padding: "0 24px",
               }}
             >
-              <img
-                src="/axion-logo.png"
-                alt="Axion"
+              {/* Version badge — mono, uppercase, accent border (landing page style) */}
+              <motion.span
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1, duration: 0.3 }}
+                className="axion-mono-badge"
+                style={{ marginBottom: 28 }}
+              >
+                Kernel v0.1 · Alpha
+              </motion.span>
+
+              {/* Main wordmark — Space Grotesk display font */}
+              <motion.h1
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.18, duration: 0.4 }}
                 style={{
-                  width: 160, height: 160,
-                  filter: "brightness(0) invert(1)",
-                  mixBlendMode: "screen",
-                  marginBottom: 16,
-                }}
-              />
-              <h1
-                style={{
-                  fontSize: "clamp(3.4rem, 7.5vw, 5.2rem)",
-                  fontWeight: 900,
-                  letterSpacing: "-0.05em",
-                  lineHeight: 1,
-                  color: "rgba(255,255,255,0.94)",
-                  marginBottom: 10,
+                  fontFamily: "var(--axion-font-display)",
+                  fontSize: "clamp(4rem, 10vw, 7rem)",
+                  fontWeight: 600,
+                  letterSpacing: "-0.03em",
+                  lineHeight: 1.02,
+                  background: "linear-gradient(135deg, #ebeff2 20%, #9399a0 55%, #c8d4da 85%)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                  marginBottom: 18,
                 }}
               >
-                AXION
-              </h1>
-              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.28)", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 500 }}>
-                The Intelligence Kernel
-              </p>
+                Axion
+              </motion.h1>
+
+              {/* Tagline — muted, tracking-wide */}
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.28, duration: 0.4 }}
+                style={{
+                  fontSize: 15,
+                  color: "rgba(147,153,160,0.85)",
+                  letterSpacing: "-0.01em",
+                  fontWeight: 400,
+                  maxWidth: 380,
+                  lineHeight: 1.55,
+                  fontFamily: "var(--axion-font-main)",
+                }}
+              >
+                The headless intelligence kernel. Synthesize intent into verified, structured state.
+              </motion.p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2250,24 +2394,25 @@ export default function Home() {
                 alt="Axion"
                 style={{ width: 48, height: 48, filter: "invert(1)", mixBlendMode: "screen", flexShrink: 0 }}
               />
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3 }}>
                 <h1
                   style={{
-                    fontSize: "clamp(1.6rem, 3.5vw, 2.25rem)",
-                    fontWeight: 900,
-                    letterSpacing: "-0.045em",
-                    lineHeight: 1,
-                    background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(200,210,255,0.80) 45%, rgba(255,255,255,0.92) 100%)",
+                    fontFamily: "var(--axion-font-display)",
+                    fontSize: "clamp(1.5rem, 3vw, 2rem)",
+                    fontWeight: 600,
+                    letterSpacing: "-0.03em",
+                    lineHeight: 1.05,
+                    background: "linear-gradient(135deg, #ebeff2 20%, #9399a0 60%, #c8d4da 90%)",
                     WebkitBackgroundClip: "text",
                     WebkitTextFillColor: "transparent",
                     backgroundClip: "text",
                   }}
                 >
-                  AXION
+                  Axion
                 </h1>
-                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", letterSpacing: "0.025em", fontStyle: "italic" }}>
-                  The Intelligence Kernel.
-                </p>
+                <span className="axion-mono-badge" style={{ fontSize: 8 }}>
+                  Kernel v0.1
+                </span>
               </div>
             </motion.header>
           )}
@@ -2309,22 +2454,22 @@ export default function Home() {
                 <div
                   className="flex items-center gap-3 rounded-xl px-4 py-3 mb-4"
                   style={{
-                    background: "var(--axion-glass-bg, rgba(31,41,55,0.5))",
-                    border: "1px solid var(--axion-glass-border, rgba(55,65,81,0.6))",
-                    backdropFilter: "blur(var(--axion-blur, 24px))",
-                    WebkitBackdropFilter: "blur(var(--axion-blur, 24px))",
-                    boxShadow: "0 0 18px var(--axion-glow, transparent)",
+                    background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    backdropFilter: "blur(28px) saturate(130%)",
+                    WebkitBackdropFilter: "blur(28px) saturate(130%)",
+                    boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 18px var(--axion-glow, rgba(167,202,220,0.15))",
                   }}
                 >
                   <div
                     className="w-4 h-4 rounded-full animate-spin shrink-0"
                     style={{
-                      border: "2px solid var(--axion-accent, #6366f1)",
+                      border: "2px solid var(--axion-accent, #a7cadc)",
                       borderTopColor: "transparent",
                     }}
                   />
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold" style={{ color: "var(--axion-accent, #a5b4fc)" }}>
+                    <p className="text-xs font-semibold" style={{ color: "var(--axion-accent, #a7cadc)" }}>
                       {activeAgent.role}
                     </p>
                     <p className="text-xs text-gray-400 truncate">{activeAgent.intent}</p>
@@ -2338,9 +2483,9 @@ export default function Home() {
                   <div
                     className="w-9 h-9 rounded-full animate-spin"
                     style={{
-                      border: "3px solid var(--axion-accent, #6366f1)",
+                      border: "2px solid var(--axion-accent, #a7cadc)",
                       borderTopColor: "transparent",
-                      boxShadow: "0 0 16px var(--axion-glow, rgba(99,102,241,0.3))",
+                      boxShadow: "0 0 16px var(--axion-glow, rgba(167,202,220,0.25))",
                     }}
                   />
                   <p className="text-gray-400 text-sm">🤖 Axion swarm initializing…</p>
@@ -2349,7 +2494,7 @@ export default function Home() {
 
               {/* Governor expand banner */}
               {governorBanner && (
-                <div className="bg-indigo-950/70 border border-indigo-700 rounded-xl px-4 py-2.5 text-indigo-300 text-xs mb-4">
+                <div className="rounded-xl px-4 py-2.5 text-xs mb-4" style={{ background: "rgba(167,202,220,0.06)", border: "1px solid rgba(167,202,220,0.18)", color: "rgba(167,202,220,0.80)" }}>
                   {governorBanner}
                 </div>
               )}
@@ -2367,14 +2512,14 @@ export default function Home() {
 
                   {/* Section header */}
                   <div className="flex items-center gap-3 flex-wrap">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "rgba(147,153,160,0.70)", fontFamily: "var(--axion-font-mono)" }}>
                       {missionStatus === "complete"
                         ? activeMissionId ? "Loaded from history" : "Mission complete"
                         : "Mission in progress"}{" "}
                       {missionMeta && `— ${missionMeta.task_count} task${missionMeta.task_count !== 1 ? "s" : ""}`}
                     </p>
                     {missionMeta?.expanded_task_count != null && missionMeta.expanded_task_count > 0 && (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold bg-indigo-900/60 border border-indigo-600 text-indigo-300 rounded-full px-2.5 py-0.5">
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2.5 py-0.5" style={{ background: "rgba(167,202,220,0.08)", border: "1px solid rgba(167,202,220,0.22)", color: "rgba(167,202,220,0.80)" }}>
                         🔭 +{missionMeta.expanded_task_count} expanded
                       </span>
                     )}
@@ -2397,8 +2542,8 @@ export default function Home() {
                   {refinementHistory.length > 0 && (
                     <div style={{
                       borderRadius: 12,
-                      background: "rgba(139,156,244,0.05)",
-                      border: "0.5px solid rgba(139,156,244,0.18)",
+                      background: "rgba(167,202,220,0.05)",
+                      border: "0.5px solid rgba(167,202,220,0.18)",
                       overflow: "hidden",
                     }}>
                       {/* Toggle header */}
@@ -2415,7 +2560,7 @@ export default function Home() {
                           textAlign: "left",
                         }}
                       >
-                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--axion-accent, rgba(139,156,244,0.70))" }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--axion-accent, rgba(167,202,220,0.70))" }}>
                           Refinement history ({refinementHistory.length})
                         </span>
                         <span style={{ flex: 1 }} />
@@ -2433,7 +2578,7 @@ export default function Home() {
                             animate={{ height: "auto", opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
                             transition={{ type: "spring", stiffness: 360, damping: 32 }}
-                            style={{ overflow: "hidden", borderTop: "0.5px solid rgba(139,156,244,0.12)" }}
+                            style={{ overflow: "hidden", borderTop: "0.5px solid rgba(167,202,220,0.12)" }}
                           >
                             <div style={{ padding: "8px 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
                               {refinementHistory.map((round, ri) => (
@@ -2446,7 +2591,7 @@ export default function Home() {
                                     padding: "8px 10px",
                                     borderRadius: 8,
                                     background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
-                                    borderLeft: "2px solid var(--axion-accent, #8b9cf4)",
+                                    borderLeft: "2px solid var(--axion-accent, #a7cadc)",
                                   }}
                                 >
                                   {/* R{n} badge */}
@@ -2457,9 +2602,9 @@ export default function Home() {
                                     letterSpacing: "0.04em",
                                     padding: "2px 6px",
                                     borderRadius: 5,
-                                    background: "rgba(139,156,244,0.18)",
-                                    border: "0.5px solid rgba(139,156,244,0.35)",
-                                    color: "var(--axion-accent, #8b9cf4)",
+                                    background: "rgba(167,202,220,0.18)",
+                                    border: "0.5px solid rgba(167,202,220,0.35)",
+                                    color: "var(--axion-accent, #a7cadc)",
                                     lineHeight: 1.5,
                                     marginTop: 1,
                                   }}>
@@ -2501,9 +2646,9 @@ export default function Home() {
                                       ) : (
                                         <span style={{
                                           fontSize: 9, padding: "1px 6px", borderRadius: 4,
-                                          background: "rgba(139,156,244,0.12)",
-                                          border: "0.5px solid rgba(139,156,244,0.25)",
-                                          color: "var(--axion-accent, #8b9cf4)",
+                                          background: "rgba(167,202,220,0.12)",
+                                          border: "0.5px solid rgba(167,202,220,0.25)",
+                                          color: "var(--axion-accent, #a7cadc)",
                                           fontWeight: 600,
                                         }}>
                                           +{round.newPayloadKeys.length} new key{round.newPayloadKeys.length !== 1 ? "s" : ""}
@@ -2681,7 +2826,7 @@ export default function Home() {
                     return (
                       <div className="space-y-4">
                         {missionState && (
-                          <p className="text-xs font-semibold uppercase tracking-widest text-gray-600">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "rgba(147,153,160,0.50)", fontFamily: "var(--axion-font-mono)" }}>
                             Agent Reasoning
                           </p>
                         )}
@@ -2701,17 +2846,15 @@ export default function Home() {
                               className={`rounded-2xl ${isRunning ? "axion-neural-pulse" : ""}`}
                               style={{
                                 background: isRunning
-                                  ? "rgba(255,255,255,0.04)"
-                                  : "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+                                  ? "linear-gradient(rgba(255,255,255,0.05), rgba(255,255,255,0.02))"
+                                  : "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
                                 border: isRunning
-                                  ? `1px solid rgba(var(--axion-accent-rgb, 139,156,244), 0.40)`
-                                  : "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
-                                backdropFilter: "blur(var(--axion-blur, 56px))",
-                                WebkitBackdropFilter: "blur(var(--axion-blur, 56px))",
+                                  ? `1px solid rgba(var(--axion-accent-rgb, 167,202,220), 0.35)`
+                                  : "1px solid rgba(255,255,255,0.08)",
+                                backdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
+                                WebkitBackdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
                                 padding: "var(--axion-pad, 20px)",
-                                boxShadow: isRunning
-                                  ? "inset 0 1px 0 rgba(255,255,255,0.10)"
-                                  : "inset 0 1px 0 rgba(255,255,255,0.08)",
+                                boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 20px 40px -15px rgba(0,0,0,0.50)",
                               }}
                             >
                               <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
@@ -2719,9 +2862,9 @@ export default function Home() {
                                 <span>{label}</span>
                                 {isRunning && (
                                   <span className="ml-auto flex items-center gap-1.5 text-xs font-normal"
-                                    style={{ color: "var(--axion-accent, #a5b4fc)" }}>
+                                    style={{ color: "var(--axion-accent, #a7cadc)" }}>
                                     <span className="w-2 h-2 rounded-full inline-block"
-                                      style={{ background: "var(--axion-accent, #a5b4fc)", animation: "neural-pulse 1.4s ease-in-out infinite" }} />
+                                      style={{ background: "var(--axion-accent, #a7cadc)", animation: "neural-pulse 1.4s ease-in-out infinite" }} />
                                     Processing…
                                   </span>
                                 )}
@@ -2892,7 +3035,7 @@ export default function Home() {
           flexShrink: 0,
           position: "relative",
           zIndex: 10,
-          background: "rgba(7,9,12,1)",
+          background: "rgba(6,8,11,1)",
         }}
       >
         {/* Gradient fade — bleeds upward into the Stage so last card dissolves softly */}
@@ -2903,7 +3046,7 @@ export default function Home() {
             bottom: "100%",
             left: 0, right: 0,
             height: 72,
-            background: "linear-gradient(to bottom, transparent, rgba(7,9,12,0.94))",
+            background: "linear-gradient(to bottom, transparent, rgba(6,8,11,0.96))",
             pointerEvents: "none",
           }}
         />

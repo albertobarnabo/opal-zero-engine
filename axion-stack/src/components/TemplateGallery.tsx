@@ -84,12 +84,12 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
                   borderRadius: 999,
                   cursor: "pointer",
                   background: active
-                    ? "var(--axion-accent, #8b9cf4)"
+                    ? "var(--axion-accent, #a7cadc)"
                     : "rgba(255,255,255,0.07)",
                   border: active
-                    ? "0.5px solid var(--axion-accent, #8b9cf4)"
+                    ? "0.5px solid var(--axion-accent, #a7cadc)"
                     : "0.5px solid rgba(255,255,255,0.12)",
-                  color: active ? "#000" : "rgba(255,255,255,0.50)",
+                  color: active ? "var(--axion-accent-fg, #07090c)" : "rgba(255,255,255,0.50)",
                   transition: "background 0.15s, color 0.15s",
                 }}
               >
@@ -115,17 +115,17 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
               onMouseLeave={() => setHoveredId(null)}
               style={{
                 textAlign: "left",
-                borderRadius: 16,
+                borderRadius: 14,
                 padding: "20px 22px",
-                background:
-                  hoveredId === tpl.id
-                    ? "rgba(255,255,255,0.09)"
-                    : "rgba(255,255,255,0.055)",
-                border: "1px solid rgba(255,255,255,0.11)",
-                backdropFilter: "blur(64px)",
-                WebkitBackdropFilter: "blur(64px)",
+                background: hoveredId === tpl.id
+                  ? "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))"
+                  : "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
+                border: "1px solid rgba(255,255,255,0.08)",
+                backdropFilter: "blur(28px) saturate(130%)",
+                WebkitBackdropFilter: "blur(28px) saturate(130%)",
+                boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 20px 40px -15px rgba(0,0,0,0.50)",
                 cursor: "pointer",
-                transition: "background 0.15s",
+                transition: "background 0.18s",
               }}
             >
               {/* Top row: icon + category label */}
@@ -180,7 +180,7 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
               <p
                 style={{
                   fontSize: 11,
-                  color: "var(--axion-accent, #8b9cf4)",
+                  color: "var(--axion-accent, #a7cadc)",
                   marginTop: 12,
                   fontWeight: 500,
                 }}

@@ -16,12 +16,12 @@ export function Timeline({ title, steps }: TimelineProps) {
   return (
     <div
       style={{
-        background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
-        border: "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
-        borderRadius: "var(--axion-radius, 24px)",
-        backdropFilter: "blur(var(--axion-blur, 80px))",
-        WebkitBackdropFilter: "blur(var(--axion-blur, 80px))",
-        boxShadow: "var(--axion-glass-inset, inset 0 1px 0 rgba(255,255,255,0.15), inset 0 0 0 0.5px rgba(255,255,255,0.06))",
+        background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
+        border: "1px solid var(--axion-glass-border, rgba(255,255,255,0.08))",
+        borderRadius: "var(--axion-radius, 14px)",
+        backdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
+        boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 40px 80px -30px rgba(0,0,0,0.65)",
         padding: "var(--axion-pad, 20px)",
       }}
     >
@@ -43,9 +43,9 @@ export function Timeline({ title, steps }: TimelineProps) {
               ? { background: "#34d399", borderColor: "#34d399" }
               : s === "current"
               ? {
-                  background: "var(--axion-accent, #8b9cf4)",
-                  borderColor: "var(--axion-accent, #8b9cf4)",
-                  boxShadow: "0 0 12px var(--axion-glow, rgba(139,156,244,0.5))",
+                  background: "var(--axion-accent, #a7cadc)",
+                  borderColor: "var(--axion-accent, #a7cadc)",
+                  boxShadow: "0 0 12px var(--axion-glow, rgba(167,202,220,0.5))",
                 }
               : { background: "transparent", borderColor: "rgba(255,255,255,0.18)" };
 

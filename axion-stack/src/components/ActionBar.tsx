@@ -88,11 +88,11 @@ async function exportViaServer(missionId: string, format: "md" | "csv" | "html")
 // ── Glass constants ───────────────────────────────────────────────────────────
 
 const GLASS = {
-  background: "rgba(255,255,255,0.05)",
-  border: "1px solid rgba(255,255,255,0.11)",
-  backdropFilter: "blur(40px)",
-  WebkitBackdropFilter: "blur(40px)",
-  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 4px 20px rgba(0,0,0,0.35)",
+  background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
+  border: "1px solid rgba(255,255,255,0.08)",
+  backdropFilter: "blur(28px) saturate(130%)",
+  WebkitBackdropFilter: "blur(28px) saturate(130%)",
+  boxShadow: "0 1px 0 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.05), 0 40px 80px -30px rgba(0,0,0,0.70)",
 } as const;
 
 // ── ActionBar ─────────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ export function ActionBar({
       icon: "⟳",
       label: isRefining ? "Refining…" : (refineOpen ? "Cancel Refine" : "Refine Mission"),
       desc: isRefining ? "Streaming refinement…" : "Add to this mission inline",
-      accent: "#8b9cf4",
+      accent: "var(--axion-accent, #a7cadc)",
       onClick: () => {
         if (!isRefining) setRefineOpen(v => !v);
       },
@@ -180,7 +180,7 @@ export function ActionBar({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.25, duration: 0.35 }}
-      style={{ marginTop: 32, borderRadius: 20, overflow: "hidden", ...GLASS }}
+      style={{ marginTop: 32, borderRadius: 18, overflow: "hidden", ...GLASS }}
     >
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={{
@@ -198,11 +198,11 @@ export function ActionBar({
           <>
             <span style={{
               width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-              background: "var(--axion-accent, #8b9cf4)",
-              boxShadow: "0 0 8px var(--axion-accent, #8b9cf4)",
+              background: "var(--axion-accent, #a7cadc)",
+              boxShadow: "0 0 8px var(--axion-accent, #a7cadc)",
               animation: "neural-pulse 1.4s ease-in-out infinite",
             }} />
-            <span style={{ fontSize: 9, color: "rgba(139,156,244,0.75)", fontWeight: 500 }}>
+            <span style={{ fontSize: 9, color: "rgba(167,202,220,0.75)", fontWeight: 500 }}>
               Refining…
             </span>
           </>
@@ -229,7 +229,7 @@ export function ActionBar({
               borderRight: i < 2 ? "1px solid rgba(255,255,255,0.07)" : "none",
               cursor: isRefining && a.label.startsWith("Refin") ? "default" : "pointer",
               background: refineOpen && a.label.includes("Refine")
-                ? "rgba(139,156,244,0.08)"
+                ? "rgba(167,202,220,0.08)"
                 : "transparent",
               display: "flex",
               alignItems: "flex-start",
@@ -276,7 +276,7 @@ export function ActionBar({
             <div style={{ padding: "16px 20px 18px" }}>
               {/* Sub-header */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <span style={{ width: 20, height: 20, borderRadius: 6, background: "rgba(139,156,244,0.15)", border: "1px solid rgba(139,156,244,0.28)", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b9cf4", fontSize: 11 }}>⟳</span>
+                <span style={{ width: 20, height: 20, borderRadius: 6, background: "rgba(167,202,220,0.15)", border: "1px solid rgba(167,202,220,0.28)", display: "flex", alignItems: "center", justifyContent: "center", color: "#a7cadc", fontSize: 11 }}>⟳</span>
                 <p style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.70)", letterSpacing: "0.04em" }}>
                   Refine this mission
                 </p>
@@ -334,8 +334,8 @@ export function ActionBar({
                     alignSelf: "flex-end",
                     padding: "6px 16px",
                     borderRadius: 9,
-                    background: refineText.trim() ? "var(--axion-accent, #8b9cf4)" : "rgba(255,255,255,0.08)",
-                    color: refineText.trim() ? "#fff" : "rgba(255,255,255,0.28)",
+                    background: refineText.trim() ? "var(--axion-accent, #a7cadc)" : "rgba(255,255,255,0.08)",
+                    color: refineText.trim() ? "var(--axion-accent-fg, #07090c)" : "rgba(255,255,255,0.28)",
                     fontSize: 12,
                     fontWeight: 700,
                     cursor: refineText.trim() ? "pointer" : "default",
@@ -369,9 +369,9 @@ export function ActionBar({
                       fontSize: 11,
                       padding: "4px 10px",
                       borderRadius: 999,
-                      background: "rgba(139,156,244,0.08)",
-                      border: "0.5px solid rgba(139,156,244,0.22)",
-                      color: "rgba(139,156,244,0.70)",
+                      background: "rgba(167,202,220,0.08)",
+                      border: "0.5px solid rgba(167,202,220,0.22)",
+                      color: "rgba(167,202,220,0.70)",
                       cursor: "pointer",
                       transition: "background 0.12s",
                     }}
@@ -394,15 +394,15 @@ export function ActionBar({
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             style={{
-              borderTop: "1px solid rgba(139,156,244,0.15)",
+              borderTop: "1px solid rgba(167,202,220,0.15)",
               padding: "10px 20px",
               display: "flex",
               alignItems: "center",
               gap: 10,
-              background: "rgba(139,156,244,0.04)",
+              background: "rgba(167,202,220,0.04)",
             }}
           >
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--axion-accent,#8b9cf4)", animation: "neural-pulse 1.4s ease-in-out infinite", flexShrink: 0 }} />
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--axion-accent,#a7cadc)", animation: "neural-pulse 1.4s ease-in-out infinite", flexShrink: 0 }} />
             <p style={{ fontSize: 11, color: "rgba(255,255,255,0.50)" }}>
               Refinement in progress — new cards will appear in the bento grid above…
             </p>

@@ -2,23 +2,89 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Base scale — Deep Obsidian background ───────────────────────────────── */
+/* ── Design tokens ───────────────────────────────────────────────────────── */
 :root {
-  --axion-font-main: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Display",
-    ui-sans-serif, system-ui, sans-serif;
-  --axion-font-mono: "SF Mono", "Fira Code", ui-monospace, monospace;
+  /* Fonts */
+  --axion-font-display: var(--font-display, "Space Grotesk"), ui-sans-serif, system-ui, sans-serif;
+  --axion-font-main:    var(--font-sans, "Inter Tight"), ui-sans-serif, system-ui, sans-serif;
+  --axion-font-mono:    var(--font-mono, "JetBrains Mono"), "SF Mono", "Fira Code", ui-monospace, monospace;
+
+  /* Accent — powder blue (matching landing page oklch(82% .045 230)) */
+  --axion-accent:       #a7cadc;
+  --axion-accent-rgb:   167, 202, 220;
+  --axion-accent-fg:    #07090c;
+
+  /* Glass — landing page spec */
+  --axion-blur:         28px;
+  --axion-radius:       14px;
+
+  /* card glass-bg is a gradient (linear-gradient(#ffffff0a, #ffffff04) from landing) */
+  --axion-glass-bg:     linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016));
+  --axion-glass-border: rgba(255, 255, 255, 0.08);
+  /* shadow-glass: top specular + full-ring + deep lift shadow */
+  --axion-glass-inset:  inset 0 1px 0 0 rgba(255,255,255,0.06),
+                        0 0 0 1px rgba(255,255,255,0.05),
+                        0 40px 80px -30px rgba(0,0,0,0.70);
+  --axion-glow:         rgba(167, 202, 220, 0.30);
+  --axion-shadow-glow:  0 0 90px -25px rgba(167, 202, 220, 0.30);
+
+  /* Gradient mesh — matches landing page (CSS Color 4 oklch values) */
+  --axion-gradient-mesh:
+    radial-gradient(at 18% 8%,  rgba(35, 62, 80, 0.55) 0px, transparent 55%),
+    radial-gradient(at 82% 0%,  rgba(28, 52, 68, 0.45) 0px, transparent 60%),
+    radial-gradient(at 65% 95%, rgba(18, 38, 52, 0.60) 0px, transparent 55%);
+
+  /* Surface colours */
+  --axion-bg:           #06080b;
+  --axion-card:         #101418;
+  --axion-popover:      #0c1014;
+  --axion-muted-fg:     #9399a0;
+  --axion-primary:      #ebeff2;
+  --axion-destructive:  #de4f44;
+
+  /* Spacing (overridden by applyDesignTokens) */
+  --axion-pad:          20px;
+  --axion-gap:          28px;
 }
 
+/* ── HTML base ───────────────────────────────────────────────────────────── */
 html {
   font-size: 16px;
   font-family: var(--axion-font-main);
-  background:
-    radial-gradient(ellipse 200% 140% at 30% -10%, #101828 0%, #070910 42%, #030408 100%);
+  background-color: var(--axion-bg);
   min-height: 100%;
 }
 
+/* ── Body — font features + mesh gradient (landing page spec) ────────────── */
 body {
   font-family: var(--axion-font-main);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  background-image: var(--axion-gradient-mesh);
+  background-attachment: fixed;
+}
+
+/* ── Glass utility classes (mirror landing page .glass / .glass-strong) ──── */
+.axion-glass {
+  background: linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016));
+  backdrop-filter: blur(28px) saturate(130%);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.06),
+              0 0 0 1px rgba(255,255,255,0.05),
+              0 40px 80px -30px rgba(0,0,0,0.70);
+}
+
+.axion-glass-strong {
+  background: linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+  backdrop-filter: blur(40px) saturate(150%);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
+  border: 1px solid rgba(255,255,255,0.11);
+  box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.08),
+              0 0 0 1px rgba(255,255,255,0.06),
+              0 40px 80px -30px rgba(0,0,0,0.70);
 }
 
 /* ── Light-Trace border: rotating "racing light" on command bar ──────────── */
@@ -56,9 +122,9 @@ body {
   background: conic-gradient(
     from var(--lt-angle),
     transparent 0%,
-    rgba(var(--axion-accent-rgb, 139,156,244), 0.20) 6%,
+    rgba(var(--axion-accent-rgb, 167,202,220), 0.20) 6%,
     rgba(255,255,255,0.35) 9%,
-    rgba(var(--axion-accent-rgb, 139,156,244), 0.18) 12%,
+    rgba(var(--axion-accent-rgb, 167,202,220), 0.18) 12%,
     transparent 20%
   );
 }
@@ -69,15 +135,15 @@ body {
 /* ── Neural Pulse — active-processing card border ────────────────────────── */
 @keyframes neural-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(var(--axion-accent-rgb, 139,156,244), 0),
+    box-shadow: 0 0 0 0 rgba(var(--axion-accent-rgb, 167,202,220), 0),
                 inset 0 1px 0 rgba(255,255,255,0.12);
-    border-color: rgba(var(--axion-accent-rgb, 139,156,244), 0.30);
+    border-color: rgba(var(--axion-accent-rgb, 167,202,220), 0.30);
   }
   50% {
-    box-shadow: 0 0 0 3px rgba(var(--axion-accent-rgb, 139,156,244), 0.18),
-                0 0 20px rgba(var(--axion-accent-rgb, 139,156,244), 0.14),
+    box-shadow: 0 0 0 3px rgba(var(--axion-accent-rgb, 167,202,220), 0.18),
+                0 0 20px rgba(var(--axion-accent-rgb, 167,202,220), 0.14),
                 inset 0 1px 0 rgba(255,255,255,0.16);
-    border-color: rgba(var(--axion-accent-rgb, 139,156,244), 0.65);
+    border-color: rgba(var(--axion-accent-rgb, 167,202,220), 0.65);
   }
 }
 .axion-neural-pulse {
@@ -100,8 +166,8 @@ body {
 
 /* ── Logo shimmer pulse ───────────────────────────────────────────────────── */
 @keyframes logo-shimmer {
-  0%, 100% { filter: brightness(1) drop-shadow(0 0 0px rgba(200,220,255,0)); }
-  50%       { filter: brightness(1.12) drop-shadow(0 0 18px rgba(180,210,255,0.22)); }
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 0px rgba(167,202,220,0)); }
+  50%       { filter: brightness(1.12) drop-shadow(0 0 18px rgba(167,202,220,0.22)); }
 }
 .axion-logo-pulse {
   animation: logo-shimmer 5s ease-in-out infinite;
@@ -143,7 +209,7 @@ body {
   animation: sheen-pass 1.4s ease-out 0.2s both;
 }
 
-/* ── Ambient mesh gradient blobs ─────────────────────────────────────────── */
+/* ── Ambient mesh gradient blobs (legacy DOM blobs — kept for compat) ───── */
 @keyframes blob-drift-1 {
   0%, 100% { transform: translate(0, 0) scale(1); }
   50%       { transform: translate(60px, -45px) scale(1.08); }
@@ -166,9 +232,9 @@ body {
   position: absolute;
   width: 700px; height: 700px;
   top: -120px; left: -180px;
-  background: radial-gradient(circle, rgba(139,156,244,0.055) 0%, transparent 65%);
+  background: radial-gradient(circle, rgba(167,202,220,0.038) 0%, transparent 65%);
   border-radius: 50%;
-  filter: blur(50px);
+  filter: blur(60px);
   animation: blob-drift-1 20s ease-in-out infinite;
 }
 
@@ -176,9 +242,9 @@ body {
   position: absolute;
   width: 500px; height: 500px;
   bottom: 80px; right: -60px;
-  background: radial-gradient(circle, rgba(15,40,100,0.10) 0%, transparent 65%);
+  background: radial-gradient(circle, rgba(10,30,50,0.10) 0%, transparent 65%);
   border-radius: 50%;
-  filter: blur(70px);
+  filter: blur(80px);
   animation: blob-drift-2 26s ease-in-out infinite;
 }
 
@@ -217,13 +283,13 @@ body {
   0%, 100% {
     box-shadow:
       0 8px 40px rgba(0,0,0,0.60),
-      0 0 28px rgba(var(--axion-accent-rgb, 71,100,160), 0.12);
+      0 0 28px rgba(var(--axion-accent-rgb, 167,202,220), 0.10);
   }
   50% {
     box-shadow:
       0 8px 40px rgba(0,0,0,0.60),
-      0 0 72px rgba(var(--axion-accent-rgb, 71,100,160), 0.38),
-      0 28px 96px rgba(var(--axion-accent-rgb, 71,100,160), 0.14);
+      0 0 72px rgba(var(--axion-accent-rgb, 167,202,220), 0.28),
+      0 28px 96px rgba(var(--axion-accent-rgb, 167,202,220), 0.10);
   }
 }
 
@@ -250,7 +316,7 @@ body {
 }
 
 .axion-refined-card {
-  border-left: 2px solid var(--axion-accent, #8b9cf4) !important;
+  border-left: 2px solid var(--axion-accent, #a7cadc) !important;
   animation: refined-enter 0.42s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
   position: relative;
   overflow: hidden;
@@ -263,7 +329,7 @@ body {
   background: linear-gradient(
     105deg,
     transparent 38%,
-    rgba(var(--axion-accent-rgb, 139,156,244), 0.10) 50%,
+    rgba(var(--axion-accent-rgb, 167,202,220), 0.10) 50%,
     transparent 62%
   );
   pointer-events: none;
@@ -283,17 +349,40 @@ body {
   text-transform: uppercase;
   padding: 2px 7px;
   border-radius: 5px;
-  background: rgba(var(--axion-accent-rgb, 139,156,244), 0.15);
-  border: 0.5px solid rgba(var(--axion-accent-rgb, 139,156,244), 0.35);
-  color: var(--axion-accent, #8b9cf4);
+  background: rgba(var(--axion-accent-rgb, 167,202,220), 0.15);
+  border: 0.5px solid rgba(var(--axion-accent-rgb, 167,202,220), 0.35);
+  color: var(--axion-accent, #a7cadc);
   pointer-events: none;
 }
 
+/* ── Heading style — display font with tight tracking ────────────────────── */
+.axion-heading {
+  font-family: var(--axion-font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+/* ── Mono badge — version / kernel chip (landing page style) ─────────────── */
+.axion-mono-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--axion-accent-rgb, 167,202,220), 0.35);
+  font-family: var(--axion-font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--axion-accent, #a7cadc);
+  background: rgba(var(--axion-accent-rgb, 167,202,220), 0.06);
+}
 
 ::-webkit-scrollbar        { width: 4px; }
 ::-webkit-scrollbar-track  { background: transparent; }
-::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.08); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.07); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
 
 /* ── Typewriter cursor ───────────────────────────────────────────────────── */
 
@@ -301,7 +390,7 @@ body {
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: var(--axion-accent, #8b9cf4);
+  background: var(--axion-accent, #a7cadc);
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: axion-blink 0.9s step-end infinite;

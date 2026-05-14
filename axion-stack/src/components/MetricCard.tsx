@@ -15,12 +15,12 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
     <div
       className="flex flex-col gap-1 h-full"
       style={{
-        background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
-        border: "0.5px solid var(--axion-glass-border, rgba(255,255,255,0.10))",
-        borderRadius: "var(--axion-radius, 24px)",
-        backdropFilter: "blur(var(--axion-blur, 80px))",
-        WebkitBackdropFilter: "blur(var(--axion-blur, 80px))",
-        boxShadow: "var(--axion-glass-inset, inset 0 1px 0 rgba(255,255,255,0.15), inset 0 0 0 0.5px rgba(255,255,255,0.06))",
+        background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
+        border: "1px solid var(--axion-glass-border, rgba(255,255,255,0.08))",
+        borderRadius: "var(--axion-radius, 14px)",
+        backdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
+        boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 40px 80px -30px rgba(0,0,0,0.65)",
         padding: "var(--axion-pad, 20px)",
       }}
     >
@@ -35,7 +35,7 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
           className="text-6xl font-black tabular-nums leading-none tracking-tighter"
           style={{
             fontFamily: "var(--axion-font-main)",
-            background: "linear-gradient(135deg, #f1f5f9 0%, #94a3b8 40%, #e2e8f0 75%, #cbd5e1 100%)",
+            background: "linear-gradient(135deg, #ebeff2 0%, #9399a0 40%, #ebeff2 75%, #c8d4da 100%)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             backgroundClip: "text",
