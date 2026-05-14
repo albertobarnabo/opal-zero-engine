@@ -7,6 +7,17 @@ import remarkGfm from "remark-gfm";
 import { Renderer, UIBlueprint, UIComponent } from "@/components/Renderer";
 import { ActionBar } from "@/components/ActionBar";
 import { TemplateGallery } from "@/components/TemplateGallery";
+import { AxionClient } from "@axion/sdk";
+import type {
+  MissionEvent,
+  TaskStartedEvent,
+  TaskCompletedEvent,
+  TaskFailedEvent,
+  GovernorExpandEvent,
+  MissionCompleteEvent,
+  MissionFailedEvent,
+  AwaitingFeedbackEvent,
+} from "@axion/sdk";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -535,11 +546,7 @@ export default function Home() {
 
   async function deleteMission(id: string) {
     try {
-      const axionKey = localStorage.getItem("axion_api_key");
-      await fetch(`http://localhost:8080/api/v1/missions/${id}`, {
-        method: "DELETE",
-        headers: axionKey ? { "X-Axion-Key": axionKey } : undefined,
-      });
+      await buildClient().missions.delete(id);
     } catch { /* ignore if server is down */ }
     setHistory((prev) => prev.filter((m) => m.id !== id));
     if (activeMissionId === id) newMission();
@@ -547,14 +554,9 @@ export default function Home() {
   }
 
   async function clearAllHistory() {
-    const axionKey = localStorage.getItem("axion_api_key");
+    const client = buildClient();
     await Promise.all(
-      history.map((m) =>
-        fetch(`http://localhost:8080/api/v1/missions/${m.id}`, {
-          method: "DELETE",
-          headers: axionKey ? { "X-Axion-Key": axionKey } : undefined,
-        }).catch(() => {})
-      )
+      history.map((m) => client.missions.delete(m.id).catch(() => {}))
     );
     setHistory([]);
     setHistoryQuery("");
@@ -593,14 +595,12 @@ export default function Home() {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const axionKey = localStorage.getItem("axion_api_key");
-      const res = await fetch("http://localhost:8080/api/v1/missions",
-        axionKey ? { headers: { "X-Axion-Key": axionKey } } : undefined);
-      if (res.ok) setHistory(await res.json());
+      const missions = await buildClient().missions.list();
+      setHistory(missions as MissionSummary[]);
     } catch {
       // Server may not be running yet — ignore.
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
@@ -675,10 +675,7 @@ export default function Home() {
       if (!openai && !storedOpenAI) setSettingsOpen(true);
     }
 
-    const axionKey = localStorage.getItem("axion_api_key");
-    fetch("http://localhost:8080/api/v1/config/status",
-      axionKey ? { headers: { "X-Axion-Key": axionKey } } : undefined)
-      .then((r) => r.json() as Promise<{ openai: boolean; tavily: boolean }>)
+    buildClient().configStatus()
       .then((status) => {
         setConfigStatus(status);
         hydrate(status.openai);
@@ -698,14 +695,8 @@ export default function Home() {
     setShowDetails(false);
 
     try {
-      const axionKey = localStorage.getItem("axion_api_key");
-      const res = await fetch(`http://localhost:8080/api/v1/missions/${id}`,
-        axionKey ? { headers: { "X-Axion-Key": axionKey } } : undefined);
-      const data = await res.json();
-      if (!res.ok) {
-        setFetchError(data.error ?? "Failed to load mission.");
-        return;
-      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await buildClient().missions.get(id) as any;
 
       const cards: Record<string, StreamCard> = {};
       const order: string[] = [];
@@ -805,6 +796,16 @@ export default function Home() {
     }
   }
 
+  /** Builds a fully-configured AxionClient from current localStorage keys. */
+  function buildClient(): AxionClient {
+    return new AxionClient({
+      baseUrl:   "http://localhost:8080",
+      apiKey:    localStorage.getItem("axion_api_key")    ?? undefined,
+      openAiKey: localStorage.getItem("axion_openai_key") ?? undefined,
+      tavilyKey: localStorage.getItem("axion_tavily_key") ?? undefined,
+    });
+  }
+
   async function runMission() {
     if (!intent.trim() || missionStatus === "streaming") return;
 
@@ -829,179 +830,144 @@ export default function Home() {
     setTraceOpen(false);
     taskStartTimes.current = {};
 
-    function handleSSEEvent(eventType: string, raw: string) {
-      try {
-        const p = JSON.parse(raw);
-        const now = Date.now();
-        switch (eventType) {
-          case "task_started":
-            setStreamCards((prev) => ({
-              ...prev,
-              [p.slug]: { slug: p.slug, role: p.role, intent: p.intent, status: "running" },
-            }));
-            setCardOrder((prev) => (prev.includes(p.slug) ? prev : [...prev, p.slug]));
-            setActiveAgent({ role: p.role, intent: p.intent });
-            taskStartTimes.current[p.slug] = now;
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-${p.slug}`,
-              timestamp: now,
-              type: "task_started",
-              slug: p.slug,
-              role: p.role,
-              label: `▶ ${p.role} started: ${String(p.intent ?? "").slice(0, 48)}`,
-            }]);
-            break;
-          case "task_completed": {
-            const durationMs = now - (taskStartTimes.current[p.slug] ?? now);
-            setStreamCards((prev) => ({
-              ...prev,
-              [p.slug]: { ...prev[p.slug], slug: p.slug, role: p.role, status: "completed", result: p.result },
-            }));
-            setActiveAgent(null);
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-${p.slug}-done`,
-              timestamp: now,
-              type: "task_completed",
-              slug: p.slug,
-              role: p.role,
-              label: `✓ ${p.role} completed in ${durationMs}ms`,
-              durationMs,
-            }]);
-            break;
-          }
-          case "task_failed":
-            setStreamCards((prev) => ({ ...prev, [p.slug]: { ...prev[p.slug], status: "failed" } }));
-            setActiveAgent(null);
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-${p.slug}-fail`,
-              timestamp: now,
-              type: "task_failed",
-              slug: p.slug,
-              role: p.role,
-              label: `✗ ${p.role ?? p.slug} failed: ${String(p.intent ?? "").slice(0, 48)}`,
-            }]);
-            break;
-          case "governor_expand":
-            setGovernorBanner(`🔭 Governor expanding mission with ${p.new_task_count} new task(s)`);
-            setTimeout(() => setGovernorBanner(null), 6000);
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-governor`,
-              timestamp: now,
-              type: "governor_expand",
-              label: `· governor_expand (+${p.new_task_count} tasks)`,
-            }]);
-            break;
-          case "mission_complete":
-            setMissionMeta({
-              task_count: p.task_count,
-              expanded_task_count: p.expanded_task_count,
-              mission_id: p.mission_id,
-              intent: p.intent,
-              layout_hint: p.layout_hint,
-            });
-            if (p.mission_state?.data_payload) {
-              setMissionState(p.mission_state as MissionState);
-              setShowDetails(false);
-            } else {
-              setShowDetails(true);
-            }
-            setMissionStatus("complete");
-            showMissionNotification("complete", intent);
-            setActiveAgent(null);
-            fetchHistory();
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-mission-complete`,
-              timestamp: now,
-              type: "mission_complete",
-              label: "◉ Mission complete",
-            }]);
-            break;
-          case "mission_failed":
-            setFetchError(p.error);
-            setMissionStatus("failed");
-            showMissionNotification("failed", intent);
-            setActiveAgent(null);
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-mission-failed`,
-              timestamp: now,
-              type: "mission_failed",
-              label: "◉ Mission failed",
-            }]);
-            break;
-          default:
-            setTraceEvents((prev) => [...prev, {
-              id: `${now}-${eventType}`,
-              timestamp: now,
-              type: eventType,
-              label: `· ${eventType}`,
-            }]);
+    function handleSSEEvent(event: MissionEvent) {
+      const now = Date.now();
+      switch (event.type) {
+        case "task_started": {
+          const e = event as TaskStartedEvent;
+          setStreamCards((prev) => ({
+            ...prev,
+            [e.slug]: { slug: e.slug, role: e.role, intent: e.intent, status: "running" },
+          }));
+          setCardOrder((prev) => (prev.includes(e.slug) ? prev : [...prev, e.slug]));
+          setActiveAgent({ role: e.role, intent: e.intent });
+          taskStartTimes.current[e.slug] = now;
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-${e.slug}`,
+            timestamp: now,
+            type: "task_started",
+            slug: e.slug,
+            role: e.role,
+            label: `▶ ${e.role} started: ${e.intent.slice(0, 48)}`,
+          }]);
+          break;
         }
-      } catch {
-        // Ignore malformed events.
+        case "task_completed": {
+          const e = event as TaskCompletedEvent;
+          const durationMs = now - (taskStartTimes.current[e.slug] ?? now);
+          setStreamCards((prev) => ({
+            ...prev,
+            [e.slug]: { ...prev[e.slug], slug: e.slug, role: e.role, status: "completed", result: e.result },
+          }));
+          setActiveAgent(null);
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-${e.slug}-done`,
+            timestamp: now,
+            type: "task_completed",
+            slug: e.slug,
+            role: e.role,
+            label: `✓ ${e.role} completed in ${durationMs}ms`,
+            durationMs,
+          }]);
+          break;
+        }
+        case "task_failed": {
+          const e = event as TaskFailedEvent;
+          setStreamCards((prev) => ({ ...prev, [e.slug]: { ...prev[e.slug], status: "failed" } }));
+          setActiveAgent(null);
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-${e.slug}-fail`,
+            timestamp: now,
+            type: "task_failed",
+            slug: e.slug,
+            role: e.role,
+            label: `✗ ${e.role ?? e.slug} failed`,
+          }]);
+          break;
+        }
+        case "governor_expand": {
+          const e = event as GovernorExpandEvent;
+          setGovernorBanner(`🔭 Governor expanding mission with ${e.new_task_count} new task(s)`);
+          setTimeout(() => setGovernorBanner(null), 6000);
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-governor`,
+            timestamp: now,
+            type: "governor_expand",
+            label: `· governor_expand (+${e.new_task_count} tasks)`,
+          }]);
+          break;
+        }
+        case "mission_complete": {
+          const e = event as MissionCompleteEvent;
+          setMissionMeta({
+            task_count: e.task_count,
+            expanded_task_count: e.expanded_task_count,
+            mission_id: e.mission_id,
+            intent: e.intent,
+            layout_hint: e.layout_hint,
+          });
+          if (e.mission_state?.data_payload) {
+            setMissionState(e.mission_state as unknown as MissionState);
+            setShowDetails(false);
+          } else {
+            setShowDetails(true);
+          }
+          setMissionStatus("complete");
+          showMissionNotification("complete", intent);
+          setActiveAgent(null);
+          fetchHistory();
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-mission-complete`,
+            timestamp: now,
+            type: "mission_complete",
+            label: "◉ Mission complete",
+          }]);
+          break;
+        }
+        case "mission_failed": {
+          const e = event as MissionFailedEvent;
+          setFetchError(e.error);
+          setMissionStatus("failed");
+          showMissionNotification("failed", intent);
+          setActiveAgent(null);
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-mission-failed`,
+            timestamp: now,
+            type: "mission_failed",
+            label: "◉ Mission failed",
+          }]);
+          break;
+        }
+        default:
+          setTraceEvents((prev) => [...prev, {
+            id: `${now}-${event.type}`,
+            timestamp: now,
+            type: event.type as string,
+            label: `· ${event.type}`,
+          }]);
       }
     }
 
+    // Inject vision / data-file tool hints when an attachment is present
+    const effectiveIntent = uploadedFile
+      ? uploadedFile.fileType === "image"
+        ? `${intent}\n\n[Image attached: ${uploadedFile.filename}. Use the vision tool to analyse this image as part of your research.]`
+        : `${intent}\n\n[Data file attached: ${uploadedFile.filename} (original: ${uploadedFile.originalName}). Use the read_file tool with filename="${uploadedFile.filename}" to load its contents before analysis.]`
+      : intent;
+
+    // Snapshot the attachment so we can release it on the first event (server accepted)
+    const pendingAttachment = uploadedFile;
+    let attachmentReleased = false;
+
     try {
-      // Inject vision tool hint when an image has been attached
-      const effectiveIntent = uploadedFile
-        ? uploadedFile.fileType === "image"
-          ? `${intent}\n\n[Image attached: ${uploadedFile.filename}. Use the vision tool to analyse this image as part of your research.]`
-          : `${intent}\n\n[Data file attached: ${uploadedFile.filename} (original: ${uploadedFile.originalName}). Use the read_file tool with filename="${uploadedFile.filename}" to load its contents before analysis.]`
-        : intent;
-
-      const reqHeaders: Record<string, string> = { "Content-Type": "application/json" };
-      const storedAxionKey = localStorage.getItem("axion_api_key");
-      const storedOpenAI = localStorage.getItem("axion_openai_key");
-      const storedTavily = localStorage.getItem("axion_tavily_key");
-      if (storedAxionKey) reqHeaders["X-Axion-Key"] = storedAxionKey;
-      if (storedOpenAI) reqHeaders["X-OpenAI-Key"] = storedOpenAI;
-      if (storedTavily) reqHeaders["X-Tavily-Key"] = storedTavily;
-
-      const res = await fetch("http://localhost:8080/api/v1/execute", {
-        method: "POST",
-        headers: reqHeaders,
-        body: JSON.stringify({ intent: effectiveIntent }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setFetchError((err as { error?: string }).error ?? `Server error ${res.status}`);
-        setMissionStatus("failed");
-        return;
-      }
-
-      if (!res.body) {
-        setFetchError("No response body from server.");
-        setMissionStatus("failed");
-        return;
-      }
-
-      // Mission accepted by the server — release the attachment
-      if (uploadedFile) {
-        if (uploadedFile.previewUrl) URL.revokeObjectURL(uploadedFile.previewUrl);
-setUploadedFile(null);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-        for (const chunk of chunks) {
-          if (!chunk.trim()) continue;
-          let eventType = "";
-          let data = "";
-          for (const line of chunk.split("\n")) {
-            if (line.startsWith("event: ")) eventType = line.slice(7).trim();
-            else if (line.startsWith("data: ")) data = line.slice(6).trim();
-          }
-          if (eventType && data) handleSSEEvent(eventType, data);
+      for await (const event of buildClient().execute(effectiveIntent)) {
+        // Release the attachment chip as soon as the first event arrives (server accepted)
+        if (!attachmentReleased && pendingAttachment) {
+          attachmentReleased = true;
+          if (pendingAttachment.previewUrl) URL.revokeObjectURL(pendingAttachment.previewUrl);
+          setUploadedFile(null);
         }
+        handleSSEEvent(event);
       }
 
       setMissionStatus((prev) => {
@@ -1038,28 +1004,14 @@ setUploadedFile(null);
     setUploadError(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const uploadAxionKey = localStorage.getItem("axion_api_key");
-      const res = await fetch("http://localhost:8080/api/v1/upload", {
-        method: "POST",
-        headers: uploadAxionKey ? { "X-Axion-Key": uploadAxionKey } : undefined,
-        body: formData,
+      const result = await buildClient().upload(file);
+      const previewUrl = result.file_type === "image" ? URL.createObjectURL(file) : null;
+      setUploadedFile({
+        filename: result.filename,
+        originalName: result.original_name ?? file.name,
+        fileType: result.file_type,
+        previewUrl,
       });
-
-      if (res.ok) {
-        const json = await res.json() as { filename: string; file_type: "image" | "data"; original_name: string };
-        const previewUrl = json.file_type === "image" ? URL.createObjectURL(file) : null;
-        setUploadedFile({
-          filename: json.filename,
-          originalName: json.original_name ?? file.name,
-          fileType: json.file_type ?? (isImage ? "image" : "data"),
-          previewUrl,
-        });
-      } else {
-        setUploadError("Upload failed — try again");
-      }
     } catch {
       setUploadError("Upload failed — try again");
     }
@@ -1082,168 +1034,120 @@ setUploadedFile(null);
     const keysBefore = new Set(Object.keys(missionState?.data_payload ?? {}));
 
     try {
-      const refineHeaders: Record<string, string> = { "Content-Type": "application/json" };
-      const storedAxionKey = localStorage.getItem("axion_api_key");
-      const storedOpenAI = localStorage.getItem("axion_openai_key");
-      const storedTavily = localStorage.getItem("axion_tavily_key");
-      if (storedAxionKey) refineHeaders["X-Axion-Key"] = storedAxionKey;
-      if (storedOpenAI) refineHeaders["X-OpenAI-Key"] = storedOpenAI;
-      if (storedTavily) refineHeaders["X-Tavily-Key"] = storedTavily;
-
-      const res = await fetch(`http://localhost:8080/api/v1/missions/${targetId}/refine`, {
-        method: "POST",
-        headers: refineHeaders,
-        body: JSON.stringify({ intent: refinementIntent }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setRefineError((err as { error?: string }).error ?? `Server error ${res.status}`);
-        setIsRefining(false);
-        return;
-      }
-
-      if (!res.body) {
-        setRefineError("No response body from server.");
-        setIsRefining(false);
-        return;
-      }
-
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer    = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-
-        for (const chunk of chunks) {
-          if (!chunk.trim()) continue;
-          let eventType = "";
-          let data = "";
-          for (const line of chunk.split("\n")) {
-            if (line.startsWith("event: ")) eventType = line.slice(7).trim();
-            else if (line.startsWith("data: ")) data = line.slice(6).trim();
+      for await (const event of buildClient().missions.refine(targetId, refinementIntent)) {
+        const now = Date.now();
+        switch (event.type) {
+          case "task_started": {
+            const e = event as TaskStartedEvent;
+            setStreamCards((prev) => ({
+              ...prev,
+              [e.slug]: { slug: e.slug, role: e.role, intent: e.intent, status: "running" },
+            }));
+            setCardOrder((prev) => (prev.includes(e.slug) ? prev : [...prev, e.slug]));
+            setActiveAgent({ role: e.role, intent: e.intent });
+            taskStartTimes.current[e.slug] = now;
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${e.slug}`,
+              timestamp: now,
+              type: "task_started",
+              slug: e.slug,
+              role: e.role,
+              label: `▶ ${e.role} started: ${e.intent.slice(0, 48)}`,
+            }]);
+            break;
           }
-          if (!eventType || !data) continue;
-
-          try {
-            const p = JSON.parse(data);
-            const now = Date.now();
-            switch (eventType) {
-              case "task_started":
-                setStreamCards((prev) => ({
-                  ...prev,
-                  [p.slug]: { slug: p.slug, role: p.role, intent: p.intent, status: "running" },
-                }));
-                setCardOrder((prev) => (prev.includes(p.slug) ? prev : [...prev, p.slug]));
-                setActiveAgent({ role: p.role, intent: p.intent });
-                taskStartTimes.current[p.slug] = now;
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-${p.slug}`,
-                  timestamp: now,
-                  type: "task_started",
-                  slug: p.slug,
-                  role: p.role,
-                  label: `▶ ${p.role} started: ${String(p.intent ?? "").slice(0, 48)}`,
-                }]);
-                break;
-              case "task_completed": {
-                const durationMs = now - (taskStartTimes.current[p.slug] ?? now);
-                setStreamCards((prev) => ({
-                  ...prev,
-                  [p.slug]: { ...prev[p.slug], slug: p.slug, role: p.role, status: "completed", result: p.result },
-                }));
-                setActiveAgent(null);
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-${p.slug}-done`,
-                  timestamp: now,
-                  type: "task_completed",
-                  slug: p.slug,
-                  role: p.role,
-                  label: `✓ ${p.role} completed in ${durationMs}ms`,
-                  durationMs,
-                }]);
-                break;
-              }
-              case "task_failed":
-                setStreamCards((prev) => ({ ...prev, [p.slug]: { ...prev[p.slug], status: "failed" } }));
-                setActiveAgent(null);
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-${p.slug}-fail`,
-                  timestamp: now,
-                  type: "task_failed",
-                  slug: p.slug,
-                  role: p.role,
-                  label: `✗ ${p.role ?? p.slug} failed: ${String(p.intent ?? "").slice(0, 48)}`,
-                }]);
-                break;
-              case "awaiting_feedback":
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-feedback`,
-                  timestamp: now,
-                  type: "awaiting_feedback",
-                  label: "⏸ Awaiting human input",
-                }]);
-                break;
-              case "mission_complete": {
-                const newMissionState = p.mission_state as (typeof missionState) | undefined;
-                if (newMissionState?.data_payload) {
-                  // Compute which payload keys are genuinely new/changed
-                  const keysAfter = new Set(Object.keys(newMissionState.data_payload));
-                  const newKeys   = new Set([...keysAfter].filter(k => !keysBefore.has(k)));
-                  setRefinedPayloadKeys(newKeys);
-                  setMissionState(newMissionState);
-
-                  // Record this round in the history
-                  setRefinementHistory((prev) => [
-                    ...prev,
-                    {
-                      intent: refinementIntent,
-                      timestamp: now,
-                      newPayloadKeys: [...newKeys],
-                    },
-                  ]);
-                }
-                setMissionStatus("complete");
-                showMissionNotification("complete", refinementIntent);
-                setMissionMeta((prev) => prev
-                  ? { ...prev, task_count: p.task_count ?? prev.task_count }
-                  : prev
-                );
-                setActiveAgent(null);
-                fetchHistory();
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-mission-complete`,
-                  timestamp: now,
-                  type: "mission_complete",
-                  label: "◉ Mission complete",
-                }]);
-                break;
-              }
-              case "mission_failed":
-                setRefineError(p.error ?? "Refinement failed.");
-                showMissionNotification("failed", refinementIntent);
-                setActiveAgent(null);
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-mission-failed`,
-                  timestamp: now,
-                  type: "mission_failed",
-                  label: "◉ Mission failed",
-                }]);
-                break;
-              default:
-                setTraceEvents((prev) => [...prev, {
-                  id: `${now}-${eventType}`,
-                  timestamp: now,
-                  type: eventType,
-                  label: `· ${eventType}`,
-                }]);
+          case "task_completed": {
+            const e = event as TaskCompletedEvent;
+            const durationMs = now - (taskStartTimes.current[e.slug] ?? now);
+            setStreamCards((prev) => ({
+              ...prev,
+              [e.slug]: { ...prev[e.slug], slug: e.slug, role: e.role, status: "completed", result: e.result },
+            }));
+            setActiveAgent(null);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${e.slug}-done`,
+              timestamp: now,
+              type: "task_completed",
+              slug: e.slug,
+              role: e.role,
+              label: `✓ ${e.role} completed in ${durationMs}ms`,
+              durationMs,
+            }]);
+            break;
+          }
+          case "task_failed": {
+            const e = event as TaskFailedEvent;
+            setStreamCards((prev) => ({ ...prev, [e.slug]: { ...prev[e.slug], status: "failed" } }));
+            setActiveAgent(null);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${e.slug}-fail`,
+              timestamp: now,
+              type: "task_failed",
+              slug: e.slug,
+              role: e.role,
+              label: `✗ ${e.role ?? e.slug} failed`,
+            }]);
+            break;
+          }
+          case "awaiting_feedback": {
+            const _e = event as AwaitingFeedbackEvent;
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-feedback`,
+              timestamp: now,
+              type: "awaiting_feedback",
+              label: "⏸ Awaiting human input",
+            }]);
+            break;
+          }
+          case "mission_complete": {
+            const e = event as MissionCompleteEvent;
+            const newMissionState = e.mission_state as (typeof missionState) | undefined;
+            if (newMissionState?.data_payload) {
+              const keysAfter = new Set(Object.keys(newMissionState.data_payload));
+              const newKeys   = new Set([...keysAfter].filter(k => !keysBefore.has(k)));
+              setRefinedPayloadKeys(newKeys);
+              setMissionState(newMissionState);
+              setRefinementHistory((prev) => [
+                ...prev,
+                { intent: refinementIntent, timestamp: now, newPayloadKeys: [...newKeys] },
+              ]);
             }
-          } catch { /* ignore malformed events */ }
+            setMissionStatus("complete");
+            showMissionNotification("complete", refinementIntent);
+            setMissionMeta((prev) => prev
+              ? { ...prev, task_count: e.task_count ?? prev.task_count }
+              : prev
+            );
+            setActiveAgent(null);
+            fetchHistory();
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-mission-complete`,
+              timestamp: now,
+              type: "mission_complete",
+              label: "◉ Mission complete",
+            }]);
+            break;
+          }
+          case "mission_failed": {
+            const e = event as MissionFailedEvent;
+            setRefineError(e.error ?? "Refinement failed.");
+            showMissionNotification("failed", refinementIntent);
+            setActiveAgent(null);
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-mission-failed`,
+              timestamp: now,
+              type: "mission_failed",
+              label: "◉ Mission failed",
+            }]);
+            break;
+          }
+          default:
+            setTraceEvents((prev) => [...prev, {
+              id: `${now}-${event.type}`,
+              timestamp: now,
+              type: event.type as string,
+              label: `· ${event.type}`,
+            }]);
         }
       }
     } catch (e) {
@@ -1285,15 +1189,15 @@ setUploadedFile(null);
   // ── Slash commands ────────────────────────────────────────────────────────────
   const SLASH_COMMANDS = [
     { cmd: "/export md",   icon: "↓", desc: "Download mission results as Markdown",  accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { const k=localStorage.getItem("axion_api_key"); fetch(`http://localhost:8080/api/v1/missions/${id}/export?format=md`,k?{headers:{"X-Axion-Key":k}}:undefined).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "md").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/export csv",  icon: "↓", desc: "Download mission results as CSV",        accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { const k=localStorage.getItem("axion_api_key"); fetch(`http://localhost:8080/api/v1/missions/${id}/export?format=csv`,k?{headers:{"X-Axion-Key":k}}:undefined).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "csv").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/export html", icon: "↓", desc: "Download mission results as HTML page",  accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { const k=localStorage.getItem("axion_api_key"); fetch(`http://localhost:8080/api/v1/missions/${id}/export?format=html`,k?{headers:{"X-Axion-Key":k}}:undefined).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "html").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/clear",       icon: "✕", desc: "Clear the current mission and start fresh", accent: "#f87171", category: "mission" as const,
       run: () => { newMission(); } },
     { cmd: "/memo",        icon: "◈", desc: "Save a note about this mission",         accent: "#a7cadc", category: "memo"    as const,
-      run: () => { const note = intent.replace(/^\/memo\s*/i, "").trim() || "No content"; const k=localStorage.getItem("axion_api_key"); fetch("http://localhost:8080/api/v1/execute",{method:"POST",headers:{"Content-Type":"application/json",...(k?{"X-Axion-Key":k}:{})},body:JSON.stringify({intent:`Save a memo: "${note}"`})}); newMission(); } },
+      run: () => { const note = intent.replace(/^\/memo\s*/i, "").trim() || "No content"; void (async () => { for await (const _ of buildClient().execute(`Save a memo: "${note}"`)) { break; } })(); newMission(); } },
   ];
 
   const filteredSlash = slashQuery !== null
