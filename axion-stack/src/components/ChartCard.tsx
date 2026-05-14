@@ -52,19 +52,25 @@ function CustomTooltip({ active, payload, label }: any) {
   return (
     <div
       style={{
-        background: "rgba(8,12,28,0.88)",
-        border: "0.5px solid rgba(255,255,255,0.12)",
+        background: "var(--axion-card, rgba(10,14,20,0.97))",
+        border: "1px solid rgba(255,255,255,0.10)",
         borderRadius: "10px",
         padding: "8px 12px",
+        fontSize: 12,
+        color: "rgba(255,255,255,0.85)",
         backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
       }}
     >
-      <p className="text-[11px] font-semibold mb-1" style={{ color: "rgba(255,255,255,0.5)" }}>
+      <p style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "rgba(255,255,255,0.50)" }}>
         {label}
       </p>
       {payload.map((entry: { name: string; value: number; color: string }, i: number) => (
-        <p key={i} className="text-xs font-mono" style={{ color: entry.color }}>
-          {entry.name}: {typeof entry.value === "number" ? entry.value.toLocaleString() : entry.value}
+        <p key={i} style={{ fontFamily: "var(--axion-font-mono, monospace)", fontSize: 12, color: entry.color }}>
+          {entry.name}:{" "}
+          <span style={{ color: "rgba(255,255,255,0.85)" }}>
+            {typeof entry.value === "number" ? entry.value.toLocaleString() : entry.value}
+          </span>
         </p>
       ))}
     </div>
@@ -124,7 +130,11 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
               tickLine={false}
               width={36}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ stroke: "rgba(255,255,255,0.06)" }} />
+            <Tooltip
+              content={<CustomTooltip />}
+              cursor={{ stroke: "rgba(255,255,255,0.06)" }}
+              wrapperStyle={{ boxShadow: "none", outline: "none" }}
+            />
             {resolvedDataKeys.map((key, i) => (
               <Area
                 key={key}
@@ -153,7 +163,11 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
               tickLine={false}
               width={36}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+            <Tooltip
+              content={<CustomTooltip />}
+              cursor={{ fill: "rgba(255,255,255,0.04)" }}
+              wrapperStyle={{ boxShadow: "none", outline: "none" }}
+            />
             {resolvedDataKeys.map((key, i) => (
               <Bar
                 key={key}
