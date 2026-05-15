@@ -1,0 +1,38 @@
+# Required secret (GitHub → Settings → Secrets → Actions):
+#   PYPI_TOKEN — PyPI API token scoped to the axion-sdk project.
+
+name: Publish Python SDK to PyPI
+
+on:
+  push:
+    tags:
+      - 'sdk-py-v*'   # e.g. sdk-py-v1.0.0 — any other tag is ignored
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: axion-py
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"        # e.g. sdk-py-v1.2.3
+          VERSION="${TAG#sdk-py-v}"       # strip prefix → 1.2.3
+          sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
+
+      - run: pip install hatch
+
+      - run: hatch build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: axion-py/dist/
+          password: ${{ secrets.PYPI_TOKEN }}
