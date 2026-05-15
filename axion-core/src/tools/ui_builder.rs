@@ -43,9 +43,17 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
                 if !salvaged.is_empty() {
                     args.structured_data_payload = serde_json::Value::Object(salvaged);
                 } else {
-                    // Nothing to salvage — use the summary as a fallback entry.
+                    // Nothing to salvage — surface a visible notice on the dashboard
+                    // so the user knows why the grid is empty rather than seeing a blank screen.
                     let mut fallback = serde_json::Map::new();
                     fallback.insert("summary".into(), serde_json::Value::String(args.summary.clone()));
+                    fallback.insert(
+                        "_notice".into(),
+                        serde_json::Value::String(
+                            "The agent did not populate structured_data_payload. \
+                             Refine this mission for better results.".into(),
+                        ),
+                    );
                     args.structured_data_payload = serde_json::Value::Object(fallback);
                 }
             }

@@ -191,6 +191,27 @@ function formatKey(key: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Humanize a snake_case payload key into a readable label with unit suffixes. */
+function humanizeKey(key: string): string {
+  const unitMap: Record<string, string> = {
+    "_usd": " (USD)", "_eur": " (EUR)", "_pct": " (%)",
+    "_gbp": " (GBP)", "_count": "", "_rate": " Rate",
+  };
+  let label = key.toLowerCase();
+  let unit = "";
+  for (const [suffix, replacement] of Object.entries(unitMap)) {
+    if (label.endsWith(suffix)) {
+      label = label.slice(0, -suffix.length);
+      unit = replacement;
+      break;
+    }
+  }
+  return label
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ") + unit;
+}
+
 const TEMPORAL_KEYS = ["date", "time", "month", "year", "week", "day", "quarter", "period", "timestamp"];
 const IMAGE_KEYS    = ["visual", "image", "photo", "scene", "render", "illustration", "picture"];
 
@@ -225,7 +246,9 @@ function applicationMapper(
 
   for (const [key, value] of Object.entries(payload)) {
     if (value === null || value === undefined) continue;
-    const label = formatKey(key);
+    // Skip special keys handled outside the grid (sources pills, conflict banner)
+    if (key === "sources" || key === "data_conflicts") continue;
+    const label = humanizeKey(key);
     const lk = key.toLowerCase();
 
     const hintType = hintMap.get(key);
@@ -274,7 +297,7 @@ function applicationMapper(
         );
         components.push({
           component_type: "ComparisonTable",
-          props: { title: label, headers: headers.map(formatKey), rows },
+          props: { title: label, headers: headers.map(humanizeKey), rows },
         });
         continue;
       }
@@ -306,7 +329,7 @@ function applicationMapper(
       });
       if (numericEntries.length > 2) {
         const chartData = numericEntries.map(([k, v]) => ({
-          metric: formatKey(k),
+          metric: humanizeKey(k),
           value: typeof v === "number" ? v : Number(v),
         }));
         components.push({
@@ -316,7 +339,7 @@ function applicationMapper(
         continue;
       }
 
-      const rows = Object.entries(obj).map(([k, v]) => [formatKey(k), String(v ?? "")]);
+      const rows = Object.entries(obj).map(([k, v]) => [humanizeKey(k), String(v ?? "")]);
       if (rows.length > 0) {
         components.push({
           component_type: "ComparisonTable",
@@ -539,10 +562,25 @@ export default function Home() {
   const [traceOpen, setTraceOpen] = useState(false);
   const taskStartTimes = useRef<Record<string, number>>({});
 
+  // ── Refine-nav dropdown ────────────────────────────────────────────────────
+  const [refineNavOpen, setRefineNavOpen] = useState(false);
+  const [refineNavText, setRefineNavText] = useState("");
+  const refineNavInputRef = useRef<HTMLTextAreaElement>(null);
+
   // ── History search & clear ─────────────────────────────────────────────────
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyQueryFocused, setHistoryQueryFocused] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  // Auto-focus the refine-nav textarea when the panel opens
+  useEffect(() => {
+    if (refineNavOpen) setTimeout(() => refineNavInputRef.current?.focus(), 80);
+  }, [refineNavOpen]);
+
+  // Close refine-nav panel when a refinement starts streaming
+  useEffect(() => {
+    if (isRefining) setRefineNavOpen(false);
+  }, [isRefining]);
 
   async function deleteMission(id: string) {
     try {
@@ -1668,6 +1706,51 @@ export default function Home() {
   // Badge: shown when OpenAI is not configured via env AND not stored locally
   const showConfigBadge = configStatus?.openai === false && !draftOpenAI.trim();
 
+  // ── Quick chips (idle state) ──────────────────────────────────────────────
+  const QUICK_CHIPS = [
+    { id: "market-sizing",       icon: "📊", label: "Market Sizing",       intent: "Market sizing for [Industry] in [Year]. Estimate TAM, SAM, and SOM with methodology, data sources, and key assumptions." },
+    { id: "competitive-analysis",icon: "🔍", label: "Competitive Analysis", intent: "Competitive analysis: [Your Company/Product] vs its top 3 competitors. Cover positioning, pricing, strengths, weaknesses, and market share." },
+    { id: "investment-thesis",   icon: "📈", label: "Investment Thesis",    intent: "Build an investment thesis for [Company or Asset]. Cover business model, financials, competitive moat, risks, and valuation." },
+    { id: "system-architecture", icon: "🏗️", label: "System Architecture",  intent: "Architect a system for [Problem Description]. Define components, data flows, technology choices, trade-offs, and an implementation roadmap." },
+    { id: "business-plan",       icon: "🚀", label: "Business Plan",        intent: "Create a business plan for [Business Idea]. Cover problem, solution, market, GTM strategy, revenue model, team needs, and 12-month milestones." },
+    { id: "insights-synthesis",  icon: "💡", label: "Insights Synthesis",   intent: "Synthesise research on [Topic] into 5–7 actionable insights. For each insight: evidence, implication, and recommended action." },
+  ];
+
+  // ── Streaming status label (inferred from active agent) ───────────────────
+  const streamingStatus = (() => {
+    if (!hasCards && !activeAgent) return "Planning...";
+    if (activeAgent?.role === "WebSearcher") return "Researching...";
+    if (activeAgent?.role === "Analyst")     return "Analysing...";
+    if (activeAgent?.role === "Coder")       return "Computing...";
+    if (activeAgent?.role === "Planner")     return "Planning...";
+    if (traceEvents.some(e => e.type === "governor_expand")) return "Synthesising...";
+    return "Processing...";
+  })();
+
+  // ── Helper: export mission ───────────────────────────────────────────────
+  function handleExport() {
+    const id = activeMissionId ?? missionMeta?.mission_id;
+    if (id) {
+      buildClient().missions.export(id, "md").then(b => {
+        const u = URL.createObjectURL(b);
+        const a = document.createElement("a");
+        a.href = u; a.download = `axion-${id}.md`; a.click(); URL.revokeObjectURL(u);
+      }).catch(() => missionState && (downloadMarkdownFallback()));
+    }
+  }
+  function downloadMarkdownFallback() {
+    if (!missionState) return;
+    const lines: string[] = [`# Mission Report: ${intent}`, "", `_Generated by Axion — ${new Date().toLocaleDateString()}_`, ""];
+    for (const [key, value] of Object.entries(missionState.data_payload)) {
+      const title = key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      lines.push(`## ${title}`, "", Array.isArray(value) ? value.map(v => `- ${JSON.stringify(v)}`).join("\n") : String(value), "");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `axion-report.md`; a.click(); URL.revokeObjectURL(url);
+  }
+
+
   return (
     <div
       className="text-gray-100"
@@ -1680,65 +1763,903 @@ export default function Home() {
         <div className="axion-mesh-blob-2" />
       </div>
 
-      {/* ── Settings gear button ─────────────────────────────────────────── */}
-      <button
-        onClick={() => setSettingsOpen((v) => !v)}
-        title="Settings"
+      {/* ── Fixed glass nav ───────────────────────────────────────────────── */}
+      <div
         style={{
           position: "fixed",
-          top: 20,
-          right: 24,
-          zIndex: 200,
-          width: 36,
-          height: 36,
-          borderRadius: 10,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "rgba(255,255,255,0.06)",
-          border: "0.5px solid rgba(255,255,255,0.10)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          color: "rgba(255,255,255,0.35)",
-          cursor: "pointer",
-          transition: "color 0.15s, background 0.15s",
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.70)";
-          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.10)";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)";
-          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
+          top: 16,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "min(960px, calc(100% - 2rem))",
+          zIndex: 100,
+          pointerEvents: "none",
         }}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
-                   a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
-                   A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
-                   l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
-                   A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
-                   l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
-                   a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
-                   l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
-                   a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-        {/* Red dot badge — shown when OpenAI is unconfigured */}
-        {showConfigBadge && (
-          <span style={{
-            position: "absolute",
-            top: 5,
-            right: 5,
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: "#f87171",
-            pointerEvents: "none",
-          }} />
+        <div
+          className="axion-glass"
+          style={{
+            borderRadius: 999,
+            height: 54,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 8px 0 20px",
+            pointerEvents: "auto",
+          }}
+        >
+          {/* Left: back link + wordmark */}
+          <a
+            href="https://albertobarnabo.it/axion/"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              color: "rgba(255,255,255,0.82)",
+              textDecoration: "none",
+              fontFamily: "var(--axion-font-display)",
+              fontWeight: 600,
+              fontSize: 15,
+              letterSpacing: "-0.02em",
+              flexShrink: 0,
+              transition: "color 0.15s",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = "rgba(255,255,255,1)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = "rgba(255,255,255,0.82)"; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ opacity: 0.55 }}>
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+            Axion
+          </a>
+
+          {/* Centre: intent text (non-idle) */}
+          <AnimatePresence mode="wait">
+            {!isIdle && intent && (
+              <motion.p
+                key="nav-intent"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={{ duration: 0.2 }}
+                style={{
+                  fontSize: 13,
+                  color: "rgba(255,255,255,0.40)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flex: "0 1 auto",
+                  maxWidth: 340,
+                  letterSpacing: "-0.01em",
+                }}
+              >
+                {intent.length > 58 ? intent.slice(0, 58) + "…" : intent}
+              </motion.p>
+            )}
+          </AnimatePresence>
+
+          {/* Right: action icons */}
+          <div style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
+
+            {/* Refine — complete state only */}
+            {missionStatus === "complete" && missionState && (
+              <motion.button
+                onClick={() => setRefineNavOpen(v => !v)}
+                disabled={isRefining}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "5px 14px",
+                  borderRadius: 999,
+                  background: refineNavOpen
+                    ? "rgba(var(--axion-accent-rgb,167,202,220),0.15)"
+                    : "rgba(255,255,255,0.07)",
+                  border: `0.5px solid ${refineNavOpen
+                    ? "rgba(var(--axion-accent-rgb,167,202,220),0.45)"
+                    : "rgba(255,255,255,0.12)"}`,
+                  color: isRefining
+                    ? "var(--axion-accent,#a7cadc)"
+                    : "rgba(255,255,255,0.72)",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: isRefining ? "default" : "pointer",
+                  transition: "background 0.15s, border-color 0.15s",
+                  marginRight: 2,
+                }}
+              >
+                {isRefining ? (
+                  <div style={{
+                    width: 10, height: 10, borderRadius: "50%",
+                    border: "1.5px solid var(--axion-accent,#a7cadc)",
+                    borderTopColor: "transparent",
+                    animation: "spin 0.8s linear infinite",
+                  }} />
+                ) : "⟳"}
+                {isRefining ? "Refining…" : "Refine"}
+              </motion.button>
+            )}
+
+            {/* Export — complete state only */}
+            {missionStatus === "complete" && missionState && (
+              <button
+                onClick={handleExport}
+                title="Export as Markdown"
+                style={{
+                  width: 34, height: 34, borderRadius: 10,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "rgba(255,255,255,0.06)",
+                  border: "0.5px solid rgba(255,255,255,0.10)",
+                  color: "rgba(255,255,255,0.48)",
+                  cursor: "pointer", fontSize: 14,
+                  transition: "background 0.15s, color 0.15s",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.80)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.10)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.48)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)"; }}
+              >
+                ↓
+              </button>
+            )}
+
+            {/* History */}
+            <button
+              onClick={() => setSidebarOpen(v => !v)}
+              title="Mission history"
+              style={{
+                width: 34, height: 34, borderRadius: 10,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: sidebarOpen ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)",
+                border: "0.5px solid rgba(255,255,255,0.10)",
+                color: sidebarOpen ? "rgba(255,255,255,0.80)" : "rgba(255,255,255,0.48)",
+                cursor: "pointer", fontSize: 15,
+                transition: "background 0.15s, color 0.15s",
+              }}
+            >
+              ◫
+            </button>
+
+            {/* Settings */}
+            <button
+              onClick={() => setSettingsOpen(v => !v)}
+              title="Settings"
+              style={{
+                width: 34, height: 34, borderRadius: 10,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "rgba(255,255,255,0.06)",
+                border: "0.5px solid rgba(255,255,255,0.10)",
+                color: "rgba(255,255,255,0.48)",
+                cursor: "pointer", fontSize: 14,
+                position: "relative",
+                transition: "background 0.15s, color 0.15s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.80)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.10)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.48)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)"; }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+              {showConfigBadge && (
+                <span style={{
+                  position: "absolute", top: 5, right: 5,
+                  width: 6, height: 6, borderRadius: "50%",
+                  background: "#f87171", pointerEvents: "none",
+                }} />
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Refine nav dropdown ───────────────────────────────────────────── */}
+      <AnimatePresence>
+        {refineNavOpen && missionState && (
+          <motion.div
+            key="refine-nav"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18 }}
+            style={{
+              position: "fixed",
+              top: 80,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: "min(640px, calc(100% - 2rem))",
+              zIndex: 99,
+              background: "rgba(7,10,16,0.97)",
+              backdropFilter: "blur(40px) saturate(150%)",
+              WebkitBackdropFilter: "blur(40px) saturate(150%)",
+              border: "1px solid rgba(255,255,255,0.11)",
+              borderRadius: 20,
+              padding: "16px 20px 18px",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.04)",
+            }}
+          >
+            {/* Close on outside click */}
+            <div
+              style={{ position: "fixed", inset: 0, zIndex: -1 }}
+              onClick={() => setRefineNavOpen(false)}
+            />
+            <div style={{ display: "flex", gap: 10 }}>
+              <textarea
+                ref={refineNavInputRef}
+                rows={1}
+                value={refineNavText}
+                onChange={e => {
+                  setRefineNavText(e.target.value);
+                  const el = e.target; el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+                }}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    const t = refineNavText.trim();
+                    if (t) { runRefinement(t); setRefineNavText(""); setRefineNavOpen(false); }
+                  }
+                  if (e.key === "Escape") setRefineNavOpen(false);
+                }}
+                placeholder="What else should this mission explore?"
+                style={{
+                  flex: 1, background: "transparent",
+                  color: "rgba(255,255,255,0.90)", fontSize: 14,
+                  lineHeight: "1.55", outline: "none", resize: "none",
+                  minHeight: 24, maxHeight: 120, overflow: "hidden",
+                  fontFamily: "var(--axion-font-main)",
+                }}
+                className="placeholder-gray-500"
+              />
+              <button
+                onClick={() => {
+                  const t = refineNavText.trim();
+                  if (t) { runRefinement(t); setRefineNavText(""); setRefineNavOpen(false); }
+                }}
+                disabled={!refineNavText.trim()}
+                style={{
+                  alignSelf: "flex-end", padding: "6px 16px", borderRadius: 9,
+                  background: refineNavText.trim() ? "var(--axion-accent,#a7cadc)" : "rgba(255,255,255,0.08)",
+                  color: refineNavText.trim() ? "var(--axion-accent-fg,#07090c)" : "rgba(255,255,255,0.28)",
+                  fontSize: 12, fontWeight: 700,
+                  cursor: refineNavText.trim() ? "pointer" : "default",
+                  transition: "background 0.15s, color 0.15s",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                Refine →
+              </button>
+            </div>
+            <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {["Compare alternatives side-by-side", "Add cost breakdown", "Include recent news", "Summarise key risks"].map(s => (
+                <button key={s} onClick={() => setRefineNavText(s)}
+                  style={{
+                    fontSize: 11, padding: "4px 10px", borderRadius: 999,
+                    background: "rgba(167,202,220,0.08)",
+                    border: "0.5px solid rgba(167,202,220,0.22)",
+                    color: "rgba(167,202,220,0.70)", cursor: "pointer",
+                    transition: "background 0.12s",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(167,202,220,0.15)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(167,202,220,0.08)"; }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            {refineError && (
+              <p style={{ marginTop: 8, fontSize: 11, color: "#f87171" }}>⚠ {refineError}</p>
+            )}
+          </motion.div>
         )}
-      </button>
+      </AnimatePresence>
+
+      {/* ── Main scrollable stage ─────────────────────────────────────────── */}
+      <div
+        ref={stageRef}
+        style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", position: "relative", zIndex: 1 }}
+      >
+
+        {/* ── IDLE STATE ──────────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isIdle && (
+            <motion.div
+              key="idle-root"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.28 }}
+              style={{
+                minHeight: "100vh",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "80px 24px 48px",
+                textAlign: "center",
+              }}
+            >
+              {/* Version badge */}
+              <motion.span
+                className="axion-mono-badge"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.06, duration: 0.3 }}
+                style={{ marginBottom: 28 }}
+              >
+                Kernel v0.1 · Alpha
+              </motion.span>
+
+              {/* Wordmark — landing page spec: Space Grotesk 400 */}
+              <motion.h1
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.12, duration: 0.4 }}
+                style={{
+                  fontFamily: "var(--axion-font-display)",
+                  fontSize: "clamp(4rem, 10vw, 7rem)",
+                  fontWeight: 400,
+                  letterSpacing: "-0.025em",
+                  lineHeight: 1.02,
+                  color: "rgba(235,239,242,0.96)",
+                  marginBottom: 16,
+                }}
+              >
+                Axion
+              </motion.h1>
+
+              {/* Tagline */}
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.20, duration: 0.4 }}
+                style={{
+                  fontSize: 18,
+                  color: "rgba(147,153,160,0.78)",
+                  letterSpacing: "-0.01em",
+                  fontWeight: 400,
+                  maxWidth: 440,
+                  lineHeight: 1.55,
+                  marginBottom: 40,
+                }}
+              >
+                The headless intelligence kernel. Synthesize intent into verified, structured state.
+              </motion.p>
+
+              {/* Command bar — centered, max-width 680 */}
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.26, duration: 0.38 }}
+                style={{ width: "100%", maxWidth: 680 }}
+              >
+                {commandBarContent}
+              </motion.div>
+
+              {/* Quick-start chips */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.36, duration: 0.38 }}
+                style={{
+                  marginTop: 18,
+                  display: "flex",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                  maxWidth: 680,
+                }}
+              >
+                {QUICK_CHIPS.map(chip => (
+                  <button
+                    key={chip.id}
+                    onClick={() => { setIntent(chip.intent); setTimeout(() => textareaRef.current?.focus(), 50); }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "7px 15px",
+                      borderRadius: 999,
+                      cursor: "pointer",
+                      background: "rgba(255,255,255,0.048)",
+                      border: "0.5px solid rgba(255,255,255,0.10)",
+                      color: "rgba(255,255,255,0.52)",
+                      fontSize: 12,
+                      fontWeight: 500,
+                      backdropFilter: "blur(8px)",
+                      WebkitBackdropFilter: "blur(8px)",
+                      transition: "background 0.15s, color 0.15s, border-color 0.15s",
+                    }}
+                    onMouseEnter={e => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.background = "rgba(255,255,255,0.09)";
+                      el.style.color = "rgba(255,255,255,0.82)";
+                      el.style.borderColor = "rgba(255,255,255,0.18)";
+                    }}
+                    onMouseLeave={e => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.background = "rgba(255,255,255,0.048)";
+                      el.style.color = "rgba(255,255,255,0.52)";
+                      el.style.borderColor = "rgba(255,255,255,0.10)";
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{chip.icon}</span>
+                    {chip.label}
+                  </button>
+                ))}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── STREAMING STATE ─────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isStreaming && (
+            <motion.div
+              key="streaming-root"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+              style={{
+                minHeight: "100vh",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 22,
+                padding: "86px 24px 48px",
+                textAlign: "center",
+              }}
+            >
+              {/* Pulsing spinner */}
+              <div style={{
+                width: 52, height: 52, borderRadius: "50%",
+                border: "2px solid rgba(167,202,220,0.25)",
+                borderTopColor: "var(--axion-accent,#a7cadc)",
+                animation: "spin 1.1s linear infinite",
+                boxShadow: "0 0 28px rgba(167,202,220,0.18)",
+              }} />
+
+              {/* Intent text */}
+              <p style={{
+                fontSize: "clamp(1rem, 2.5vw, 1.35rem)",
+                fontWeight: 500,
+                color: "rgba(235,239,242,0.82)",
+                maxWidth: 520,
+                lineHeight: 1.45,
+                letterSpacing: "-0.02em",
+                fontFamily: "var(--axion-font-display)",
+              }}>
+                {intent}
+              </p>
+
+              {/* Cycling status */}
+              <AnimatePresence mode="wait">
+                <motion.p
+                  key={streamingStatus}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.2 }}
+                  style={{
+                    fontSize: 13,
+                    color: "var(--axion-accent,#a7cadc)",
+                    fontWeight: 400,
+                    letterSpacing: "0.04em",
+                    opacity: 0.70,
+                  }}
+                >
+                  {streamingStatus}
+                </motion.p>
+              </AnimatePresence>
+
+              {/* Governor expand banner */}
+              {governorBanner && (
+                <p style={{ fontSize: 12, color: "rgba(167,202,220,0.55)", maxWidth: 380 }}>
+                  {governorBanner}
+                </p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── COMPLETE STATE ──────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {missionStatus === "complete" && (
+            <motion.div
+              key="complete-root"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35 }}
+              style={{ paddingTop: 86, paddingBottom: 72 }}
+            >
+              {/* Fetch error */}
+              {fetchError && (
+                <div style={{ maxWidth: 720, margin: "0 auto 24px", padding: "0 24px" }}>
+                  <div style={{
+                    borderRadius: 14,
+                    background: "rgba(220,38,38,0.08)",
+                    border: "1px solid rgba(220,38,38,0.25)",
+                    padding: "14px 18px",
+                  }}>
+                    <p style={{ fontSize: 13, color: "#fca5a5" }}>❌ {fetchError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Bento grid */}
+              {missionState && (() => {
+                const blueprint = applicationMapper(
+                  missionState.data_payload,
+                  missionState.suggested_widgets ?? [],
+                  missionState.design_tokens?.layout_strategy,
+                );
+                return blueprint.components.length > 0 ? (
+                  <div
+                    className={missionStatus === "complete" && !isRefining ? "axion-sheen-wrapper" : ""}
+                    style={{ padding: "0 24px", maxWidth: 1280, margin: "0 auto" }}
+                  >
+                    {/* Sources pill row */}
+                    {Array.isArray((missionState.data_payload as Record<string, unknown>).sources) && (() => {
+                      const sources = (missionState.data_payload as Record<string, unknown>).sources as { label: string; url: string }[];
+                      if (sources.length === 0) return null;
+                      return (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
+                          {sources.map((s, si) => (
+                            <a
+                              key={si}
+                              href={s.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="axion-source-pill"
+                            >
+                              {s.label} ↗
+                            </a>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+                    <Renderer
+                      blueprint={blueprint}
+                      pinnedCards={pinnedCards}
+                      dismissedCards={dismissedCards}
+                      refinedIndices={(() => {
+                        const idxSet = new Set<number>();
+                        if (refinedPayloadKeys.size > 0) {
+                          blueprint.components.forEach((c, idx) => {
+                            const title = (c.props.title as string | undefined) ?? "";
+                            for (const key of refinedPayloadKeys) {
+                              const fk = key.replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+                              if (title === fk || title.toLowerCase().includes(key.toLowerCase())) idxSet.add(idx);
+                            }
+                          });
+                        }
+                        return idxSet;
+                      })()}
+                      onPin={i => setPinnedCards(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; })}
+                      onDismiss={i => {
+                        if (i < 0) setDismissedCards(new Set());
+                        else setDismissedCards(prev => { const n = new Set(prev); n.add(i); return n; });
+                      }}
+                    />
+
+                    {/* Data conflicts banner */}
+                    {Array.isArray((missionState.data_payload as Record<string, unknown>).data_conflicts) && (() => {
+                      const conflicts = (missionState.data_payload as Record<string, unknown>).data_conflicts as { field: string; values: string[]; sources: string[] }[];
+                      const conflictSummary = conflicts.map(c => `${c.field}: ${c.values.join(" vs ")}`).join("; ");
+                      return (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          style={{
+                            marginTop: 20,
+                            padding: "14px 16px",
+                            borderRadius: 14,
+                            background: "rgba(251,191,36,0.07)",
+                            border: "1px solid rgba(251,191,36,0.25)",
+                            backdropFilter: "blur(20px)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                            <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(251,191,36,0.90)", marginBottom: 6 }}>Data Conflicts Detected</p>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px" }}>
+                                {conflicts.map((c, i) => (
+                                  <div key={i} style={{ padding: "8px 10px", borderRadius: 8, background: "rgba(251,191,36,0.06)", border: "0.5px solid rgba(251,191,36,0.15)" }}>
+                                    <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.80)", marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.06em" }}>{c.field}</p>
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                      {c.values.map((v, vi) => (
+                                        <span key={vi} style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: vi === 0 ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.07)", color: vi === 0 ? "rgba(251,191,36,0.85)" : "rgba(255,255,255,0.55)", fontWeight: 600 }}>{v}</span>
+                                      ))}
+                                    </div>
+                                    {c.sources?.length > 0 && <p style={{ fontSize: 9, color: "rgba(255,255,255,0.28)", marginTop: 3 }}>{c.sources.join(", ")}</p>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { setRefineNavText(`Verify and resolve these conflicting data points: ${conflictSummary}. Find authoritative sources and return the correct values.`); setRefineNavOpen(true); }}
+                            style={{ padding: "7px 14px", borderRadius: 8, background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.30)", color: "rgba(251,191,36,0.85)", fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "background 0.15s" }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(251,191,36,0.20)"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(251,191,36,0.12)"; }}
+                          >
+                            🔍 Launch Conflict Resolution Mission →
+                          </button>
+                        </motion.div>
+                      );
+                    })()}
+
+                    {/* Refinement history */}
+                    {refinementHistory.length > 0 && (
+                      <div style={{ marginTop: 20, borderRadius: 12, background: "rgba(167,202,220,0.05)", border: "0.5px solid rgba(167,202,220,0.18)", overflow: "hidden" }}>
+                        <button
+                          onClick={() => setShowRefinementHistory(v => !v)}
+                          style={{ width: "100%", padding: "9px 14px", display: "flex", alignItems: "center", gap: 8, background: "transparent", cursor: "pointer", textAlign: "left" }}
+                        >
+                          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--axion-accent,rgba(167,202,220,0.70))" }}>
+                            Refinement history ({refinementHistory.length})
+                          </span>
+                          <span style={{ flex: 1 }} />
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.28)" }}>{showRefinementHistory ? "▲" : "▼"}</span>
+                        </button>
+                        <AnimatePresence>
+                          {showRefinementHistory && (
+                            <motion.div
+                              key="refine-hist"
+                              initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                              transition={{ type: "spring", stiffness: 360, damping: 32 }}
+                              style={{ overflow: "hidden", borderTop: "0.5px solid rgba(167,202,220,0.12)" }}
+                            >
+                              <div style={{ padding: "8px 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+                                {refinementHistory.map((round, ri) => (
+                                  <div key={ri} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 10px", borderRadius: 8, background: "var(--axion-glass-bg,rgba(255,255,255,0.04))", borderLeft: "2px solid var(--axion-accent,#a7cadc)" }}>
+                                    <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 5, background: "rgba(167,202,220,0.18)", border: "0.5px solid rgba(167,202,220,0.35)", color: "var(--axion-accent,#a7cadc)", lineHeight: 1.5, marginTop: 1 }}>R{ri + 1}</span>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <p style={{ fontSize: 12, color: "rgba(255,255,255,0.78)", fontWeight: 500, lineHeight: 1.4, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as React.CSSProperties}>{round.intent}</p>
+                                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.28)", fontFamily: "var(--font-mono,monospace)" }}>{timeAgo(round.timestamp)}</span>
+                                        {round.newPayloadKeys.length === 0 ? (
+                                          <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.28)", fontWeight: 600 }}>no new data</span>
+                                        ) : (
+                                          <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(167,202,220,0.12)", border: "0.5px solid rgba(167,202,220,0.25)", color: "var(--axion-accent,#a7cadc)", fontWeight: 600 }}>+{round.newPayloadKeys.length} new key{round.newPayloadKeys.length !== 1 ? "s" : ""}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    )}
+
+                    {/* Show/hide agent reasoning toggle */}
+                    <div style={{ marginTop: 20, display: "flex", justifyContent: "center" }}>
+                      <button
+                        onClick={() => setShowDetails(v => !v)}
+                        style={{
+                          fontSize: 11, padding: "5px 14px", borderRadius: 999,
+                          background: "rgba(255,255,255,0.04)",
+                          border: "0.5px solid rgba(255,255,255,0.09)",
+                          color: "rgba(255,255,255,0.30)",
+                          cursor: "pointer",
+                          transition: "background 0.15s, color 0.15s",
+                        }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.55)"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.30)"; }}
+                      >
+                        {showDetails ? "Hide agent reasoning" : "Show agent reasoning"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Fallback / agent cards (when no bento state, or showDetails) */}
+              {(!missionState || showDetails) && (() => {
+                const visibleSlugs = cardOrder.filter(slug => {
+                  const result = streamCards[slug]?.result;
+                  if (!result) return true;
+                  try {
+                    const parsed = JSON.parse(result);
+                    return !(parsed && typeof parsed.data_payload === "object" && parsed.data_payload !== null);
+                  } catch { return true; }
+                });
+                if (visibleSlugs.length === 0) return null;
+                return (
+                  <div style={{ padding: "0 24px", maxWidth: 960, margin: "0 auto", marginTop: 24 }}>
+                    {missionState && (
+                      <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(147,153,160,0.45)", fontFamily: "var(--axion-font-mono)", marginBottom: 12 }}>
+                        Agent Reasoning
+                      </p>
+                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      {visibleSlugs.map(slug => {
+                        const card = streamCards[slug];
+                        if (!card) return null;
+                        const { label, icon, accent } = cardMeta(slug, card.role);
+                        return (
+                          <motion.article
+                            key={slug}
+                            layout
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.25 }}
+                            className="rounded-2xl axion-grain"
+                            style={{
+                              background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
+                              border: `1px solid rgba(255,255,255,0.08)`,
+                              borderLeft: `3px solid ${accent.replace("border-","").replace("-700","") || "rgba(255,255,255,0.18)"}`,
+                              backdropFilter: "blur(28px) saturate(130%)",
+                              WebkitBackdropFilter: "blur(28px) saturate(130%)",
+                              padding: "var(--axion-pad,20px)",
+                            }}
+                          >
+                            <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.80)", marginBottom: 10 }}>
+                              <span>{icon}</span><span>{label}</span>
+                              {card.status === "failed" && <span style={{ marginLeft: "auto", fontSize: 11, color: "#f87171" }}>✗ Failed</span>}
+                            </h2>
+                            {card.result ? (
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                                {card.result}
+                              </ReactMarkdown>
+                            ) : null}
+                          </motion.article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── FAILED STATE ────────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {missionStatus === "failed" && (
+            <motion.div
+              key="failed-root"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              style={{
+                minHeight: "100vh",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 16,
+                padding: "86px 24px 48px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 36, opacity: 0.35 }}>✗</div>
+              <p style={{ fontSize: 16, fontWeight: 500, color: "rgba(255,255,255,0.70)" }}>Mission failed</p>
+              {fetchError && (
+                <p style={{ fontSize: 13, color: "#fca5a5", maxWidth: 480, lineHeight: 1.5 }}>{fetchError}</p>
+              )}
+              <button
+                onClick={newMission}
+                style={{
+                  marginTop: 8, padding: "9px 22px", borderRadius: 999,
+                  background: "var(--axion-accent,#a7cadc)",
+                  color: "var(--axion-accent-fg,#07090c)",
+                  fontWeight: 600, fontSize: 13, cursor: "pointer",
+                  boxShadow: "0 0 20px rgba(167,202,220,0.25)",
+                }}
+              >
+                New Mission
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+      </div>{/* end stage */}
+
+      {/* ── Floating trace button (bottom-right) ─────────────────────────── */}
+      <AnimatePresence>
+        {traceEvents.length > 0 && !isIdle && (
+          <motion.button
+            key="trace-btn"
+            initial={{ opacity: 0, scale: 0.80 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.80 }}
+            transition={{ type: "spring", stiffness: 300, damping: 22 }}
+            onClick={() => setTraceOpen(v => !v)}
+            title="Execution trace"
+            style={{
+              position: "fixed",
+              bottom: 24,
+              right: 24,
+              zIndex: 60,
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: traceOpen ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.06)",
+              border: `0.5px solid ${traceOpen ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.10)"}`,
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              color: traceOpen ? "rgba(255,255,255,0.80)" : "rgba(255,255,255,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              fontSize: 13,
+              fontFamily: "var(--axion-font-mono)",
+              letterSpacing: "-0.02em",
+              transition: "background 0.15s, border-color 0.15s, color 0.15s",
+            }}
+          >
+            ⟨⟩
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* ── Trace drawer (slides up from bottom-right) ────────────────────── */}
+      <AnimatePresence>
+        {traceOpen && (
+          <motion.div
+            key="trace-drawer"
+            initial={{ opacity: 0, y: 18, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 14, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            style={{
+              position: "fixed",
+              bottom: 78,
+              right: 24,
+              width: 400,
+              maxHeight: "56vh",
+              zIndex: 55,
+              background: "rgba(6,9,14,0.97)",
+              backdropFilter: "blur(40px) saturate(150%)",
+              WebkitBackdropFilter: "blur(40px) saturate(150%)",
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 18,
+              boxShadow: "0 24px 60px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.04)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            {/* Header */}
+            <div style={{ padding: "11px 16px 9px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "rgba(255,255,255,0.30)" }}>
+                Execution Trace
+              </span>
+              <span style={{ fontSize: 9, color: "rgba(255,255,255,0.18)" }}>— {traceEvents.length} events</span>
+              <span style={{ flex: 1 }} />
+              <button onClick={() => setTraceOpen(false)} style={{ color: "rgba(255,255,255,0.28)", background: "none", border: "none", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: "0 2px", transition: "color 0.15s" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.70)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.28)"; }}>×</button>
+            </div>
+            {/* Events list */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "4px 0 10px" }}>
+              {traceEvents.map(event => (
+                <div key={event.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 16px", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                  <span style={{ fontSize: 9, color: "rgba(255,255,255,0.18)", minWidth: 52, fontVariantNumeric: "tabular-nums", paddingTop: 2, fontFamily: "monospace" }}>
+                    {event.timestamp < 10 ? `#${event.timestamp}` : formatTraceTime(event.timestamp)}
+                  </span>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", marginTop: 4, flexShrink: 0, background: dotColorForType(event.type) }} />
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.50)", lineHeight: 1.4, flex: 1 }}>
+                    {event.label}
+                    {event.durationMs !== undefined && (
+                      <span style={{ marginLeft: 8, fontSize: 9, color: "rgba(255,255,255,0.22)" }}>{event.durationMs}ms</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Settings backdrop ─────────────────────────────────────────────── */}
       <AnimatePresence>
@@ -1750,11 +2671,7 @@ export default function Home() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={() => setSettingsOpen(false)}
-            style={{
-              position: "fixed", inset: 0,
-              background: "rgba(0,0,0,0.30)",
-              zIndex: 189,
-            }}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.30)", zIndex: 189 }}
           />
         )}
       </AnimatePresence>
@@ -1769,207 +2686,60 @@ export default function Home() {
             exit={{ x: 360 }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             style={{
-              position: "fixed",
-              top: 0,
-              right: 0,
-              height: "100%",
-              width: 360,
-              zIndex: 190,
-              background: "rgba(8,10,14,0.96)",
-              backdropFilter: "blur(40px) saturate(150%)",
+              position: "fixed", top: 0, right: 0, height: "100%", width: 360, zIndex: 190,
+              background: "rgba(8,10,14,0.96)", backdropFilter: "blur(40px) saturate(150%)",
               WebkitBackdropFilter: "blur(40px) saturate(150%)",
               borderLeft: "1px solid rgba(255,255,255,0.07)",
-              display: "flex",
-              flexDirection: "column",
-              padding: "28px 28px 32px",
-              overflowY: "auto",
+              display: "flex", flexDirection: "column",
+              padding: "28px 28px 32px", overflowY: "auto",
             }}
           >
-            {/* Header row */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-              <p style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.9)", margin: 0 }}>
-                Settings
-              </p>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                style={{
-                  background: "none", border: "none",
-                  color: "rgba(255,255,255,0.35)",
-                  fontSize: 20, lineHeight: 1,
-                  cursor: "pointer", padding: "0 2px",
-                  transition: "color 0.15s",
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.80)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; }}
-              >
-                ×
-              </button>
+              <p style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.9)", margin: 0 }}>Settings</p>
+              <button onClick={() => setSettingsOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", fontSize: 20, lineHeight: 1, cursor: "pointer", padding: "0 2px", transition: "color 0.15s" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.80)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; }}>×</button>
             </div>
 
-            {/* Axion API Key */}
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>
-                Axion API Key
-              </label>
-              <input
-                type="password"
-                value={draftAxionKey}
-                onChange={(e) => setDraftAxionKey(e.target.value)}
-                placeholder="axion_sk_..."
-                style={{
-                  width: "100%",
-                  background: "rgba(255,255,255,0.07)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  color: "rgba(255,255,255,0.9)",
-                  fontSize: 13,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  transition: "border-color 0.15s",
-                }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #a7cadc)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
-              />
-              <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>
-                Required when the server has AXION_API_KEY set. Leave blank for local dev.
-              </p>
-            </div>
+            {[
+              { label: "Axion API Key", value: draftAxionKey, setter: setDraftAxionKey, placeholder: "axion_sk_...", hint: "Required when the server has AXION_API_KEY set. Leave blank for local dev.", success: null },
+              { label: "OpenAI API Key", value: draftOpenAI, setter: setDraftOpenAI, placeholder: "sk-...", hint: configStatus?.openai && !draftOpenAI ? "✓ Configured via environment" : "Required for all missions.", success: configStatus?.openai && !draftOpenAI ? true : null },
+              { label: "Tavily Search Key", value: draftTavily, setter: setDraftTavily, placeholder: "tvly-...", hint: configStatus?.tavily && !draftTavily ? "✓ Configured via environment" : "Optional — enables live web search.", success: configStatus?.tavily && !draftTavily ? true : null },
+            ].map(field => (
+              <div key={field.label} style={{ marginBottom: 24 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>{field.label}</label>
+                <input
+                  type="password"
+                  value={field.value}
+                  onChange={e => field.setter(e.target.value)}
+                  placeholder={field.placeholder}
+                  style={{ width: "100%", background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: "10px 14px", color: "rgba(255,255,255,0.9)", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+                  onFocus={e => { e.currentTarget.style.borderColor = "var(--axion-accent,#a7cadc)"; }}
+                  onBlur={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+                />
+                <p style={{ fontSize: 11, color: field.success ? "rgba(74,222,128,0.8)" : "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>{field.hint}</p>
+              </div>
+            ))}
 
-            {/* OpenAI Key */}
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>
-                OpenAI API Key
-              </label>
-              <input
-                type="password"
-                value={draftOpenAI}
-                onChange={(e) => setDraftOpenAI(e.target.value)}
-                placeholder="sk-..."
-                style={{
-                  width: "100%",
-                  background: "rgba(255,255,255,0.07)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  color: "rgba(255,255,255,0.9)",
-                  fontSize: 13,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  transition: "border-color 0.15s",
-                }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #a7cadc)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
-              />
-              {configStatus?.openai && !draftOpenAI ? (
-                <p style={{ fontSize: 11, color: "rgba(74,222,128,0.8)", marginTop: 6, margin: "6px 0 0" }}>
-                  ✓ Configured via environment
-                </p>
-              ) : (
-                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>
-                  Required for all missions.
-                </p>
-              )}
-            </div>
-
-            {/* Tavily Key */}
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>
-                Tavily Search Key
-              </label>
-              <input
-                type="password"
-                value={draftTavily}
-                onChange={(e) => setDraftTavily(e.target.value)}
-                placeholder="tvly-..."
-                style={{
-                  width: "100%",
-                  background: "rgba(255,255,255,0.07)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  color: "rgba(255,255,255,0.9)",
-                  fontSize: 13,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  transition: "border-color 0.15s",
-                }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--axion-accent, #a7cadc)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
-              />
-              {configStatus?.tavily && !draftTavily ? (
-                <p style={{ fontSize: 11, color: "rgba(74,222,128,0.8)", marginTop: 6, margin: "6px 0 0" }}>
-                  ✓ Configured via environment
-                </p>
-              ) : (
-                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>
-                  Optional — enables live web search.
-                </p>
-              )}
-            </div>
-
-            {/* Save button */}
-            <button
-              onClick={saveSettings}
-              style={{
-                width: "100%",
-                background: "var(--axion-accent, #a7cadc)",
-                color: "#000",
-                fontWeight: 600,
-                fontSize: 14,
-                borderRadius: 10,
-                padding: "11px 0",
-                marginTop: 8,
-                border: "none",
-                cursor: "pointer",
-                transition: "opacity 0.15s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.85"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
-            >
+            <button onClick={saveSettings} style={{ width: "100%", background: "var(--axion-accent,#a7cadc)", color: "#000", fontWeight: 600, fontSize: 14, borderRadius: 10, padding: "11px 0", marginTop: 8, border: "none", cursor: "pointer", transition: "opacity 0.15s" }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.85"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}>
               Save
             </button>
 
-            {/* ── Notification permission row ──────────────────────────────── */}
             {notifPermission !== "unsupported" && (
-              <div
-                style={{
-                  marginTop: 20,
-                  paddingTop: 16,
-                  borderTop: "1px solid rgba(255,255,255,0.07)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                }}
-              >
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>
-                    Mission notifications
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>Mission notifications</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2, lineHeight: 1.4 }}>
-                    {notifPermission === "granted" && "Enabled — you’ll be notified when missions complete"}
+                    {notifPermission === "granted" && "Enabled — you'll be notified when missions complete"}
                     {notifPermission === "denied"  && "Blocked — enable in your browser settings"}
                     {notifPermission === "default" && "Not yet requested — start a mission to prompt"}
                   </div>
                 </div>
                 {notifPermission === "default" && (
-                  <button
-                    onClick={() =>
-                      Notification.requestPermission().then((perm) => setNotifPermission(perm))
-                    }
-                    style={{
-                      flexShrink: 0,
-                      fontSize: 11,
-                      padding: "5px 12px",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                      background: "rgba(255,255,255,0.08)",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      color: "rgba(255,255,255,0.65)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                  <button onClick={() => Notification.requestPermission().then(p => setNotifPermission(p))}
+                    style={{ flexShrink: 0, fontSize: 11, padding: "5px 12px", borderRadius: 8, cursor: "pointer", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap" }}>
                     Enable
                   </button>
                 )}
@@ -1989,20 +2759,11 @@ export default function Home() {
             exit={{ opacity: 0, y: 8 }}
             transition={{ type: "spring", stiffness: 360, damping: 28 }}
             style={{
-              position: "fixed",
-              bottom: 96,
-              left: "50%",
-              transform: "translateX(-50%)",
-              zIndex: 300,
-              background: "rgba(255,255,255,0.10)",
-              border: "0.5px solid rgba(255,255,255,0.18)",
-              backdropFilter: "blur(24px)",
-              WebkitBackdropFilter: "blur(24px)",
-              borderRadius: 10,
-              padding: "8px 18px",
-              fontSize: 13,
-              fontWeight: 600,
-              color: "rgba(255,255,255,0.85)",
+              position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", zIndex: 300,
+              background: "rgba(255,255,255,0.10)", border: "0.5px solid rgba(255,255,255,0.18)",
+              backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
+              borderRadius: 10, padding: "8px 18px",
+              fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)",
               pointerEvents: "none",
             }}
           >
@@ -2011,7 +2772,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* ── Sidebar backdrop ──────────────────────────────────────────────── */}
+      {/* ── History sidebar backdrop ──────────────────────────────────────── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
@@ -2021,18 +2782,12 @@ export default function Home() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={() => setSidebarOpen(false)}
-            style={{
-              position: "fixed", inset: 0,
-              background: "rgba(0,0,0,0.45)",
-              backdropFilter: "blur(4px)",
-              WebkitBackdropFilter: "blur(4px)",
-              zIndex: 30,
-            }}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)", zIndex: 30 }}
           />
         )}
       </AnimatePresence>
 
-      {/* ── Sidebar drawer ────────────────────────────────────────────────── */}
+      {/* ── History sidebar drawer ────────────────────────────────────────── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.aside
@@ -2042,12 +2797,8 @@ export default function Home() {
             exit={{ x: -296 }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             style={{
-              position: "fixed",
-              top: 0, left: 0, bottom: 0,
-              width: 288,
-              zIndex: 40,
-              display: "flex",
-              flexDirection: "column",
+              position: "fixed", top: 0, left: 0, bottom: 0, width: 288, zIndex: 40,
+              display: "flex", flexDirection: "column",
               background: "rgba(6,8,11,0.88)",
               backdropFilter: "blur(40px) saturate(150%)",
               WebkitBackdropFilter: "blur(40px) saturate(150%)",
@@ -2056,87 +2807,18 @@ export default function Home() {
             }}
           >
             {/* Drawer header */}
-            <div
-              style={{
-                padding: "20px 16px 14px",
-                borderBottom: "0.5px solid rgba(255,255,255,0.07)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  color: "rgba(255,255,255,0.30)",
-                }}
-              >
-                Mission Gallery
-              </span>
-              <button
-                onClick={() => setSidebarOpen(false)}
-                style={{
-                  color: "rgba(255,255,255,0.35)",
-                  fontSize: 20,
-                  lineHeight: 1,
-                  width: 28,
-                  height: 28,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: 8,
-                  transition: "color 0.2s, background 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.75)";
-                  (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)";
-                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                }}
-              >
-                ×
-              </button>
+            <div style={{ padding: "20px 16px 14px", borderBottom: "0.5px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.30)" }}>Mission Gallery</span>
+              <button onClick={() => setSidebarOpen(false)} style={{ color: "rgba(255,255,255,0.35)", fontSize: 20, lineHeight: 1, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "none", border: "none", cursor: "pointer", transition: "color 0.2s, background 0.2s" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.75)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}>×</button>
             </div>
 
-            {/* New Mission button — slate glass, pinned above scroll */}
+            {/* New Mission button */}
             <div style={{ padding: "12px 12px 6px", flexShrink: 0 }}>
-              <button
-                onClick={newMission}
-                style={{
-                  width: "100%",
-                  padding: "12px 16px",
-                  borderRadius: 14,
-                  background: "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
-                  color: "rgba(235,239,242,0.92)",
-                  fontWeight: 600,
-                  fontSize: 14,
-                  fontFamily: "var(--axion-font-main)",
-                  textAlign: "left",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  border: "1px solid rgba(255,255,255,0.11)",
-                  backdropFilter: "blur(28px) saturate(130%)",
-                  WebkitBackdropFilter: "blur(28px) saturate(130%)",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.04)",
-                  transition: "background 0.2s, border-color 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  const el = e.currentTarget as HTMLButtonElement;
-                  el.style.background = "linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.05))";
-                  el.style.borderColor = "rgba(255,255,255,0.16)";
-                }}
-                onMouseLeave={(e) => {
-                  const el = e.currentTarget as HTMLButtonElement;
-                  el.style.background = "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))";
-                  el.style.borderColor = "rgba(255,255,255,0.11)";
-                }}
-              >
+              <button onClick={newMission} style={{ width: "100%", padding: "12px 16px", borderRadius: 14, background: "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))", color: "rgba(235,239,242,0.92)", fontWeight: 600, fontSize: 14, fontFamily: "var(--axion-font-main)", textAlign: "left", display: "flex", alignItems: "center", gap: 10, border: "1px solid rgba(255,255,255,0.11)", backdropFilter: "blur(28px) saturate(130%)", WebkitBackdropFilter: "blur(28px) saturate(130%)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.04)", transition: "background 0.2s, border-color 0.2s", cursor: "pointer" }}
+                onMouseEnter={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.05))"; el.style.borderColor = "rgba(255,255,255,0.16)"; }}
+                onMouseLeave={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))"; el.style.borderColor = "rgba(255,255,255,0.11)"; }}>
                 <span style={{ fontSize: 18, lineHeight: 1, opacity: 0.80 }}>＋</span>
                 New Mission
               </button>
@@ -2144,54 +2826,16 @@ export default function Home() {
 
             {/* History list */}
             <div style={{ flex: 1, overflowY: "auto", padding: "6px 8px 20px", display: "flex", flexDirection: "column" }}>
-
-              {/* Search input */}
               {history.length > 0 && (
                 <div style={{ position: "relative", marginBottom: 8, flexShrink: 0 }}>
-                  {/* Magnifier icon */}
-                  <span
-                    style={{
-                      position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
-                      fontSize: 12, color: "rgba(255,255,255,0.28)", pointerEvents: "none",
-                      lineHeight: 1,
-                    }}
-                  >
-                    ⌕
-                  </span>
-                  <input
-                    type="text"
-                    value={historyQuery}
-                    onChange={(e) => setHistoryQuery(e.target.value)}
-                    onFocus={() => setHistoryQueryFocused(true)}
-                    onBlur={() => setHistoryQueryFocused(false)}
+                  <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "rgba(255,255,255,0.28)", pointerEvents: "none", lineHeight: 1 }}>⌕</span>
+                  <input type="text" value={historyQuery} onChange={e => setHistoryQuery(e.target.value)}
+                    onFocus={() => setHistoryQueryFocused(true)} onBlur={() => setHistoryQueryFocused(false)}
                     placeholder="Search missions…"
-                    style={{
-                      width: "100%",
-                      padding: "7px 28px 7px 28px",
-                      borderRadius: 10,
-                      background: historyQueryFocused
-                        ? "rgba(255,255,255,0.08)"
-                        : "rgba(255,255,255,0.05)",
-                      border: `0.5px solid ${historyQueryFocused ? "rgba(var(--axion-accent-rgb, 167,202,220), 0.45)" : "rgba(255,255,255,0.10)"}`,
-                      color: "rgba(255,255,255,0.82)",
-                      fontSize: 12,
-                      outline: "none",
-                      transition: "background 0.15s, border-color 0.15s",
-                      boxSizing: "border-box",
-                    }}
+                    style={{ width: "100%", padding: "7px 28px", borderRadius: 10, background: historyQueryFocused ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)", border: `0.5px solid ${historyQueryFocused ? "rgba(var(--axion-accent-rgb,167,202,220),0.45)" : "rgba(255,255,255,0.10)"}`, color: "rgba(255,255,255,0.82)", fontSize: 12, outline: "none", transition: "background 0.15s, border-color 0.15s", boxSizing: "border-box" }}
                   />
-                  {/* Clear ×  */}
                   {historyQuery && (
-                    <button
-                      onClick={() => setHistoryQuery("")}
-                      style={{
-                        position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-                        fontSize: 13, lineHeight: 1, color: "rgba(255,255,255,0.35)",
-                        background: "none", border: "none", cursor: "pointer", padding: 2,
-                      }}
-                    >
-                      ×
-                    </button>
+                    <button onClick={() => setHistoryQuery("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 13, lineHeight: 1, color: "rgba(255,255,255,0.35)", background: "none", border: "none", cursor: "pointer", padding: 2 }}>×</button>
                   )}
                 </div>
               )}
@@ -2199,166 +2843,54 @@ export default function Home() {
               {history.length === 0 ? (
                 <div style={{ padding: "36px 16px", textAlign: "center" }}>
                   <div style={{ fontSize: 24, opacity: 0.18, marginBottom: 8 }}>◈</div>
-                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", lineHeight: 1.6 }}>
-                    No missions yet.<br />Run your first to begin.
-                  </p>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", lineHeight: 1.6 }}>No missions yet.<br />Run your first to begin.</p>
                 </div>
               ) : filteredHistory.length === 0 ? (
                 <div style={{ padding: "28px 16px", textAlign: "center" }}>
-                  <div style={{ fontSize: 20, opacity: 0.20, marginBottom: 6 }}>◈</div>
-                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", lineHeight: 1.6 }}>
-                    No matches for<br />
-                    <span style={{ color: "rgba(255,255,255,0.40)", fontStyle: "italic" }}>
-                      &ldquo;{historyQuery}&rdquo;
-                    </span>
-                  </p>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", lineHeight: 1.6 }}>No matches for<br /><span style={{ color: "rgba(255,255,255,0.40)", fontStyle: "italic" }}>&ldquo;{historyQuery}&rdquo;</span></p>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <AnimatePresence initial={false}>
-                  {filteredHistory.map((m) => {
-                    const accent = accentForMission(m);
-                    const isActive = activeMissionId === m.id;
-                    const heights = sparklineHeights(m.id, m.task_count);
-                    const isConfirming = confirmDeleteId === m.id;
-                    return (
-                      <motion.div
-                        key={m.id}
-                        layout
-                        initial={{ opacity: 0, x: -16 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: -48, height: 0, marginBottom: 0, overflow: "hidden" }}
-                        transition={{ duration: 0.22 }}
-                        style={{ position: "relative" }}
-                        onMouseLeave={() => { if (isConfirming) setConfirmDeleteId(null); }}
-                      >
-                        {/* Mission card button */}
-                        <motion.button
-                          onClick={() => { loadMission(m.id); setSidebarOpen(false); }}
-                          whileHover={{ boxShadow: `0 0 18px ${accent}2a, 0 2px 8px rgba(0,0,0,0.30)` }}
-                          style={{
-                            width: "100%",
-                            textAlign: "left",
-                            borderRadius: 12,
-                            padding: "12px 14px",
-                            paddingRight: 40,
-                            cursor: "pointer",
-                            background: isActive
-                              ? `linear-gradient(135deg, ${accent}20 0%, rgba(255,255,255,0.04) 100%)`
-                              : `linear-gradient(135deg, ${accent}0d 0%, transparent 70%)`,
-                            border: `0.5px solid ${isActive ? accent + "44" : "rgba(255,255,255,0.07)"}`,
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                            <span
-                              style={{
-                                width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
-                                background: m.status === "completed" ? `${accent}28` : "rgba(248,113,113,0.15)",
-                                color: m.status === "completed" ? accent : "#f87171",
-                                fontSize: 9, fontWeight: 700,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                              }}
-                            >
-                              {m.status === "completed" ? "✓" : "✕"}
-                            </span>
-                            <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.25)", marginLeft: "auto" }}>
-                              {formatDate(m.timestamp)}
-                            </span>
-                          </div>
-                          <p
-                            style={{
-                              fontSize: "1.05rem", fontWeight: isActive ? 600 : 500, lineHeight: 1.4,
-                              color: isActive ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.65)",
-                              display: "-webkit-box", WebkitLineClamp: 2,
-                              WebkitBoxOrient: "vertical", overflow: "hidden",
-                            }}
-                          >
-                            {m.intent}
-                          </p>
-                          <div style={{ marginTop: 8, display: "flex", alignItems: "flex-end", gap: 2, height: 14 }}>
-                            {heights.map((h, i) => (
-                              <span key={i} style={{ display: "inline-block", width: 3, height: h, borderRadius: 2, background: accent, opacity: 0.38 + i * 0.045 }} />
-                            ))}
-                            <span style={{ marginLeft: 4, fontSize: 9, fontFamily: "monospace", color: `${accent}90`, lineHeight: "13px" }}>{m.task_count}t</span>
-                          </div>
-                        </motion.button>
-
-                        {/* Delete button — shown on hover via CSS group */}
-                        <motion.button
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            if (isConfirming) {
-                              deleteMission(m.id);
-                            } else {
-                              setConfirmDeleteId(m.id);
-                            }
-                          }}
-                          title={isConfirming ? "Click again to confirm" : "Delete mission"}
-                          animate={{ opacity: isConfirming ? 1 : 0 }}
-                          whileHover={{ opacity: 1 }}
-                          transition={{ duration: 0.15 }}
-                          style={{
-                            position: "absolute", top: "50%", right: 10,
-                            transform: "translateY(-50%)",
-                            width: 26, height: 26, borderRadius: 7,
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            background: isConfirming ? "rgba(239,68,68,0.18)" : "rgba(255,255,255,0.07)",
-                            border: `1px solid ${isConfirming ? "rgba(239,68,68,0.45)" : "rgba(255,255,255,0.10)"}`,
-                            color: isConfirming ? "#f87171" : "rgba(255,255,255,0.40)",
-                            fontSize: 12, cursor: "pointer",
-                            transition: "background 0.15s, border-color 0.15s, color 0.15s",
-                          }}
-                        >
-                          {isConfirming ? "✕" : "🗑"}
-                        </motion.button>
-                      </motion.div>
-                    );
-                  })}
+                    {filteredHistory.map(m => {
+                      const accent = accentForMission(m);
+                      const isActive = activeMissionId === m.id;
+                      const heights = sparklineHeights(m.id, m.task_count);
+                      const isConfirming = confirmDeleteId === m.id;
+                      return (
+                        <motion.div key={m.id} layout initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -48, height: 0, marginBottom: 0, overflow: "hidden" }} transition={{ duration: 0.22 }} style={{ position: "relative" }}
+                          onMouseLeave={() => { if (isConfirming) setConfirmDeleteId(null); }}>
+                          <motion.button onClick={() => { loadMission(m.id); setSidebarOpen(false); }} whileHover={{ boxShadow: `0 0 18px ${accent}2a, 0 2px 8px rgba(0,0,0,0.30)` }}
+                            style={{ width: "100%", textAlign: "left", borderRadius: 12, padding: "12px 14px", paddingRight: 40, cursor: "pointer", background: isActive ? `linear-gradient(135deg, ${accent}20 0%, rgba(255,255,255,0.04) 100%)` : `linear-gradient(135deg, ${accent}0d 0%, transparent 70%)`, border: `0.5px solid ${isActive ? accent + "44" : "rgba(255,255,255,0.07)"}` }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                              <span style={{ width: 16, height: 16, borderRadius: "50%", flexShrink: 0, background: m.status === "completed" ? `${accent}28` : "rgba(248,113,113,0.15)", color: m.status === "completed" ? accent : "#f87171", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{m.status === "completed" ? "✓" : "✕"}</span>
+                              <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.25)", marginLeft: "auto" }}>{formatDate(m.timestamp)}</span>
+                            </div>
+                            <p style={{ fontSize: "1.05rem", fontWeight: isActive ? 600 : 500, lineHeight: 1.4, color: isActive ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.65)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{m.intent}</p>
+                            <div style={{ marginTop: 8, display: "flex", alignItems: "flex-end", gap: 2, height: 14 }}>
+                              {heights.map((h, i) => (<span key={i} style={{ display: "inline-block", width: 3, height: h, borderRadius: 2, background: accent, opacity: 0.38 + i * 0.045 }} />))}
+                              <span style={{ marginLeft: 4, fontSize: 9, fontFamily: "monospace", color: `${accent}90`, lineHeight: "13px" }}>{m.task_count}t</span>
+                            </div>
+                          </motion.button>
+                          <motion.button onClick={(e: React.MouseEvent) => { e.stopPropagation(); if (isConfirming) deleteMission(m.id); else setConfirmDeleteId(m.id); }} title={isConfirming ? "Click again to confirm" : "Delete mission"}
+                            animate={{ opacity: isConfirming ? 1 : 0 }} whileHover={{ opacity: 1 }} transition={{ duration: 0.15 }}
+                            style={{ position: "absolute", top: "50%", right: 10, transform: "translateY(-50%)", width: 26, height: 26, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", background: isConfirming ? "rgba(239,68,68,0.18)" : "rgba(255,255,255,0.07)", border: `1px solid ${isConfirming ? "rgba(239,68,68,0.45)" : "rgba(255,255,255,0.10)"}`, color: isConfirming ? "#f87171" : "rgba(255,255,255,0.40)", fontSize: 12, cursor: "pointer", transition: "background 0.15s, border-color 0.15s, color 0.15s" }}>
+                            {isConfirming ? "✕" : "🗑"}
+                          </motion.button>
+                        </motion.div>
+                      );
+                    })}
                   </AnimatePresence>
                 </div>
               )}
 
-              {/* Clear all — only when there are missions */}
               {history.length > 0 && (
                 <div style={{ marginTop: "auto", paddingTop: 14, flexShrink: 0 }}>
                   <button
-                    onClick={() => {
-                      if (confirmClear) {
-                        clearAllHistory();
-                      } else {
-                        setConfirmClear(true);
-                        // Auto-reset confirmation after 3 s
-                        setTimeout(() => setConfirmClear(false), 3000);
-                      }
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "8px 12px",
-                      borderRadius: 10,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      letterSpacing: "0.04em",
-                      cursor: "pointer",
-                      background: confirmClear
-                        ? "rgba(239,68,68,0.14)"
-                        : "rgba(255,255,255,0.04)",
-                      border: `0.5px solid ${confirmClear ? "rgba(239,68,68,0.40)" : "rgba(255,255,255,0.10)"}`,
-                      color: confirmClear ? "#f87171" : "rgba(255,255,255,0.28)",
-                      transition: "background 0.15s, border-color 0.15s, color 0.15s",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!confirmClear) {
-                        (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.50)";
-                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.07)";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!confirmClear) {
-                        (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.28)";
-                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
-                      }
-                    }}
-                  >
+                    onClick={() => { if (confirmClear) clearAllHistory(); else { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); } }}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: 10, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", cursor: "pointer", background: confirmClear ? "rgba(239,68,68,0.14)" : "rgba(255,255,255,0.04)", border: `0.5px solid ${confirmClear ? "rgba(239,68,68,0.40)" : "rgba(255,255,255,0.10)"}`, color: confirmClear ? "#f87171" : "rgba(255,255,255,0.28)", transition: "background 0.15s, border-color 0.15s, color 0.15s" }}
+                    onMouseEnter={e => { if (!confirmClear) { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.50)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.07)"; } }}
+                    onMouseLeave={e => { if (!confirmClear) { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.28)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)"; } }}>
                     {confirmClear ? "⚠ Confirm — delete all missions" : "Clear all history"}
                   </button>
                 </div>
@@ -2367,796 +2899,6 @@ export default function Home() {
           </motion.aside>
         )}
       </AnimatePresence>
-
-      {/* ── Sidebar toggle button — vanishes when drawer is open ────────── */}
-      <motion.button
-        onClick={() => setSidebarOpen((v) => !v)}
-        animate={{ opacity: sidebarOpen ? 0 : 1, scale: sidebarOpen ? 0.85 : 1 }}
-        whileHover={{ scale: sidebarOpen ? 0.85 : 1.08 }}
-        whileTap={{ scale: 0.92 }}
-        transition={{ duration: 0.2 }}
-        style={{
-          position: "fixed",
-          top: 20, left: 20,
-          zIndex: 50,
-          width: 40, height: 40,
-          borderRadius: 12,
-          background: "linear-gradient(rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
-          border: "1px solid rgba(255,255,255,0.08)",
-          backdropFilter: "blur(28px) saturate(130%)",
-          WebkitBackdropFilter: "blur(28px) saturate(130%)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "rgba(255,255,255,0.55)",
-          fontSize: 15,
-          cursor: "pointer",
-          pointerEvents: sidebarOpen ? "none" : "auto",
-        }}
-      >
-        ☰
-      </motion.button>
-
-      {/* ── Stage (scrolling content area) ───────────────────────────────── */}
-      <div ref={stageRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", position: "relative", zIndex: 1 }}>
-
-        {/* Idle: in-flow centered hero header */}
-        <AnimatePresence>
-          {isIdle && (
-            <motion.div
-              key="idle-hero"
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97 }}
-              transition={{ duration: 0.35 }}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                minHeight: "44vh",
-                textAlign: "center",
-                pointerEvents: "none",
-                padding: "0 24px",
-              }}
-            >
-              {/* Version badge — mono, uppercase, accent border (landing page style) */}
-              <motion.span
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1, duration: 0.3 }}
-                className="axion-mono-badge"
-                style={{ marginBottom: 28 }}
-              >
-                Kernel v0.1 · Alpha
-              </motion.span>
-
-              {/* Main wordmark — Space Grotesk display font */}
-              <motion.h1
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.18, duration: 0.4 }}
-                style={{
-                  fontFamily: "var(--axion-font-display)",
-                  fontSize: "clamp(4rem, 10vw, 7rem)",
-                  fontWeight: 600,
-                  letterSpacing: "-0.03em",
-                  lineHeight: 1.02,
-                  background: "linear-gradient(135deg, #ebeff2 20%, #9399a0 55%, #c8d4da 85%)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                  marginBottom: 18,
-                }}
-              >
-                Axion
-              </motion.h1>
-
-              {/* Tagline — muted, tracking-wide */}
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.28, duration: 0.4 }}
-                style={{
-                  fontSize: 15,
-                  color: "rgba(147,153,160,0.85)",
-                  letterSpacing: "-0.01em",
-                  fontWeight: 400,
-                  maxWidth: 380,
-                  lineHeight: 1.55,
-                  fontFamily: "var(--axion-font-main)",
-                }}
-              >
-                The headless intelligence kernel. Synthesize intent into verified, structured state.
-              </motion.p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Active: in-flow header */}
-        <AnimatePresence>
-          {!isIdle && (
-            <motion.header
-              key="active-header"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.3 }}
-              style={{ paddingTop: 56, paddingBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}
-            >
-              <img
-                src="/axion-logo.png"
-                alt="Axion"
-                style={{ width: 48, height: 48, filter: "invert(1)", mixBlendMode: "screen", flexShrink: 0 }}
-              />
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3 }}>
-                <h1
-                  style={{
-                    fontFamily: "var(--axion-font-display)",
-                    fontSize: "clamp(1.5rem, 3vw, 2rem)",
-                    fontWeight: 600,
-                    letterSpacing: "-0.03em",
-                    lineHeight: 1.05,
-                    background: "linear-gradient(135deg, #ebeff2 20%, #9399a0 60%, #c8d4da 90%)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
-                  }}
-                >
-                  Axion
-                </h1>
-                <span className="axion-mono-badge" style={{ fontSize: 8 }}>
-                  Kernel v0.1
-                </span>
-              </div>
-            </motion.header>
-          )}
-        </AnimatePresence>
-
-        {/* Idle: template gallery */}
-        <AnimatePresence>
-          {isIdle && (
-            <motion.div
-              key="idle-widgets"
-              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.18 } }}
-            >
-              <TemplateGallery
-                onSelect={(selectedIntent) => {
-                  setIntent(selectedIntent);
-                  // Delay focus by one tick so the textarea has re-rendered
-                  // with the new value before we move the cursor into it.
-                  setTimeout(() => textareaRef.current?.focus(), 50);
-                }}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Active content */}
-        <AnimatePresence>
-          {!isIdle && (
-            <motion.div
-              key="active-content"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              style={{ padding: "0 24px 52px", maxWidth: 960, margin: "0 auto" }}
-            >
-
-              {/* Active agent indicator */}
-              {isStreaming && activeAgent && (
-                <div
-                  className="flex items-center gap-3 rounded-xl px-4 py-3 mb-4"
-                  style={{
-                    background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    backdropFilter: "blur(28px) saturate(130%)",
-                    WebkitBackdropFilter: "blur(28px) saturate(130%)",
-                    boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 18px var(--axion-glow, rgba(167,202,220,0.15))",
-                  }}
-                >
-                  <div
-                    className="w-4 h-4 rounded-full animate-spin shrink-0"
-                    style={{
-                      border: "2px solid var(--axion-accent, #a7cadc)",
-                      borderTopColor: "transparent",
-                    }}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold" style={{ color: "var(--axion-accent, #a7cadc)" }}>
-                      {activeAgent.role}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate">{activeAgent.intent}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Initial spinner */}
-              {isStreaming && !hasCards && !activeAgent && (
-                <div className="flex flex-col items-center gap-4 py-10">
-                  <div
-                    className="w-9 h-9 rounded-full animate-spin"
-                    style={{
-                      border: "2px solid var(--axion-accent, #a7cadc)",
-                      borderTopColor: "transparent",
-                      boxShadow: "0 0 16px var(--axion-glow, rgba(167,202,220,0.25))",
-                    }}
-                  />
-                  <p className="text-gray-400 text-sm">🤖 Axion swarm initializing…</p>
-                </div>
-              )}
-
-              {/* Governor expand banner */}
-              {governorBanner && (
-                <div className="rounded-xl px-4 py-2.5 text-xs mb-4" style={{ background: "rgba(167,202,220,0.06)", border: "1px solid rgba(167,202,220,0.18)", color: "rgba(167,202,220,0.80)" }}>
-                  {governorBanner}
-                </div>
-              )}
-
-              {/* Error */}
-              {fetchError && missionStatus !== "streaming" && (
-                <div className="bg-red-950 border border-red-700 rounded-xl p-4 text-red-300 text-sm mb-4">
-                  ❌ {fetchError}
-                </div>
-              )}
-
-              {/* Results section — visible during streaming AND after completion */}
-              {hasCards && (
-                <section className="space-y-5">
-
-                  {/* Section header */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "rgba(147,153,160,0.70)", fontFamily: "var(--axion-font-mono)" }}>
-                      {missionStatus === "complete"
-                        ? activeMissionId ? "Loaded from history" : "Mission complete"
-                        : "Mission in progress"}{" "}
-                      {missionMeta && `— ${missionMeta.task_count} task${missionMeta.task_count !== 1 ? "s" : ""}`}
-                    </p>
-                    {missionMeta?.expanded_task_count != null && missionMeta.expanded_task_count > 0 && (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2.5 py-0.5" style={{ background: "rgba(167,202,220,0.08)", border: "1px solid rgba(167,202,220,0.22)", color: "rgba(167,202,220,0.80)" }}>
-                        🔭 +{missionMeta.expanded_task_count} expanded
-                      </span>
-                    )}
-                    {missionMeta?.layout_hint && (
-                      <span className="text-xs text-gray-500">
-                        {missionMeta.layout_hint === "Synthesized"
-                          ? "🧠 Synthesized"
-                          : missionMeta.layout_hint === "Analytical"
-                          ? "🐍 Analytical"
-                          : "🗺️ Itinerary"}
-                      </span>
-                    )}
-                  </div>
-
-                  {activeMissionId && missionMeta?.intent && (
-                    <p className="text-xs text-gray-500 italic -mt-3">{missionMeta.intent}</p>
-                  )}
-
-                  {/* ── Refinement history timeline ──────────────────────────── */}
-                  {refinementHistory.length > 0 && (
-                    <div style={{
-                      borderRadius: 12,
-                      background: "rgba(167,202,220,0.05)",
-                      border: "0.5px solid rgba(167,202,220,0.18)",
-                      overflow: "hidden",
-                    }}>
-                      {/* Toggle header */}
-                      <button
-                        onClick={() => setShowRefinementHistory(v => !v)}
-                        style={{
-                          width: "100%",
-                          padding: "9px 14px",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          background: "transparent",
-                          cursor: "pointer",
-                          textAlign: "left",
-                        }}
-                      >
-                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--axion-accent, rgba(167,202,220,0.70))" }}>
-                          Refinement history ({refinementHistory.length})
-                        </span>
-                        <span style={{ flex: 1 }} />
-                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.28)" }}>
-                          {showRefinementHistory ? "▲" : "▼"}
-                        </span>
-                      </button>
-
-                      {/* Collapsible rows */}
-                      <AnimatePresence>
-                        {showRefinementHistory && (
-                          <motion.div
-                            key="refine-history"
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ type: "spring", stiffness: 360, damping: 32 }}
-                            style={{ overflow: "hidden", borderTop: "0.5px solid rgba(167,202,220,0.12)" }}
-                          >
-                            <div style={{ padding: "8px 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
-                              {refinementHistory.map((round, ri) => (
-                                <div
-                                  key={ri}
-                                  style={{
-                                    display: "flex",
-                                    gap: 10,
-                                    alignItems: "flex-start",
-                                    padding: "8px 10px",
-                                    borderRadius: 8,
-                                    background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
-                                    borderLeft: "2px solid var(--axion-accent, #a7cadc)",
-                                  }}
-                                >
-                                  {/* R{n} badge */}
-                                  <span style={{
-                                    flexShrink: 0,
-                                    fontSize: 9,
-                                    fontWeight: 800,
-                                    letterSpacing: "0.04em",
-                                    padding: "2px 6px",
-                                    borderRadius: 5,
-                                    background: "rgba(167,202,220,0.18)",
-                                    border: "0.5px solid rgba(167,202,220,0.35)",
-                                    color: "var(--axion-accent, #a7cadc)",
-                                    lineHeight: 1.5,
-                                    marginTop: 1,
-                                  }}>
-                                    R{ri + 1}
-                                  </span>
-
-                                  {/* Intent + meta row */}
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p style={{
-                                      fontSize: 12,
-                                      color: "rgba(255,255,255,0.78)",
-                                      fontWeight: 500,
-                                      lineHeight: 1.4,
-                                      marginBottom: 4,
-                                      // 2-line clamp
-                                      display: "-webkit-box",
-                                      WebkitLineClamp: 2,
-                                      WebkitBoxOrient: "vertical",
-                                      overflow: "hidden",
-                                    } as React.CSSProperties}>
-                                      {round.intent}
-                                    </p>
-                                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                      {/* Relative timestamp */}
-                                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.28)", fontFamily: "var(--font-mono, monospace)" }}>
-                                        {timeAgo(round.timestamp)}
-                                      </span>
-                                      {/* Key chip: "no new data" or "+N new keys" */}
-                                      {round.newPayloadKeys.length === 0 ? (
-                                        <span style={{
-                                          fontSize: 9, padding: "1px 6px", borderRadius: 4,
-                                          background: "rgba(255,255,255,0.05)",
-                                          border: "0.5px solid rgba(255,255,255,0.10)",
-                                          color: "rgba(255,255,255,0.28)",
-                                          fontWeight: 600,
-                                        }}>
-                                          no new data
-                                        </span>
-                                      ) : (
-                                        <span style={{
-                                          fontSize: 9, padding: "1px 6px", borderRadius: 4,
-                                          background: "rgba(167,202,220,0.12)",
-                                          border: "0.5px solid rgba(167,202,220,0.25)",
-                                          color: "var(--axion-accent, #a7cadc)",
-                                          fontWeight: 600,
-                                        }}>
-                                          +{round.newPayloadKeys.length} new key{round.newPayloadKeys.length !== 1 ? "s" : ""}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )}
-
-                  {/* Dashboard */}
-                  {missionState && (() => {
-                    const blueprint = applicationMapper(
-                      missionState.data_payload,
-                      missionState.suggested_widgets ?? [],
-                      missionState.design_tokens?.layout_strategy,
-                    );
-                    return blueprint.components.length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-semibold uppercase tracking-widest text-pink-400/80">
-                            🧠 Synthesized State
-                          </p>
-                          <button
-                            onClick={() => setShowDetails((v) => !v)}
-                            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-                          >
-                            {showDetails ? "Hide agent reasoning" : "Show agent reasoning"}
-                          </button>
-                        </div>
-                        <div className={missionStatus === "complete" && missionState && !isRefining ? "axion-sheen-wrapper" : ""}>
-                          <Renderer
-                            blueprint={blueprint}
-                            pinnedCards={pinnedCards}
-                            dismissedCards={dismissedCards}
-                            refinedIndices={(() => {
-                              // Map refined payload-keys → component indices
-                              const idxSet = new Set<number>();
-                              if (refinedPayloadKeys.size > 0) {
-                                blueprint.components.forEach((c, idx) => {
-                                  const title = (c.props.title as string | undefined) ?? "";
-                                  // Check if the component's data key was refined
-                                  // by matching formatted key → title heuristic
-                                  for (const key of refinedPayloadKeys) {
-                                    const formattedKey = key.replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
-                                    if (title === formattedKey || title.toLowerCase().includes(key.toLowerCase())) {
-                                      idxSet.add(idx);
-                                    }
-                                  }
-                                });
-                              }
-                              return idxSet;
-                            })()}
-                            onPin={(i) => setPinnedCards((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; })}
-                            onDismiss={(i) => {
-                              if (i < 0) {
-                                setDismissedCards(new Set());
-                              } else {
-                                setDismissedCards((prev) => { const n = new Set(prev); n.add(i); return n; });
-                              }
-                            }}
-                          />
-                        </div>
-
-                        {/* Conflict badge — when Analyst flagged conflicting data */}
-                        {Array.isArray((missionState.data_payload as Record<string,unknown>).data_conflicts) && (() => {
-                          const conflicts = (missionState.data_payload as Record<string,unknown>).data_conflicts as {field:string; values:string[]; sources:string[]}[];
-                          const conflictSummary = conflicts.map(c => `${c.field}: ${c.values.join(" vs ")}`).join("; ");
-                          return (
-                            <motion.div
-                              initial={{ opacity: 0, y: 8 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              style={{
-                                marginTop: 16,
-                                padding: "14px 16px",
-                                borderRadius: 14,
-                                background: "rgba(251,191,36,0.07)",
-                                border: "1px solid rgba(251,191,36,0.25)",
-                                backdropFilter: "blur(20px)",
-                              }}
-                            >
-                              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
-                                <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>⚠️</span>
-                                <div style={{ flex: 1 }}>
-                                  <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(251,191,36,0.90)", marginBottom: 6 }}>
-                                    Data Conflicts Detected
-                                  </p>
-                                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px" }}>
-                                    {conflicts.map((c, i) => (
-                                      <div key={i} style={{
-                                        padding: "8px 10px",
-                                        borderRadius: 8,
-                                        background: "rgba(251,191,36,0.06)",
-                                        border: "0.5px solid rgba(251,191,36,0.15)",
-                                      }}>
-                                        <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.80)", marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.06em" }}>{c.field}</p>
-                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                          {c.values.map((v, vi) => (
-                                            <span key={vi} style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: vi === 0 ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.07)", color: vi === 0 ? "rgba(251,191,36,0.85)" : "rgba(255,255,255,0.55)", fontWeight: 600 }}>{v}</span>
-                                          ))}
-                                        </div>
-                                        {c.sources?.length > 0 && (
-                                          <p style={{ fontSize: 9, color: "rgba(255,255,255,0.28)", marginTop: 3 }}>{c.sources.join(", ")}</p>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => {
-                                  const resolveIntent = `Verify and resolve these conflicting data points: ${conflictSummary}. Find authoritative sources and return the correct values.`;
-                                  setIntent(resolveIntent);
-                                  setSidebarOpen(false);
-                                  setTimeout(() => textareaRef.current?.focus(), 80);
-                                }}
-                                style={{
-                                  marginTop: 4,
-                                  padding: "7px 14px",
-                                  borderRadius: 8,
-                                  background: "rgba(251,191,36,0.12)",
-                                  border: "1px solid rgba(251,191,36,0.30)",
-                                  color: "rgba(251,191,36,0.85)",
-                                  fontSize: 11, fontWeight: 700,
-                                  cursor: "pointer",
-                                  letterSpacing: "0.04em",
-                                  transition: "background 0.15s",
-                                }}
-                                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(251,191,36,0.20)"; }}
-                                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(251,191,36,0.12)"; }}
-                              >
-                                🔍 Launch Conflict Resolution Mission →
-                              </button>
-                            </motion.div>
-                          );
-                        })()}
-
-                        {/* Action Bar — completed missions only */}
-                        {(missionStatus === "complete" || isRefining) && (
-                          <ActionBar
-                            intent={missionMeta?.intent ?? intent}
-                            missionState={missionState}
-                            missionId={activeMissionId ?? missionMeta?.mission_id}
-                            onRefine={runRefinement}
-                            isRefining={isRefining}
-                            refineError={refineError}
-                            onNewMission={(newIntent) => { setIntent(newIntent); setSidebarOpen(false); setTimeout(() => textareaRef.current?.focus(), 80); }}
-                          />
-                        )}
-                      </div>
-                    ) : null;
-                  })()}
-
-                  {/* Raw agent cards */}
-                  {(!missionState || showDetails) && (() => {
-                    const visibleSlugs = cardOrder.filter((slug) => {
-                      const result = streamCards[slug]?.result;
-                      if (!result) return true;
-                      try {
-                        const parsed = JSON.parse(result);
-                        return !(parsed && typeof parsed.data_payload === "object" && parsed.data_payload !== null);
-                      } catch {
-                        return true;
-                      }
-                    });
-
-                    if (visibleSlugs.length === 0) return null;
-
-                    return (
-                      <div className="space-y-4">
-                        {missionState && (
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "rgba(147,153,160,0.50)", fontFamily: "var(--axion-font-mono)" }}>
-                            Agent Reasoning
-                          </p>
-                        )}
-                        {visibleSlugs.map((slug) => {
-                          const card = streamCards[slug];
-                          if (!card) return null;
-                          const { label, icon, accent } = cardMeta(slug, card.role);
-                          const isRunning = card.status === "running";
-
-                          return (
-                            <motion.article
-                              key={slug}
-                              layout
-                              initial={{ opacity: 0, y: 14 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ duration: 0.28 }}
-                              className={`rounded-2xl ${isRunning ? "axion-neural-pulse" : ""}`}
-                              style={{
-                                background: isRunning
-                                  ? "linear-gradient(rgba(255,255,255,0.05), rgba(255,255,255,0.02))"
-                                  : "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
-                                border: isRunning
-                                  ? `1px solid rgba(var(--axion-accent-rgb, 167,202,220), 0.35)`
-                                  : "1px solid rgba(255,255,255,0.08)",
-                                backdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
-                                WebkitBackdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
-                                padding: "var(--axion-pad, 20px)",
-                                boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 20px 40px -15px rgba(0,0,0,0.50)",
-                              }}
-                            >
-                              <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-3">
-                                <span>{icon}</span>
-                                <span>{label}</span>
-                                {isRunning && (
-                                  <span className="ml-auto flex items-center gap-1.5 text-xs font-normal"
-                                    style={{ color: "var(--axion-accent, #a7cadc)" }}>
-                                    <span className="w-2 h-2 rounded-full inline-block"
-                                      style={{ background: "var(--axion-accent, #a7cadc)", animation: "neural-pulse 1.4s ease-in-out infinite" }} />
-                                    Processing…
-                                  </span>
-                                )}
-                                {card.status === "failed" && (
-                                  <span className="ml-auto text-xs text-red-400 font-normal">✗ Failed</span>
-                                )}
-                              </h2>
-
-                              {isRunning ? (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                  {[1, 0.55, 0.3].map((op, i) => (
-                                    <div key={i} className="animate-pulse" style={{
-                                      height: 10, borderRadius: 6,
-                                      background: `rgba(255,255,255,${op * 0.08})`,
-                                      width: i === 2 ? "55%" : "100%",
-                                    }} />
-                                  ))}
-                                </div>
-                              ) : showDetails && card.result ? (
-                                (() => {
-                                  const displayed = displayedResults[slug];
-                                  const isAnimating =
-                                    card.status === "completed" &&
-                                    displayed !== undefined &&
-                                    displayed.length < card.result.length;
-                                  const isDone =
-                                    card.status === "completed" &&
-                                    displayed === card.result;
-
-                                  if (isDone) {
-                                    // Animation finished — render full markdown
-                                    return (
-                                      <ReactMarkdown
-                                        remarkPlugins={[remarkGfm]}
-                                        components={mdComponents}
-                                      >
-                                        {card.result}
-                                      </ReactMarkdown>
-                                    );
-                                  }
-
-                                  if (card.status === "completed" && displayed !== undefined) {
-                                    // Animating — raw text + blinking cursor
-                                    return (
-                                      <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed break-words">
-                                        {displayed}
-                                        <span className="axion-cursor" />
-                                      </p>
-                                    );
-                                  }
-
-                                  // Fallback (no displayedResults entry yet) — full result
-                                  return (
-                                    <ReactMarkdown
-                                      remarkPlugins={[remarkGfm]}
-                                      components={mdComponents}
-                                    >
-                                      {card.result}
-                                    </ReactMarkdown>
-                                  );
-                                })()
-                              ) : null}
-                            </motion.article>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-
-                  {/* ── Execution Trace Panel ───────────────────────────── */}
-                  {traceEvents.length > 0 && (
-                    <div style={{ marginTop: 24, paddingBottom: 8 }}>
-                      {/* Toggle header */}
-                      <div
-                        onClick={() => setTraceOpen((o) => !o)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          cursor: "pointer",
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.07)",
-                          userSelect: "none",
-                        }}
-                      >
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                          Execution trace ({traceEvents.length} events)
-                        </span>
-                        <span style={{
-                          marginLeft: "auto",
-                          fontSize: 11,
-                          color: "rgba(255,255,255,0.25)",
-                          display: "inline-block",
-                          transform: traceOpen ? "rotate(180deg)" : "none",
-                          transition: "transform 0.2s",
-                        }}>
-                          ▾
-                        </span>
-                      </div>
-
-                      {/* Collapsible body */}
-                      {traceOpen && (
-                        <div style={{ paddingTop: 4 }}>
-                          {traceEvents.map((event) => (
-                            <div
-                              key={event.id}
-                              style={{
-                                display: "flex",
-                                alignItems: "flex-start",
-                                gap: 12,
-                                padding: "5px 0",
-                                borderBottom: "1px solid rgba(255,255,255,0.04)",
-                              }}
-                            >
-                              {/* Timestamp */}
-                              <span style={{
-                                fontSize: 10,
-                                color: "rgba(255,255,255,0.2)",
-                                minWidth: 52,
-                                fontVariantNumeric: "tabular-nums",
-                                paddingTop: 1,
-                                fontFamily: "monospace",
-                              }}>
-                                {event.timestamp < 10
-                                  ? `#${event.timestamp}`    // synthetic from loadMission
-                                  : formatTraceTime(event.timestamp)}
-                              </span>
-                              {/* Dot */}
-                              <div style={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: "50%",
-                                marginTop: 4,
-                                flexShrink: 0,
-                                background: dotColorForType(event.type),
-                              }} />
-                              {/* Label + optional duration */}
-                              <span style={{
-                                fontSize: 12,
-                                color: "rgba(255,255,255,0.55)",
-                                lineHeight: 1.4,
-                                flex: 1,
-                              }}>
-                                {event.label}
-                                {event.durationMs !== undefined && (
-                                  <span style={{ marginLeft: 8, fontSize: 10, color: "rgba(255,255,255,0.25)" }}>
-                                    {event.durationMs}ms
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                </section>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* ── Control Zone — anchored, never overlaps Stage ─────────────────── */}
-      <div
-        style={{
-          flexShrink: 0,
-          position: "relative",
-          zIndex: 10,
-          background: "rgba(6,8,11,1)",
-        }}
-      >
-        {/* Gradient fade — bleeds upward into the Stage so last card dissolves softly */}
-        <div
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            bottom: "100%",
-            left: 0, right: 0,
-            height: 72,
-            background: "linear-gradient(to bottom, transparent, rgba(6,8,11,0.96))",
-            pointerEvents: "none",
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            padding: "6px 24px 22px",
-          }}
-        >
-          <div style={{ width: "100%", maxWidth: 720 }}>
-            {commandBarContent}
-          </div>
-        </div>
-      </div>
 
     </div>
   );

@@ -2,6 +2,18 @@
 
 import { useRef, useState, useEffect } from "react";
 
+function formatValue(raw: unknown): string {
+  if (typeof raw === "number") {
+    const abs = Math.abs(raw);
+    if (abs >= 1_000_000_000) return (raw / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B";
+    if (abs >= 1_000_000)     return (raw / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+    if (abs >= 10_000)        return (raw / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+    if (Number.isInteger(raw)) return raw.toLocaleString();
+    return raw.toFixed(2);
+  }
+  return String(raw ?? "—");
+}
+
 interface MetricCardProps {
   title: string;
   value: string | number;
@@ -20,10 +32,11 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
   const [displayed, setDisplayed] = useState<number>(0);
   const [hasAnimated, setHasAnimated] = useState(false);
 
-  // Extract prefix (e.g. "$"), numeric target, and suffix (e.g. "%", "k")
-  const rawStr = String(value);
+  // Normalise raw numbers to formatted strings before animation extraction
+  const rawStr = typeof value === "number" ? formatValue(value) : String(value);
   const prefix = rawStr.match(/^[^0-9]*/)?.[0] ?? "";
-  const suffix = rawStr.replace(/^[0-9.,\s-]+/, "").replace(/^[^0-9]*/, "");
+  // Capture everything after the last digit as suffix (handles "B", "M", "K", "%")
+  const suffix = rawStr.replace(/^.*[0-9]/, "");
   const target = parseFloat(rawStr.replace(/[^0-9.-]/g, ""));
   const isNumeric = !isNaN(target);
 
@@ -66,11 +79,11 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
 
   // What to show in the big number slot
   const displayValue = !isNumeric
-    ? value                                          // non-numeric: show as-is
+    ? formatValue(value)                             // non-numeric: still run through formatter
     : !hasAnimated
     ? `${prefix}0${suffix}`                          // not yet animated: start at 0
     : displayed === target
-    ? value                                          // animation done: restore exact original
+    ? typeof value === "number" ? formatValue(value) : value  // animation done: formatted
     : `${prefix}${displayed}${suffix}`;              // animating: show counted value
 
   return (

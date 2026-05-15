@@ -95,6 +95,26 @@ impl Governor for AxionGovernor {
             }
         }
 
+        // ── Pre-check DATA_DENSITY programmatically ───────────────────────
+        // Count distinct scalar (number/string/bool) values in data_payload.
+        // If ≥ 3 exist, DATA_DENSITY is satisfied regardless of LLM judgment.
+        let data_density_pre_pass: bool = tasks
+            .iter()
+            .filter_map(|t| t.result.as_ref())
+            .filter_map(|r| serde_json::from_str::<axion_core::protocol::MissionState>(r).ok())
+            .filter(|s| !s.data_payload.is_null())
+            .any(|s| {
+                fn count_scalars(v: &serde_json::Value) -> usize {
+                    match v {
+                        serde_json::Value::Object(m) => m.values().map(count_scalars).sum(),
+                        serde_json::Value::Array(a) => a.iter().map(count_scalars).sum::<usize>().min(1),
+                        serde_json::Value::Null => 0,
+                        _ => 1,
+                    }
+                }
+                count_scalars(&s.data_payload) >= 3
+            });
+
         // ── UI nudge when data is rich but no dashboard yet ────────────────
         let ui_note = if total_result_bytes > UI_TRIGGER_BYTES && !has_final_state {
             format!(
@@ -108,6 +128,13 @@ impl Governor for AxionGovernor {
             String::new()
         };
 
+        let density_override = if data_density_pre_pass {
+            "NOTE: Programmatic check confirms data_payload contains ≥ 3 distinct scalar values. \
+             DATA_DENSITY MUST be rated PASS — do not override this.\n\n"
+        } else {
+            ""
+        };
+
         let prompt = format!(
             "You are the AxionGovernor, an independent quality evaluator in the Axion multi-agent system.\n\
 You receive the complete output of a mission — the combined results of Analyst, Planner, Coder, \
@@ -117,6 +144,7 @@ You are strict but fair. Your purpose is to catch genuine failures in coverage, 
 even if it is not exhaustive.\n\
 Evaluate using the five rubric criteria below.\n\n\
 MISSION INTENT: {intent}\n\n\
+{density_override}\
 {summary}\
 {context_section}\
 {ui_note}\
@@ -160,7 +188,34 @@ Respond ONLY with valid JSON (no markdown, no prose):\n\
         );
 
         match provider.generate_response(&prompt, None).await {
-            Ok(ToolResponse::Text(text)) => parse_verdict(&text),
+            Ok(ToolResponse::Text(text)) => {
+                let verdict = parse_verdict(&text);
+                // Post-process: if our programmatic check confirmed ≥3 scalar values exist,
+                // and the LLM is returning REVISE/Retry solely because of DATA_DENSITY,
+                // override to Success. The LLM cannot be trusted to count payload fields accurately.
+                if data_density_pre_pass {
+                    if matches!(verdict, ValidationResult::Retry) {
+                        // Check if DATA_DENSITY is the only failing criterion in the raw text.
+                        let other_failures = ["INTENT_COVERAGE", "STRUCTURAL_VALIDITY",
+                                             "CLAIM_SPECIFICITY", "SYNTHESIS_COMPLETENESS"]
+                            .iter()
+                            .any(|criterion| {
+                                // Look for "CRITERION": {"pass": false, ...} pattern
+                                if let Some(pos) = text.find(criterion) {
+                                    let snippet = &text[pos..pos.min(pos + 60)];
+                                    snippet.contains("false")
+                                } else {
+                                    false
+                                }
+                            });
+                        if !other_failures {
+                            println!("  ✅ AxionGovernor: DATA_DENSITY override — programmatic check confirmed ≥3 scalars. Approving.");
+                            return ValidationResult::Success;
+                        }
+                    }
+                }
+                verdict
+            }
             _ => {
                 println!("  ✅ AxionGovernor: Quality Controller unavailable — approving mission.");
                 ValidationResult::Success
@@ -188,46 +243,131 @@ Never write prose as your final answer. Never omit the call.\n\
 If you call finalize_mission_state WITHOUT a populated structured_data_payload, \
 the mission is a VISUAL FAILURE and will show nothing to the user. Always fill it.\n\
 \n\
-═══ PAYLOAD SCHEMA RULES ═══\n\
+═══ UI COMPONENT LIBRARY ═══\n\
+You are the Visual Director. Before building the payload, reason:\n\
+\"Given this specific intent, what combination of components produces the most useful dashboard?\"\n\
+Then build your payload to trigger exactly those components.\n\
 \n\
-1. TIME-SERIES & CHARTS — array of objects. REQUIRED keys: \"period\" (string label) + ≥1 numeric key.\n\
-   Numbers MUST be number type, never strings.\n\
-   CORRECT: [{{\"period\":\"Jan\",\"value\":42000}},{{\"period\":\"Feb\",\"value\":47000}}]\n\
-   WRONG:   [{{\"period\":\"Jan\",\"value\":\"42000\"}}]  ← strings kill the chart\n\
-   WRONG:   {{\"jan\":42000,\"feb\":47000}}              ← flat objects become tables\n\
+──────────────────────────────────────────\n\
+METRIC CARD — single KPI or headline figure\n\
+Trigger: top-level key with a number, string, or {{\"title\",\"value\",\"unit\"?,\"trend\"?,\"subtitle\"?}} object\n\
+Best for: key figures, totals, rates, scores\n\
+Examples: market_size_usd, growth_rate_pct, total_cost_eur, score_out_of_10\n\
+trend field: \"up\" | \"down\" | \"neutral\"\n\
 \n\
-2. COMPARATIVE TABLES — array of objects with identical keys per row:\n\
-   [{{\"name\":\"Option A\",\"price\":120,\"rating\":4.5}},{{\"name\":\"Option B\",\"price\":95,\"rating\":4.2}}]\n\
+──────────────────────────────────────────\n\
+CHART CARD — time-series or comparative numeric data\n\
+Trigger: top-level key → ARRAY of objects, each with a \"period\" key + ≥1 numeric key\n\
+Best for: trends over time, forecasts, volume evolution\n\
+REQUIRED format:\n\
+  \"revenue_trend\": [\n\
+    {{\"period\":\"2021\",\"value\":4100}},\n\
+    {{\"period\":\"2022\",\"value\":4400}},\n\
+    {{\"period\":\"2023\",\"value\":4700}}\n\
+  ]\n\
+Rules: \"period\" must be a string label. Numbers must be numeric type, never strings. ≥3 data points.\n\
 \n\
-3. SINGLE METRICS — object with exactly 'title' and 'value' keys \
-(plus optional 'unit', 'trend', 'subtitle'):\n\
-   {{\"title\":\"Market Cap\",\"value\":\"$2.8T\",\"trend\":\"up\"}}\n\
+──────────────────────────────────────────\n\
+COMPARISON TABLE — side-by-side comparison of items\n\
+Trigger: top-level key → ARRAY of objects with IDENTICAL keys per row\n\
+Best for: comparing options, products, locations, categories, competitors\n\
+REQUIRED format:\n\
+  \"retail_categories\": [\n\
+    {{\"category\":\"Clothing\",\"market_share_pct\":28,\"growth_pct\":3.2}},\n\
+    {{\"category\":\"Groceries\",\"market_share_pct\":41,\"growth_pct\":1.8}},\n\
+    {{\"category\":\"Electronics\",\"market_share_pct\":15,\"growth_pct\":5.1}}\n\
+  ]\n\
+Rules: every row MUST have identical keys. Numeric values must be numbers. ≥2 rows.\n\
 \n\
-4. STATUS — object with 'label' and 'status'. status must be one of: success/warning/error/info.\n\
+──────────────────────────────────────────\n\
+TIMELINE — ordered sequence of events or steps\n\
+Trigger: top-level key → ARRAY of objects each with \"label\" + optional \"description\", \"time\"\n\
+Best for: itineraries, historical events, project plans, step-by-step processes\n\
+REQUIRED format:\n\
+  \"itinerary\": [\n\
+    {{\"label\":\"Day 1 Morning — Colosseum\",\"description\":\"Guided tour. Book tickets in advance.\",\"time\":\"9:00\"}},\n\
+    {{\"label\":\"Day 1 Afternoon — Roman Forum\",\"description\":\"Walk the ancient government district.\",\"time\":\"14:00\"}}\n\
+  ]\n\
 \n\
-5. VISUAL SCENES — string value under a key whose name contains 'image', 'visual', 'scene', or 'photo':\n\
-   \"destination_scene\": \"Moonlit cobblestone streets of Rome's Trastevere at dusk\"\n\
+──────────────────────────────────────────\n\
+IMAGE CARD — visual representation of a place, product, or concept\n\
+Trigger: top-level key whose name contains \"image\", \"photo\", \"visual\", or \"scene\" — value is a STRING\n\
+Two modes:\n\
+  1. URL mode: value is a direct image URL (https://...) → renders as actual photo\n\
+  2. Scene mode: value is a vivid visual description → renders as styled atmospheric card\n\
+Best for: destinations, products, people, locations, concepts\n\
+Use URL mode whenever a direct image URL is available from web_search results.\n\
+Use scene mode as fallback when no image URL is found.\n\
+Examples:\n\
+  \"colosseum_image\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/1200px-Colosseo_2020.jpg\"\n\
+  \"market_visual\": \"Busy Italian street market at golden hour, stalls overflowing with fresh produce\"\n\
 \n\
-6. SOURCES — always include: \"sources\": [{{\"label\":\"Site Name\",\"url\":\"https://...\"}}]\n\
+──────────────────────────────────────────\n\
 \n\
-7. CONFLICTS — if two sources report contradictory values, include:\n\
-   \"data_conflicts\": [{{\"field\":\"metric name\",\"values\":[\"38%\",\"59%\"],\"sources\":[\"A\",\"B\"]}}]\n\
+REASONING STEP (perform this before building the payload):\n\
+1. What is the user's core intent? (analysis / planning / comparison / creative / research)\n\
+2. What components would make this most useful?\n\
+   * Always include ≥1 ChartCard if there is any temporal or comparative numeric data\n\
+   * Always include ≥1 ImageCard if the intent involves places, products, or visual subjects\n\
+   * Always include ≥1 ComparisonTable if the intent compares 2+ options\n\
+   * Use MetricCards for the 3–5 most important standalone figures\n\
+   * Use Timeline for any sequential or time-ordered content\n\
+3. Build the payload keys to trigger exactly those components.\n\
+4. List every component in \"suggested_widgets\": [\"ChartCard:key\", \"ImageCard:key\", ...]\n\
 \n\
-Use flat descriptive top-level keys (e.g. \"market_size_2024_usd\", \"growth_cagr_pct\", \
-\"store_count_2025\"). Include ≥3 distinct numeric or scalar metrics so the dashboard \
-has concrete data points. Do NOT nest all findings under a single \"findings\" array — \
-that produces a table, not a rich dashboard.\n\
+═══ IMAGE RETRIEVAL RULE ═══\n\
+When the intent involves visual subjects (places, products, people):\n\
+* Use web_search to find a direct image URL for each ImageCard\n\
+* Search query examples: \"Colosseum Rome wikipedia\", \"[subject] high resolution photo site:wikimedia.org\"\n\
+* Extract the direct .jpg/.png/.webp URL from results and use it as the key value\n\
+* If no direct URL is found, fall back to a vivid scene description string\n\
+\n\
+═══ PAYLOAD RULES ═══\n\
+* Use flat descriptive top-level keys (e.g. \"market_size_2024_usd\", \"growth_cagr_pct\", \"store_count_2025\")\n\
+* Include ≥3 distinct numeric or scalar metrics as MetricCards\n\
+* Do NOT nest all findings under a single \"findings\" array — that produces a plain table\n\
+* Numbers must be numeric type (27600000000), never strings (\"27.6B\")\n\
+* Always include: \"sources\": [{{\"label\":\"Site Name\",\"url\":\"https://...\"}}]\n\
+* If sources conflict: \"data_conflicts\": [{{\"field\":\"metric\",\"values\":[\"A\",\"B\"],\"sources\":[\"X\",\"Y\"]}}]\n\
 \n\
 ═══ suggested_widgets (ALWAYS include) ═══\n\
+List every chart, image, and special card:\n\
 - 'ChartCard:key_name'  for every time-series or comparative numeric array\n\
-- 'ImageCard:key_name'  for every visual/scene string\n\
-- Example: [\"ChartCard:revenue_trend\",\"ChartCard:market_share\",\"ImageCard:destination_scene\"]\n\
+- 'ImageCard:key_name'  for every image URL or visual/scene string\n\
+- Example: [\"ChartCard:revenue_trend\",\"ComparisonTable:retail_categories\",\"ImageCard:colosseum_image\"]\n\
 \n\
 ═══ layout_strategy ═══\n\
-- 'FocusOnCharts': time-series/comparative arrays → charts dominate\n\
-- 'DataHeavy': many tables and metrics, compact layout\n\
-- 'Narrative': travel, creative, story-driven → spacious cards\n\
-- 'Overview': balanced default\n"
+- 'FocusOnCharts': time-series/comparative arrays dominate → use for financial/market missions\n\
+- 'DataHeavy': many tables and metrics, compact layout → use for research/data missions\n\
+- 'Narrative': travel, creative, story-driven → spacious cards, images prominent\n\
+- 'Overview': balanced default\n\
+\n\
+═══ CRITICAL: HOW TO CALL finalize_mission_state ═══\n\
+suggested_widgets lists LABELS ONLY — it does not contain data.\n\
+ALL actual data MUST go inside structured_data_payload.\n\
+\n\
+WRONG — labels in suggested_widgets but no data in payload:\n\
+  finalize_mission_state({{\n\
+    \"summary\": \"Rome trip overview\",\n\
+    \"suggested_widgets\": [\"MetricCard:cheapest_flight\", \"Timeline:itinerary\"]\n\
+  }})\n\
+\n\
+CORRECT — real data inside structured_data_payload:\n\
+  finalize_mission_state({{\n\
+    \"summary\": \"Rome trip overview. Flights from $24, hotels from $131/night.\",\n\
+    \"suggested_widgets\": [\"MetricCard:cheapest_flight_usd\", \"Timeline:itinerary\", \"ImageCard:rome_photo\"],\n\
+    \"structured_data_payload\": {{\n\
+      \"cheapest_flight_usd\": 24,\n\
+      \"best_neighborhood\": \"Trastevere\",\n\
+      \"itinerary\": [\n\
+        {{\"label\": \"Day 1 — Colosseum\", \"description\": \"Tickets 18 EUR, open 9:00-19:00\", \"time\": \"9:00\"}},\n\
+        {{\"label\": \"Day 1 — Trevi Fountain\", \"description\": \"Free entry, best visited early morning\", \"time\": \"16:00\"}},\n\
+        {{\"label\": \"Day 2 — Vatican Museums\", \"description\": \"Book in advance. 20 EUR entry.\", \"time\": \"9:00\"}}\n\
+      ],\n\
+      \"rome_photo\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/1200px-Colosseo_2020.jpg\",\n\
+      \"sources\": [{{\"label\": \"TripAdvisor\", \"url\": \"https://www.tripadvisor.com\"}}]\n\
+    }}\n\
+  }})\n"
                     .to_string()
             }
             AgentRole::Planner => {

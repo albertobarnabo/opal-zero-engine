@@ -154,11 +154,39 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
         );
         return Some(ValidationResult::Expand(vec![NewTask {
             description:
-                "Call finalize_mission_state. Extract ALL findings from the PREVIOUS TASK \
-                 RESULTS in your context. Build a structured_data_payload JSON object where \
-                 each key is a descriptive label (e.g. 'cheapest_flight', 'hotel_options', \
-                 'total_cost') and each value captures the corresponding fact. \
-                 Call finalize_mission_state EXACTLY ONCE with this complete payload."
+                "Call finalize_mission_state with a fully populated structured_data_payload.\n\
+\n\
+⚠️  COMMON MISTAKE — do NOT do this:\n\
+  finalize_mission_state({\n\
+    \"summary\": \"Overview...\",\n\
+    \"suggested_widgets\": [\"MetricCard:cheapest_flight\", \"ComparisonTable:hotels\"],\n\
+    \"verification_logs\": [...]\n\
+  })\n\
+This is WRONG. suggested_widgets contains labels only — it does NOT contain the actual data.\n\
+\n\
+✅ CORRECT — always include structured_data_payload with real values:\n\
+  finalize_mission_state({\n\
+    \"summary\": \"Weekend trip to Rome: flights from $24, hotels from $131/night.\",\n\
+    \"suggested_widgets\": [\"MetricCard:cheapest_flight_usd\", \"ComparisonTable:hotels\", \"Timeline:itinerary\", \"ImageCard:colosseum_photo\"],\n\
+    \"structured_data_payload\": {\n\
+      \"cheapest_flight_usd\": 24,\n\
+      \"hotel_budget_min_usd\": 131,\n\
+      \"top_neighborhoods\": \"Trastevere, Centro Storico, Prati\",\n\
+      \"hotels\": [\n\
+        {\"name\": \"Hotel Vilon\", \"stars\": 5, \"price_per_night_usd\": 250, \"neighborhood\": \"Centro Storico\"},\n\
+        {\"name\": \"Hotel Locarno\", \"stars\": 4, \"price_per_night_usd\": 180, \"neighborhood\": \"Tridente\"}\n\
+      ],\n\
+      \"itinerary\": [\n\
+        {\"label\": \"Day 1 Morning — Colosseum\", \"description\": \"Guided tour. Tickets 18 EUR. Open 9:00-19:00.\", \"time\": \"9:00\"},\n\
+        {\"label\": \"Day 1 Afternoon — Roman Forum\", \"description\": \"Included with Colosseum ticket.\", \"time\": \"14:00\"},\n\
+        {\"label\": \"Day 2 Morning — Vatican Museums\", \"description\": \"Book in advance. 20 EUR entry.\", \"time\": \"9:00\"}\n\
+      ],\n\
+      \"colosseum_photo\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/1200px-Colosseo_2020.jpg\",\n\
+      \"sources\": [{\"label\": \"TripAdvisor\", \"url\": \"https://www.tripadvisor.com/Attractions-g187791-Activities-Rome_Lazio.html\"}]\n\
+    }\n\
+  })\n\
+\n\
+Now extract ALL findings from the PREVIOUS TASK RESULTS in your context and call finalize_mission_state EXACTLY ONCE with a structured_data_payload that matches this pattern."
                     .to_string(),
             role: AgentRole::Analyst,
             excluded_tools: vec![],
