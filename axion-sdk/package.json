@@ -1,5 +1,5 @@
 {
-  "name": "@axion/sdk",
+  "name": "axion-sdk",
   "version": "0.1.0",
   "description": "TypeScript client SDK for the Axion Intelligence Kernel",
   "main": "dist/index.js",

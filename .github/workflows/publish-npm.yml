@@ -1,5 +1,5 @@
 # Required secret (GitHub → Settings → Secrets → Actions):
-#   NPM_TOKEN — npm automation token with publish rights to the @axion org scope.
+#   NPM_TOKEN — npm automation token (Automation type, read and write, bypass 2FA).
 
 name: Publish TypeScript SDK to npm
 
@@ -33,6 +33,6 @@ jobs:
           VERSION="${TAG#sdk-ts-v}"       # strip prefix → 1.2.3
           npm version "$VERSION" --no-git-tag-version
 
-      - run: npm publish --access public
+      - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
