@@ -489,6 +489,49 @@ impl Tool {
         }
     }
 
+    pub fn memory_persist() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "key".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "Unique identifier for this memory entry (alphanumeric, underscores, \
+                     hyphens, max 64 chars). Example: 'user_industry', 'preferred_chart_style'"
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+        properties.insert(
+            "value".to_string(),
+            ParameterProperty {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "The fact or context to remember. Be concise — max 2000 chars."
+                        .to_string(),
+                ),
+                items: None,
+            },
+        );
+
+        Tool {
+            name: "memory_persist".to_string(),
+            description:
+                "Write a named fact to the persistent cross-mission memory store. \
+                 Use this to save important findings, user preferences, or recurring context \
+                 that should be available in future Axion missions."
+                    .to_string(),
+            is_async: false,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["key".to_string(), "value".to_string()],
+            },
+        }
+    }
+
     /// Hydrate a `Tool` from a JSON manifest file on disk.
     ///
     /// The manifest must be valid JSON matching the `Tool` serde shape:

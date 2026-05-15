@@ -2,11 +2,14 @@ pub mod dispatcher;
 pub mod engine;
 pub mod executor;
 pub mod governor;
+pub mod memory;
 pub mod persistence;
 pub mod planner;
 pub mod protocol;
 pub mod registry;
 pub mod tools;
+
+pub use memory::MemoryStore;
 
 /// Everything a downstream consumer needs to run a mission in one import.
 ///
@@ -52,6 +55,21 @@ pub async fn run_mission(
 ) -> Result<Option<protocol::HandshakeRequest>, String> {
     // Wipe any context from a previous run on this plan object.
     plan.context.clear();
+
+    // ── Inject cross-mission persistent memory into the context bus ───────────
+    let memory = memory::MemoryStore::new(std::path::Path::new("memory"));
+    let all = memory.read_all();
+    if !all.is_empty() {
+        let summary = all
+            .iter()
+            .map(|(k, e)| format!("{k}: {}", e.value))
+            .collect::<Vec<_>>()
+            .join("\n");
+        plan.context
+            .data
+            .insert("__global_memory".into(), summary);
+    }
+
     let original_task_count = plan.tasks.len();
     run_loop(plan, provider, governor, original_task_count, max_attempts, tx.as_ref()).await
 }
@@ -71,6 +89,21 @@ pub async fn resume_mission(
     tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
 ) -> Result<Option<protocol::HandshakeRequest>, String> {
     use protocol::AWAITING_FEEDBACK_PREFIX;
+
+    // ── Refresh cross-mission memory in the context bus ───────────────────────
+    // (Context is NOT cleared on resume — we update the memory key in place.)
+    let memory = memory::MemoryStore::new(std::path::Path::new("memory"));
+    let all = memory.read_all();
+    if !all.is_empty() {
+        let summary = all
+            .iter()
+            .map(|(k, e)| format!("{k}: {}", e.value))
+            .collect::<Vec<_>>()
+            .join("\n");
+        plan.context
+            .data
+            .insert("__global_memory".into(), summary);
+    }
 
     // ── 1. Strip the awaiting-feedback marker from any task that set it ───────
     let mut question = String::new();

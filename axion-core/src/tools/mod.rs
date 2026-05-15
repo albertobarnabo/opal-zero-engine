@@ -12,7 +12,7 @@ struct VisionProxy {
     prompt: String,
 }
 
-pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String> {
+pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Result<String, String> {
     // ── 1. Registry validation + Wasm-first dispatch ──────────────────────────
     //
     // When the registry is initialised (normal production path), we:
@@ -91,6 +91,7 @@ pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String>
         "python_interpreter"      => python::execute_python(arguments),
         "finalize_mission_state"  => ui_builder::finalize_mission_state(arguments),
         "feedback"                => execute_feedback_native(arguments),
+        "memory_persist"          => execute_memory_persist(arguments, mission_id),
         _ => {
             eprintln!(
                 "[WARN] execute_tool: LLM called unregistered tool '{}' — \
@@ -101,6 +102,36 @@ pub async fn execute_tool(name: &str, arguments: &str) -> Result<String, String>
             Err(format!("Unknown tool: '{}'", name))
         }
     }
+}
+
+// ── Memory persist tool ───────────────────────────────────────────────────────
+
+/// Native implementation of the `memory_persist` tool.
+///
+/// Writes a key/value fact to `memory/global.json` so it can be recalled in
+/// any future mission via the `__global_memory` context bus entry.
+pub fn execute_memory_persist(arguments: &str, mission_id: &str) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct MemoryPersistArgs {
+        key: String,
+        value: String,
+    }
+
+    let args: MemoryPersistArgs = serde_json::from_str(arguments)
+        .map_err(|e| format!("Failed to parse memory_persist arguments: {}", e))?;
+
+    if args.key.trim().is_empty() {
+        return Err("memory_persist requires a non-empty 'key'".to_string());
+    }
+
+    let store = crate::memory::MemoryStore::new(std::path::Path::new("memory"));
+    store.write(&args.key, &args.value, mission_id)?;
+
+    println!(
+        "  🧠 memory_persist: stored '{}' for future missions.",
+        args.key
+    );
+    Ok(format!("Remembered '{}' for future missions.", args.key))
 }
 
 // ── Feedback tool ─────────────────────────────────────────────────────────────

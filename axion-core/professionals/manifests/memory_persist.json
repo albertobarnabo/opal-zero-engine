@@ -1,0 +1,18 @@
+{
+  "name": "memory_persist",
+  "description": "Write a named fact to the persistent cross-mission memory store. Use this to save important findings, user preferences, or recurring context that should be available in future Axion missions.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "key": {
+        "type": "string",
+        "description": "Unique identifier for this memory entry (alphanumeric, underscores, hyphens, max 64 chars). Example: 'user_industry', 'preferred_chart_style'"
+      },
+      "value": {
+        "type": "string",
+        "description": "The fact or context to remember. Be concise — max 2000 chars."
+      }
+    },
+    "required": ["key", "value"]
+  }
+}
