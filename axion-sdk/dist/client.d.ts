@@ -3,13 +3,13 @@ export declare class AxionClient {
     private readonly base;
     /** @internal */ readonly _headers: Record<string, string>;
     constructor(config: AxionClientConfig);
-    execute(intent: string): AsyncGenerator<MissionEvent>;
+    execute(intent: string, model?: string): AsyncGenerator<MissionEvent>;
     readonly missions: {
         list: () => Promise<MissionSummary[]>;
         get: (id: string) => Promise<MissionSnapshot>;
         delete: (id: string) => Promise<void>;
         /** Streams refinement events for an existing mission. */
-        refine: (id: string, intent: string) => AsyncGenerator<MissionEvent>;
+        refine: (id: string, intent: string, model?: string) => AsyncGenerator<MissionEvent>;
         export: (id: string, format: "md" | "csv" | "html") => Promise<Blob>;
     };
     upload(file: File): Promise<UploadResult>;

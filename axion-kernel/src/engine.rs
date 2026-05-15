@@ -37,14 +37,27 @@ fn request_timeout() -> std::time::Duration {
 // ── Public struct ─────────────────────────────────────────────────────────────
 
 pub struct OpenAIProvider {
-    api_key: String,
+    api_key:    String,
+    text_model: String,
 }
 
 impl OpenAIProvider {
     pub fn new() -> Result<Self, String> {
         let api_key = env::var("OPENAI_API_KEY")
             .map_err(|_| "OPENAI_API_KEY environment variable not set".to_string())?;
-        Ok(OpenAIProvider { api_key })
+        let text_model = env::var("AXION_MODEL")
+            .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        Ok(OpenAIProvider { api_key, text_model })
+    }
+
+    /// Create a provider and optionally override the text model.
+    /// `None` keeps whatever `new()` resolved (env var or hard default).
+    pub fn new_with_model(model: Option<String>) -> Result<Self, String> {
+        let mut provider = Self::new()?;
+        if let Some(m) = model {
+            provider.text_model = m;
+        }
+        Ok(provider)
     }
 }
 
@@ -229,7 +242,7 @@ impl AiProvider for OpenAIProvider {
         let openai_tools = build_tools(tools);
 
         let body = OpenAIRequest {
-            model: "gpt-4o-mini".to_string(),
+            model: self.text_model.clone(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: Some(MessageContent::Text(prompt.to_string())),
@@ -261,7 +274,7 @@ impl AiProvider for OpenAIProvider {
         let openai_tools = build_tools(tools);
 
         let body = OpenAIRequest {
-            model: "gpt-4o-mini".to_string(),
+            model: self.text_model.clone(),
             messages: vec![
                 Message {
                     role: "user".to_string(),

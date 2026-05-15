@@ -30,8 +30,8 @@ class AxionClient {
                     await this._throwApiError(res);
             },
             /** Streams refinement events for an existing mission. */
-            refine: (id, intent) => {
-                return this._refine(id, intent);
+            refine: (id, intent, model) => {
+                return this._refine(id, intent, model);
             },
             export: async (id, format) => {
                 const res = await fetch(`${this.base}/api/v1/missions/${id}/export?format=${format}`, { headers: this._headers });
@@ -50,11 +50,14 @@ class AxionClient {
             this._headers["X-Tavily-Key"] = config.tavilyKey;
     }
     // ── Core execution ────────────────────────────────────────────────────────
-    async *execute(intent) {
+    async *execute(intent, model) {
+        const body = { intent };
+        if (model)
+            body.model = model;
         const res = await fetch(`${this.base}/api/v1/execute`, {
             method: "POST",
             headers: this._headers,
-            body: JSON.stringify({ intent }),
+            body: JSON.stringify(body),
         });
         if (!res.ok)
             await this._throwApiError(res);
@@ -83,11 +86,14 @@ class AxionClient {
         return res.json();
     }
     // ── Internal ──────────────────────────────────────────────────────────────
-    async *_refine(id, intent) {
+    async *_refine(id, intent, model) {
+        const body = { intent };
+        if (model)
+            body.model = model;
         const res = await fetch(`${this.base}/api/v1/missions/${id}/refine`, {
             method: "POST",
             headers: this._headers,
-            body: JSON.stringify({ intent }),
+            body: JSON.stringify(body),
         });
         if (!res.ok)
             await this._throwApiError(res);

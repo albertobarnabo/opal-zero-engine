@@ -41,11 +41,23 @@ type InFlight = Arc<Mutex<HashSet<String>>>;
 #[derive(Deserialize)]
 struct TaskRequest {
     intent: String,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct RefineRequest {
     intent: String,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+/// Only allow a fixed set of known model IDs to prevent injection via this field.
+fn validate_model(model: &str) -> bool {
+    matches!(
+        model,
+        "gpt-4o-mini" | "gpt-4o" | "gpt-4o-mini-2024-07-18" | "o1-mini" | "o3-mini"
+    )
 }
 
 #[derive(Serialize)]
@@ -119,7 +131,29 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         }
     }
 
-    let provider = match OpenAIProvider::new() {
+    // Model resolution: body → x-axion-model header → AXION_MODEL env → default
+    let model = req.model.clone()
+        .or_else(|| {
+            headers
+                .get("x-axion-model")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        });
+
+    if let Some(ref m) = model {
+        if !validate_model(m) {
+            return (
+                StatusCode::BAD_REQUEST,
+                ApiError::new(
+                    "UNSUPPORTED_MODEL",
+                    "Unsupported model. Allowed: gpt-4o-mini, gpt-4o, o1-mini, o3-mini",
+                ),
+            )
+                .into_response();
+        }
+    }
+
+    let provider = match OpenAIProvider::new_with_model(model) {
         Ok(p) => p,
         Err(e) => {
             return (
@@ -546,7 +580,30 @@ async fn refine_mission_handler(
         }
     };
 
-    let provider = match OpenAIProvider::new() {
+    // Model resolution: body → x-axion-model header → AXION_MODEL env → default
+    let model = req.model.clone()
+        .or_else(|| {
+            headers
+                .get("x-axion-model")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        });
+
+    if let Some(ref m) = model {
+        if !validate_model(m) {
+            in_flight.lock().await.remove(&id);
+            return (
+                StatusCode::BAD_REQUEST,
+                ApiError::new(
+                    "UNSUPPORTED_MODEL",
+                    "Unsupported model. Allowed: gpt-4o-mini, gpt-4o, o1-mini, o3-mini",
+                ),
+            )
+                .into_response();
+        }
+    }
+
+    let provider = match OpenAIProvider::new_with_model(model) {
         Ok(p)  => p,
         Err(e) => {
             in_flight.lock().await.remove(&id);
@@ -592,6 +649,99 @@ async fn refine_mission_handler(
     Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+// ── Clarify types ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ClarifyRequest {
+    intent: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ClarifyQuestion {
+    key:         String,
+    question:    String,
+    required:    bool,
+    placeholder: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ClarifyResponse {
+    complete:  bool,
+    questions: Vec<ClarifyQuestion>,
+}
+
+/// `POST /api/v1/clarify`
+///
+/// Stateless pre-flight call. Sends the user intent to the LLM and returns 0–3
+/// clarifying questions. Always returns HTTP 200 JSON. On any failure (provider
+/// unavailable, parse error) returns `{ "complete": true, "questions": [] }` so
+/// the caller can proceed to /execute without blocking the user.
+async fn clarify_handler(
+    headers: HeaderMap,
+    Json(req): Json<ClarifyRequest>,
+) -> impl IntoResponse {
+    let fail_open = Json(ClarifyResponse { complete: true, questions: vec![] });
+
+    if req.intent.trim().is_empty() {
+        return fail_open;
+    }
+
+    // Honour per-request OpenAI key header (same pattern as execute handler).
+    if let Some(key) = headers.get("x-openai-key").and_then(|v| v.to_str().ok()) {
+        if !key.is_empty() {
+            // SAFETY: single-user local tool; no signal handlers read env vars.
+            unsafe { std::env::set_var("OPENAI_API_KEY", key) };
+        }
+    }
+
+    // Always use gpt-4o-mini — this call is cheap and speed matters.
+    let provider = match OpenAIProvider::new_with_model(Some("gpt-4o-mini".to_string())) {
+        Ok(p)  => p,
+        Err(_) => return fail_open,
+    };
+
+    let prompt = format!(
+        "You are an intent completeness analyzer for an AI research assistant.\n\
+Given the user's intent below, identify the MOST CRITICAL missing parameters — information that, \
+if unknown, would cause the AI to guess and likely produce wrong or irrelevant output.\n\
+\n\
+Rules:\n\
+- Return at most 3 questions. Fewer is better. Only ask what truly matters.\n\
+- If the intent is self-contained and actionable as-is, return an empty questions array.\n\
+- Do not ask about things the AI can reasonably assume or research itself \
+  (e.g. \"what is the capital of France\").\n\
+- Do ask about things that are personal, preference-based, or physically specific \
+  (e.g. departure city, budget, date range, dietary restrictions, specific product version).\n\
+- Each question must have: key (snake_case identifier), question (friendly sentence), \
+  required (true/false), placeholder (example answer).\n\
+\n\
+Respond ONLY with valid JSON in this exact format:\n\
+{{\"complete\": true | false, \"questions\": [\
+{{\"key\": \"...\", \"question\": \"...\", \"required\": true, \"placeholder\": \"...\"}}]}}\n\
+\n\
+User intent: {}",
+        req.intent
+    );
+
+    let text = match provider.generate_response(&prompt, None).await {
+        Ok(axion_core::engine::ToolResponse::Text(t)) => t,
+        _ => return fail_open,
+    };
+
+    // Strip optional markdown code fences before parsing.
+    let json_str = text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    match serde_json::from_str::<ClarifyResponse>(json_str) {
+        Ok(r)  => Json(r),
+        Err(_) => fail_open,
+    }
 }
 
 /// `GET /api/v1/config/status`
@@ -712,6 +862,7 @@ async fn main() {
             axum::http::header::HeaderName::from_static("x-axion-key"),
             axum::http::header::HeaderName::from_static("x-openai-key"),
             axum::http::header::HeaderName::from_static("x-tavily-key"),
+            axum::http::header::HeaderName::from_static("x-axion-model"),
         ]);
 
     // Shared set tracking mission IDs that currently have an open refinement
@@ -722,6 +873,7 @@ async fn main() {
     // the auth middleware (auth is disabled when AXION_API_KEY is not set in env).
     let api_routes = Router::new()
         .route("/execute", post(execute))
+        .route("/clarify", post(clarify_handler))
         .route("/missions", get(list_missions))
         .route("/missions/:id", get(get_mission).delete(delete_mission))
         .route("/missions/:id/export", get(export_mission))

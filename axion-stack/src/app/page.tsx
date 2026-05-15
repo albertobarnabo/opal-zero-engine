@@ -7,6 +7,9 @@ import remarkGfm from "remark-gfm";
 import { Renderer, UIBlueprint, UIComponent } from "@/components/Renderer";
 import { ActionBar } from "@/components/ActionBar";
 import { TemplateGallery } from "@/components/TemplateGallery";
+import { ModelSelector } from "@/components/ModelSelector";
+import { MODEL_CATALOG, type ModelId } from "@/data/models";
+import { ClarifyModal } from "@/components/ClarifyModal";
 import { AxionClient } from "@axion/sdk";
 import type {
   MissionEvent,
@@ -47,6 +50,16 @@ interface MissionSummary {
 }
 
 type MissionStatus = "idle" | "streaming" | "complete" | "failed";
+
+
+// ── Clarification ─────────────────────────────────────────────────────────────
+
+interface ClarifyQuestion {
+  key:         string;
+  question:    string;
+  required:    boolean;
+  placeholder: string;
+}
 
 // ── Slash command discovery ───────────────────────────────────────────────────
 
@@ -529,6 +542,15 @@ export default function Home() {
   const [refinementHistory, setRefinementHistory] = useState<RefinementRound[]>([]);
   const [isRefining, setIsRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ModelId>("gpt-4o-mini");
+
+  // ── Clarification pre-flight ───────────────────────────────────────────────
+  const [clarifyQuestions, setClarifyQuestions]   = useState<ClarifyQuestion[]>([]);
+  const [clarifyAnswers, setClarifyAnswers]       = useState<Record<string, string>>({});
+  const [showClarifyModal, setShowClarifyModal]   = useState(false);
+  const [isClarifying, setIsClarifying]           = useState(false);
+  /** Set to true before closing the modal so the post-close useEffect fires runMission(). */
+  const pendingRunRef = useRef(false);
 
   // ── Image upload ───────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -581,6 +603,15 @@ export default function Home() {
   useEffect(() => {
     if (isRefining) setRefineNavOpen(false);
   }, [isRefining]);
+
+  // After the clarify modal closes with pendingRunRef set, fire runMission().
+  useEffect(() => {
+    if (!showClarifyModal && pendingRunRef.current) {
+      pendingRunRef.current = false;
+      runMission();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showClarifyModal]);
 
   async function deleteMission(id: string) {
     try {
@@ -847,6 +878,41 @@ export default function Home() {
   async function runMission() {
     if (!intent.trim() || missionStatus === "streaming") return;
 
+    // ── Pre-flight clarification check ──────────────────────────────────────
+    // Only run when the modal is not already showing (avoids re-checking after
+    // the user has already answered or skipped).
+    if (!showClarifyModal) {
+      setIsClarifying(true);
+      try {
+        const clarifyHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        const storedKey     = localStorage.getItem("axion_api_key");
+        const storedOpenAI  = localStorage.getItem("axion_openai_key");
+        if (storedKey)    clarifyHeaders["X-Axion-Key"]  = storedKey;
+        if (storedOpenAI) clarifyHeaders["X-OpenAI-Key"] = storedOpenAI;
+
+        const res = await fetch("http://localhost:8080/api/v1/clarify", {
+          method:  "POST",
+          headers: clarifyHeaders,
+          body:    JSON.stringify({ intent }),
+          signal:  AbortSignal.timeout(8000), // fail open after 8 s
+        });
+        if (res.ok) {
+          const data = await res.json() as { complete: boolean; questions?: ClarifyQuestion[] };
+          if (!data.complete && data.questions && data.questions.length > 0) {
+            setClarifyQuestions(data.questions);
+            setClarifyAnswers({});
+            setShowClarifyModal(true);
+            setIsClarifying(false);
+            return; // wait for user to answer or skip
+          }
+        }
+      } catch {
+        // Fail open — proceed to execute as normal
+      }
+      setIsClarifying(false);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     // Request notification permission on first Execute — fire-and-forget, non-blocking
     if (typeof window !== "undefined" && "Notification" in window
         && Notification.permission === "default") {
@@ -998,7 +1064,7 @@ export default function Home() {
     let attachmentReleased = false;
 
     try {
-      for await (const event of buildClient().execute(effectiveIntent)) {
+      for await (const event of buildClient().execute(effectiveIntent, selectedModel)) {
         // Release the attachment chip as soon as the first event arrives (server accepted)
         if (!attachmentReleased && pendingAttachment) {
           attachmentReleased = true;
@@ -1017,6 +1083,24 @@ export default function Home() {
       setMissionStatus("failed");
       showMissionNotification("failed", intent);
     }
+  }
+
+  // ── Clarification submit ──────────────────────────────────────────────────────
+
+  function runMissionWithAnswers() {
+    // Append non-empty answers to the intent string.
+    const answerLines = clarifyQuestions
+      .filter((q) => clarifyAnswers[q.key]?.trim())
+      .map((q) => `${q.question} ${clarifyAnswers[q.key].trim()}`);
+
+    if (answerLines.length > 0) {
+      setIntent((prev) => `${prev}. Additional context: ${answerLines.join(". ")}`);
+    }
+
+    // Close modal; useEffect will call runMission() once state settles.
+    pendingRunRef.current = true;
+    setClarifyQuestions([]);
+    setShowClarifyModal(false);
   }
 
   // ── Image upload ──────────────────────────────────────────────────────────────
@@ -1072,7 +1156,7 @@ export default function Home() {
     const keysBefore = new Set(Object.keys(missionState?.data_payload ?? {}));
 
     try {
-      for await (const event of buildClient().missions.refine(targetId, refinementIntent)) {
+      for await (const event of buildClient().missions.refine(targetId, refinementIntent, selectedModel)) {
         const now = Date.now();
         switch (event.type) {
           case "task_started": {
@@ -1574,6 +1658,13 @@ export default function Home() {
             </p>
           )}
 
+          {/* Model selector */}
+          <ModelSelector
+            value={selectedModel}
+            onChange={setSelectedModel}
+            disabled={missionStatus === "streaming"}
+          />
+
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -1657,20 +1748,20 @@ export default function Home() {
         {/* Execute button */}
         <button
           onClick={runMission}
-          disabled={isStreaming || !intent.trim()}
+          disabled={isStreaming || isClarifying || !intent.trim()}
           className="shrink-0 text-sm font-semibold px-5 py-2 rounded-xl transition-all
                      disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
-            background: isStreaming
+            background: isStreaming || isClarifying
               ? "rgba(255,255,255,0.06)"
               : "var(--axion-accent, #a7cadc)",
-            color: isStreaming ? "rgba(255,255,255,0.4)" : "var(--axion-accent-fg, #07090c)",
-            boxShadow: isStreaming
+            color: isStreaming || isClarifying ? "rgba(255,255,255,0.4)" : "var(--axion-accent-fg, #07090c)",
+            boxShadow: isStreaming || isClarifying
               ? "none"
               : "0 0 20px rgba(var(--axion-accent-rgb, 167,202,220), 0.30)",
           }}
         >
-          {isStreaming ? "Running…" : "Execute"}
+          {isStreaming ? "Running…" : isClarifying ? "Checking…" : "Execute"}
         </button>
       </div>
     </div>
@@ -2899,6 +2990,24 @@ export default function Home() {
           </motion.aside>
         )}
       </AnimatePresence>
+
+      {/* ── Clarification modal ───────────────────────────────────────────── */}
+      {showClarifyModal && (
+        <ClarifyModal
+          intent={intent}
+          questions={clarifyQuestions}
+          answers={clarifyAnswers}
+          onAnswerChange={(key, val) =>
+            setClarifyAnswers((prev) => ({ ...prev, [key]: val }))
+          }
+          onSubmit={runMissionWithAnswers}
+          onSkip={() => {
+            pendingRunRef.current = true;
+            setClarifyQuestions([]);
+            setShowClarifyModal(false);
+          }}
+        />
+      )}
 
     </div>
   );

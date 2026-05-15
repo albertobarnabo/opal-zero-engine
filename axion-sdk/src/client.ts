@@ -22,11 +22,13 @@ export class AxionClient {
 
   // ── Core execution ────────────────────────────────────────────────────────
 
-  async *execute(intent: string): AsyncGenerator<MissionEvent> {
+  async *execute(intent: string, model?: string): AsyncGenerator<MissionEvent> {
+    const body: Record<string, unknown> = { intent };
+    if (model) body.model = model;
     const res = await fetch(`${this.base}/api/v1/execute`, {
       method:  "POST",
       headers: this._headers,
-      body:    JSON.stringify({ intent }),
+      body:    JSON.stringify(body),
     });
     if (!res.ok) await this._throwApiError(res);
     yield* parseSSEStream(res);
@@ -59,8 +61,8 @@ export class AxionClient {
     },
 
     /** Streams refinement events for an existing mission. */
-    refine: (id: string, intent: string): AsyncGenerator<MissionEvent> => {
-      return this._refine(id, intent);
+    refine: (id: string, intent: string, model?: string): AsyncGenerator<MissionEvent> => {
+      return this._refine(id, intent, model);
     },
 
     export: async (id: string, format: "md" | "csv" | "html"): Promise<Blob> => {
@@ -99,11 +101,13 @@ export class AxionClient {
 
   // ── Internal ──────────────────────────────────────────────────────────────
 
-  private async *_refine(id: string, intent: string): AsyncGenerator<MissionEvent> {
+  private async *_refine(id: string, intent: string, model?: string): AsyncGenerator<MissionEvent> {
+    const body: Record<string, unknown> = { intent };
+    if (model) body.model = model;
     const res = await fetch(`${this.base}/api/v1/missions/${id}/refine`, {
       method:  "POST",
       headers: this._headers,
-      body:    JSON.stringify({ intent }),
+      body:    JSON.stringify(body),
     });
     if (!res.ok) await this._throwApiError(res);
     yield* parseSSEStream(res);

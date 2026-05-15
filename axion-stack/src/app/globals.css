@@ -432,3 +432,146 @@ body {
   line-height: 1.5;
   margin-top: 0;
 }
+
+/* ── Model selector ──────────────────────────────────────────────────────── */
+
+.model-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.80);
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: border-color 0.2s, background 0.2s;
+  white-space: nowrap;
+}
+
+.model-selector-trigger:hover:not(:disabled) {
+  border-color: var(--axion-accent, #a7cadc);
+  background: rgba(255,255,255,0.08);
+}
+
+.model-selector-dropdown {
+  position: absolute;
+  z-index: 500;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 300px;
+  background: rgba(12,13,20,0.97);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  padding: 5px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.06);
+}
+
+.model-option {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.model-option:hover,
+.model-option[data-selected="true"] {
+  background: rgba(167,202,220,0.10);
+}
+
+.model-option-cost {
+  font-size: 11px;
+  color: rgba(255,255,255,0.30);
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, monospace);
+}
+
+/* ── Clarification modal ─────────────────────────────────────────────────── */
+
+.clarify-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.60);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.clarify-card {
+  background: rgba(14, 14, 22, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 28px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255,255,255,0.06);
+}
+
+.clarify-intent-preview {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 2px solid var(--axion-accent, #a7cadc);
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 22px;
+  font-style: italic;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.clarify-question label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 7px;
+}
+
+.clarify-question input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: rgba(255, 255, 255, 0.90);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+  box-sizing: border-box;
+}
+
+.clarify-question input:focus {
+  border-color: var(--axion-accent, #a7cadc);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.clarify-question input::placeholder {
+  color: rgba(255, 255, 255, 0.22);
+}
+
+.clarify-required-star {
+  color: var(--axion-accent, #a7cadc);
+  margin-left: 3px;
+}
+
+.model-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(167,202,220,0.18);
+  color: var(--axion-accent, #a7cadc);
+  border: 0.5px solid rgba(167,202,220,0.30);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
