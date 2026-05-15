@@ -1,0 +1,42 @@
+# Required permissions — no extra secrets needed.
+# GITHUB_TOKEN is sufficient for ghcr.io pushes.
+
+name: Publish Docker image to GHCR
+
+on:
+  push:
+    tags:
+      - 'server-v*'   # e.g. server-v1.0.0 — any other tag is ignored
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"           # e.g. server-v1.0.0
+          VERSION="${TAG#server-v}"          # strip prefix → 1.0.0
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/albertobarnabo/axion-server:latest
+            ghcr.io/albertobarnabo/axion-server:${{ steps.version.outputs.version }}
