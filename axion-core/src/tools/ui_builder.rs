@@ -9,8 +9,9 @@ use crate::protocol::{DesignTokens, MissionState};
 pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct FinalizeArgs {
-        #[allow(dead_code)]
+        #[serde(default)]
         summary: String,
+        #[serde(default)]
         structured_data_payload: serde_json::Value,
         #[serde(default)]
         design_tokens: Option<DesignTokens>,
@@ -20,21 +21,35 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
         suggested_widgets: Vec<String>,
     }
 
-    let args: FinalizeArgs = serde_json::from_str(arguments)
+    // Parse leniently — if the whole JSON is malformed, that's the only hard error.
+    let mut args: FinalizeArgs = serde_json::from_str(arguments)
         .map_err(|e| format!("Failed to parse finalize_mission_state arguments: {}", e))?;
 
-    match &args.structured_data_payload {
-        serde_json::Value::Null => {
-            return Err(
-                "finalize_mission_state: structured_data_payload must not be null".to_string(),
-            );
+    // If the model forgot structured_data_payload, salvage the call by promoting
+    // all other top-level string/number fields into it rather than failing.
+    if matches!(args.structured_data_payload, serde_json::Value::Null | serde_json::Value::Object(_))
+        && args.structured_data_payload.as_object().map(|m| m.is_empty()).unwrap_or(true)
+    {
+        if let Ok(raw) = serde_json::from_str::<serde_json::Value>(arguments) {
+            if let Some(obj) = raw.as_object() {
+                let salvaged: serde_json::Map<String, serde_json::Value> = obj
+                    .iter()
+                    .filter(|(k, v)| {
+                        !matches!(k.as_str(), "summary" | "verification_logs" | "suggested_widgets" | "design_tokens" | "structured_data_payload")
+                            && matches!(v, serde_json::Value::String(_) | serde_json::Value::Number(_) | serde_json::Value::Object(_) | serde_json::Value::Array(_))
+                    })
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                if !salvaged.is_empty() {
+                    args.structured_data_payload = serde_json::Value::Object(salvaged);
+                } else {
+                    // Nothing to salvage — use the summary as a fallback entry.
+                    let mut fallback = serde_json::Map::new();
+                    fallback.insert("summary".into(), serde_json::Value::String(args.summary.clone()));
+                    args.structured_data_payload = serde_json::Value::Object(fallback);
+                }
+            }
         }
-        serde_json::Value::Object(map) if map.is_empty() => {
-            return Err(
-                "finalize_mission_state: structured_data_payload must not be empty".to_string(),
-            );
-        }
-        _ => {}
     }
 
     // Use provided tokens or fall back to defaults; clamp ranges.

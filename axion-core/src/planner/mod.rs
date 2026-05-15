@@ -47,6 +47,19 @@ impl Plan {
     ) -> String {
         let id   = Uuid::new_v4();
         let slug = make_slug(description);
+
+        // Guard: remove any dependency whose slug equals or starts with this
+        // task's own slug.  This prevents self-referential depends_on entries
+        // that arise when the Governor re-injects a task whose description
+        // produces the same slug as a previously completed attempt (e.g. the
+        // repeated finalize_mission_state expansion task).  A task that depends
+        // on itself can never become ready and causes the cycle detector to fail
+        // the entire mission.
+        let dependencies: Vec<String> = dependencies
+            .into_iter()
+            .filter(|dep| !dep.starts_with(slug.as_str()))
+            .collect();
+
         let task = Task {
             id,
             slug: slug.clone(),

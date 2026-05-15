@@ -102,6 +102,7 @@ pub async fn dispatch_tasks(
             .collect();
 
         // ── Cascade-fail: any Pending task that depends on a failed task ──────
+        let pre_cascade_failed = failed_slugs.len();
         let cascade_indices: Vec<usize> = tasks
             .iter()
             .enumerate()
@@ -145,13 +146,24 @@ pub async fn dispatch_tasks(
         println!("  📋 Found {} tasks ready to execute", ready_indices.len());
 
         if ready_indices.is_empty() {
-            // Nothing ready: either everything is done/failed, or we just
-            // cascaded some failures and need another pass to propagate them.
             let still_pending = tasks.iter().any(|t| matches!(t.status, TaskStatus::Pending));
-            if still_pending {
-                // Cascade may have just failed new tasks — loop again to
-                // propagate the updated failed_slugs set.
+            let cascade_happened = tasks
+                .iter()
+                .filter(|t| matches!(t.status, TaskStatus::Failed))
+                .count() > pre_cascade_failed;
+
+            if still_pending && cascade_happened {
+                // New failures just cascaded — loop again to propagate them.
                 continue;
+            }
+            if still_pending {
+                // Deadlock: pending tasks exist but none can ever become ready.
+                // Fail them all so the mission terminates cleanly.
+                eprintln!("[dispatcher] deadlock detected — failing all stuck pending tasks");
+                for task in tasks.iter_mut().filter(|t| matches!(t.status, TaskStatus::Pending)) {
+                    task.status = TaskStatus::Failed;
+                    task.result = Some("Deadlock: dependency cannot be satisfied (missing or circular)".into());
+                }
             }
             break;
         }
@@ -269,10 +281,32 @@ async fn execute_with_role(
 
     // Get available tools for this role, then strip any the task has blacklisted
     // (set by the re-planner when a tool has already failed once).
-    let tools: Vec<Tool> = get_tools_for_role(&task.role)
-        .into_iter()
-        .filter(|t| !task.excluded_tools.contains(&t.name))
-        .collect();
+    //
+    // Special case: when the task's sole purpose is to call finalize_mission_state,
+    // restrict the tool list to ONLY that tool.  Without this guard the agent
+    // roams freely — calling `memory`, `calculator`, etc. — and never actually
+    // finalises the mission state, causing infinite Governor expansion loops.
+    let is_finalize_task = task.intent.to_lowercase().contains("finalize_mission_state");
+
+    let tools: Vec<Tool> = if is_finalize_task {
+        let finalize_only: Vec<Tool> = get_tools_for_role(&task.role)
+            .into_iter()
+            .filter(|t| !task.excluded_tools.contains(&t.name))
+            .filter(|t| t.name == "finalize_mission_state")
+            .collect();
+        // Safety net: if the tool somehow isn't in the role list, use the
+        // hard-coded constructor so the agent is never given zero tools.
+        if finalize_only.is_empty() {
+            vec![Tool::finalize_mission_state()]
+        } else {
+            finalize_only
+        }
+    } else {
+        get_tools_for_role(&task.role)
+            .into_iter()
+            .filter(|t| !task.excluded_tools.contains(&t.name))
+            .collect()
+    };
 
     let retries    = max_llm_retries();
     let base_delay = retry_base_delay_ms();
@@ -459,9 +493,13 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
 
     // Role → canonical tool names.
-    // `memory` is included for roles that may need to reference past missions.
+    //
+    // Analyst: web_search + finalize_mission_state + persistence helpers only.
+    // calculator and memory are intentionally excluded: the Analyst's job is to
+    // synthesise and finalise findings, not to do arithmetic or replay memory
+    // (those were causing the agent to call the wrong tool for finalize tasks).
     let names: &[&str] = match role {
-        AgentRole::Analyst     => &["calculator", "write_file", "finalize_mission_state", "memory", "vision", "feedback", "memory_persist"],
+        AgentRole::Analyst     => &["web_search", "finalize_mission_state", "vision", "feedback", "memory_persist", "generate_document", "read_file"],
         AgentRole::WebSearcher => &["web_search"],
         AgentRole::Planner     => &["calculator", "web_search", "write_file", "memory", "feedback", "memory_persist"],
         AgentRole::Coder       => &["python_interpreter", "write_file"],
@@ -477,10 +515,10 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     }
 
     // Hard-coded fallback (used in tests and when manifests directory is absent).
-    // `memory` is excluded here because it has no native implementation — it
-    // always requires the Wasm binary to be present.
+    // WASM-only tools (memory, generate_document, read_file) are omitted here
+    // because they have no native implementation.
     match role {
-        AgentRole::Analyst     => vec![Tool::calculator(), Tool::write_file(), Tool::finalize_mission_state(), Tool::vision(), Tool::feedback(), Tool::memory_persist()],
+        AgentRole::Analyst     => vec![Tool::web_search(), Tool::finalize_mission_state(), Tool::vision(), Tool::feedback(), Tool::memory_persist()],
         AgentRole::WebSearcher => vec![Tool::web_search()],
         AgentRole::Planner     => vec![Tool::calculator(), Tool::web_search(), Tool::write_file(), Tool::feedback(), Tool::memory_persist()],
         AgentRole::Coder       => vec![Tool::python_interpreter(), Tool::write_file()],
