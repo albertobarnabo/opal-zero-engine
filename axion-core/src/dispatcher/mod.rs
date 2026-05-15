@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::time::Duration;
 
 use crate::engine::{AiProvider, ToolResponse};
 use crate::governor::Governor;
@@ -8,6 +9,24 @@ use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool};
 // At ~4 chars/token this is ≈1 500 tokens, leaving ≥2 500 tokens of headroom
 // for the agent's own reasoning at the default 4 096 max_tokens ceiling.
 const CONTEXT_CHAR_BUDGET: usize = 6_000;
+
+// ── Retry policy constants (overridable via environment variables) ─────────────
+const MAX_LLM_RETRIES: u32    = 3;
+const RETRY_BASE_DELAY_MS: u64 = 1_000; // 1 s → 2 s → 4 s
+
+fn max_llm_retries() -> u32 {
+    std::env::var("AXION_MAX_LLM_RETRIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_LLM_RETRIES)
+}
+
+fn retry_base_delay_ms() -> u64 {
+    std::env::var("AXION_RETRY_BASE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(RETRY_BASE_DELAY_MS)
+}
 
 /// Build a context string from the bus that fits within `char_budget` characters.
 ///
@@ -133,6 +152,46 @@ pub async fn dispatch_tasks(
     }
 }
 
+// ── Retry helper ─────────────────────────────────────────────────────────────
+//
+// Calls `make_call()` up to `max_retries` times with exponential back-off.
+// Returns the first `Ok(T)` or the final `Err` after all attempts are
+// exhausted.  Permanent failures (`context_length_exceeded`, `invalid_api_key`)
+// short-circuit immediately without sleeping.
+async fn call_with_retry<F, Fut, T>(
+    label: &str,
+    max_retries: u32,
+    base_delay_ms: u64,
+    mut make_call: F,
+) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    for attempt in 1..=max_retries.max(1) {
+        match make_call().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                // Permanent failures — bail without sleeping
+                if e.contains("context_length_exceeded") || e.contains("invalid_api_key") {
+                    return Err(e);
+                }
+                if attempt < max_retries {
+                    let delay = base_delay_ms * (1u64 << (attempt - 1));
+                    eprintln!(
+                        "[retry] {label} attempt {attempt}/{max_retries} failed: {e}. \
+                         Retrying in {delay}ms"
+                    );
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Err(format!("[retry] {label}: no attempts made (max_retries={max_retries})"))
+}
+
 async fn execute_with_role(
     task: &mut Task,
     context: &ContextBus,
@@ -161,9 +220,20 @@ async fn execute_with_role(
         .into_iter()
         .filter(|t| !task.excluded_tools.contains(&t.name))
         .collect();
-    let tools_clone = tools.clone();
 
-    match provider.generate_response(&prompt, Some(tools)).await {
+    let retries    = max_llm_retries();
+    let base_delay = retry_base_delay_ms();
+    let role_label = task.role.as_str().to_string();
+
+    // ── First LLM turn — wrapped in retry loop ────────────────────────────────
+    match call_with_retry(
+        &role_label,
+        retries,
+        base_delay,
+        || provider.generate_response(&prompt, Some(tools.clone())),
+    )
+    .await
+    {
         Ok(ToolResponse::Text(text)) => {
             println!("    DEBUG: Provider returned text: {}", text);
             task.result = Some(text);
@@ -182,17 +252,21 @@ async fn execute_with_role(
                         task.result = Some(tool_result);
                         task.status = TaskStatus::Completed;
                     } else {
-                        // Send the result back to the provider to get the final natural-language answer.
-                        match provider
-                            .submit_tool_result(
+                        // ── Second LLM turn — also wrapped in retry loop ──────────────────
+                        match call_with_retry(
+                            &role_label,
+                            retries,
+                            base_delay,
+                            || provider.submit_tool_result(
                                 &prompt,
-                                Some(tools_clone),
+                                Some(tools.clone()),
                                 &id,
                                 &name,
                                 &arguments,
                                 &tool_result,
-                            )
-                            .await
+                            ),
+                        )
+                        .await
                         {
                             Ok(ToolResponse::Text(final_answer)) => {
                                 println!("    DEBUG: Final answer: {}", final_answer);
