@@ -242,6 +242,7 @@ async fn execute_tool_dispatches_calculator_via_wasm() {
     let result = axion_core::tools::execute_tool(
         "calculator",
         r#"{"operation":"multiply","values":[6,7]}"#,
+        "test",
     )
     .await;
 
@@ -402,7 +403,7 @@ async fn execute_tool_dispatches_memory_via_wasm() {
     axion_core::registry::Registry::init(manifests);
 
     let args = format!(r#"{{"mission_id":"{}"}}"#, TEST_SNAPSHOT_ID);
-    let result = axion_core::tools::execute_tool("memory", &args).await;
+    let result = axion_core::tools::execute_tool("memory", &args, "test").await;
 
     remove_test_snapshot();
 

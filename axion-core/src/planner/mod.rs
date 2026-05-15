@@ -3,6 +3,14 @@ use uuid::Uuid;
 use crate::engine::{AiProvider, ToolResponse};
 use crate::protocol::{AgentRole, ContextBus, Task, TaskStatus};
 
+// Slug format used when building dependency references for the LLM prompt.
+// Must match `make_slug()`: first ≤6 significant words, lowercased, joined with "_".
+const SLUG_FORMAT_NOTE: &str =
+    "A task's slug is derived from its description: take the first ≤6 significant \
+     words (skip common stop-words like 'a', 'the', 'for', 'and', 'in'), lowercase \
+     them, strip non-alphanumeric characters, and join with underscores. \
+     Example: 'Search for flight prices to Tokyo' → 'search_flight_prices_tokyo'.";
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Plan {
     pub id: Uuid,
@@ -21,22 +29,27 @@ impl Plan {
         }
     }
 
-    pub fn add_task(&mut self, description: &str, dependencies: Vec<Uuid>, role: AgentRole) -> Uuid {
+    /// Add a task with optional slug-based dependencies.
+    /// Pass `vec![]` for tasks that should start immediately.
+    /// Returns the task's **slug** — use it to build `depends_on` chains.
+    pub fn add_task(&mut self, description: &str, dependencies: Vec<String>, role: AgentRole) -> String {
         self.add_task_excluded(description, dependencies, role, vec![])
     }
 
     /// Like [`add_task`] but also records tools the agent must not be offered.
+    /// Returns the task's **slug**.
     pub fn add_task_excluded(
         &mut self,
         description: &str,
-        dependencies: Vec<Uuid>,
+        dependencies: Vec<String>,
         role: AgentRole,
         excluded_tools: Vec<String>,
-    ) -> Uuid {
-        let id = Uuid::new_v4();
+    ) -> String {
+        let id   = Uuid::new_v4();
+        let slug = make_slug(description);
         let task = Task {
             id,
-            slug: make_slug(description),
+            slug: slug.clone(),
             intent: description.to_string(),
             status: TaskStatus::Pending,
             role,
@@ -45,7 +58,7 @@ impl Plan {
             excluded_tools,
         };
         self.tasks.push(task);
-        id
+        slug
     }
 }
 
@@ -67,30 +80,42 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
          - Always include a final Analyst task to synthesize the research results.\n\
          - Do NOT add a build_dynamic_ui step — the system injects it automatically.\n\
          - Keep each description specific and actionable (one sentence).\n\n\
+         Sequencing — depends_on field:\n\
+         - Each task may include an optional \"depends_on\" array listing the slugs of \
+           tasks that must complete before this one starts. Omit or use [] if the task \
+           can start immediately.\n\
+         - If a task needs the output of another task, list that task's slug in depends_on. \
+           Example: the final Analyst should depend on all WebSearcher tasks.\n\
+         - Never create circular dependencies.\n\
+         - {slug_note}\n\n\
          Respond ONLY with valid JSON, no markdown:\n\
-         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\"}}]}}\n\n\
+         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\",\"depends_on\":[]}}]}}\n\n\
          User intent: {}",
-        intent
+        intent,
+        slug_note = SLUG_FORMAT_NOTE,
     );
 
     if let Ok(ToolResponse::Text(text)) = provider.generate_response(&prompt, None).await {
         #[derive(Deserialize)]
         struct PlanJson { tasks: Vec<TaskJson> }
         #[derive(Deserialize)]
-        struct TaskJson { description: String, role: String }
+        struct TaskJson {
+            description: String,
+            role: String,
+            #[serde(default)]
+            depends_on: Vec<String>,
+        }
 
         let json_str = crate::governor::extract_json(&text).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
             if !parsed.tasks.is_empty() {
-                let mut prev_ids: Vec<Uuid> = vec![];
                 for t in parsed.tasks {
                     let role = match t.role.as_str() {
                         "Analyst" => AgentRole::Analyst,
                         "Coder"   => AgentRole::Coder,
                         _         => AgentRole::WebSearcher,
                     };
-                    let id = plan.add_task(&t.description, prev_ids.clone(), role);
-                    prev_ids.push(id);
+                    plan.add_task(&t.description, t.depends_on, role);
                 }
                 return plan;
             }
@@ -139,28 +164,39 @@ pub async fn build_refinement_plan(
          - Always end with an Analyst task that calls finalize_mission_state with \
            BOTH the prior findings AND the new findings merged into one payload.\n\
          - Do NOT add a build_dynamic_ui step.\n\n\
+         Sequencing — depends_on field:\n\
+         - Each task may include an optional \"depends_on\" array listing the slugs of \
+           tasks that must complete before this one starts. Omit or use [] if the task \
+           can start immediately.\n\
+         - The final Analyst task should depend on all preceding tasks.\n\
+         - Never create circular dependencies.\n\
+         - {slug_note}\n\n\
          Respond ONLY with valid JSON, no markdown:\n\
-         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\"}}]}}"
+         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\",\"depends_on\":[]}}]}}",
+        slug_note = SLUG_FORMAT_NOTE,
     );
 
     if let Ok(ToolResponse::Text(text)) = provider.generate_response(&prompt, None).await {
         #[derive(Deserialize)]
         struct PlanJson { tasks: Vec<TaskJson> }
         #[derive(Deserialize)]
-        struct TaskJson { description: String, role: String }
+        struct TaskJson {
+            description: String,
+            role: String,
+            #[serde(default)]
+            depends_on: Vec<String>,
+        }
 
         let json_str = crate::governor::extract_json(&text).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
             if !parsed.tasks.is_empty() {
-                let mut prev_ids: Vec<uuid::Uuid> = vec![];
                 for t in parsed.tasks {
                     let role = match t.role.as_str() {
                         "Analyst" => AgentRole::Analyst,
                         "Coder"   => AgentRole::Coder,
                         _         => AgentRole::WebSearcher,
                     };
-                    let id = plan.add_task(&t.description, prev_ids.clone(), role);
-                    prev_ids.push(id);
+                    plan.add_task(&t.description, t.depends_on, role);
                 }
                 return plan;
             }

@@ -131,8 +131,8 @@ pub async fn resume_mission(
     }
 
     // ── 3. Append a feedback-driven refinement task ───────────────────────────
-    let all_ids: Vec<uuid::Uuid> = plan.tasks.iter().map(|t| t.id).collect();
-    let original_task_count = all_ids.len(); // baseline before the new task
+    let all_slugs: Vec<String> = plan.tasks.iter().map(|t| t.slug.clone()).collect();
+    let original_task_count = all_slugs.len(); // baseline before the new task
 
     let refinement_intent = if question.is_empty() {
         format!(
@@ -151,7 +151,7 @@ pub async fn resume_mission(
 
     plan.add_task(
         &refinement_intent,
-        all_ids,
+        all_slugs,
         protocol::AgentRole::Analyst,
     );
 
@@ -489,10 +489,10 @@ async fn run_loop(
                                     Some("[Superseded — repair plan injected]".to_string());
                             }
 
-                            let completed_ids: Vec<uuid::Uuid> = plan.tasks
+                            let completed_slugs: Vec<String> = plan.tasks
                                 .iter()
                                 .filter(|t| matches!(t.status, protocol::TaskStatus::Completed))
-                                .map(|t| t.id)
+                                .map(|t| t.slug.clone())
                                 .collect();
 
                             if let Some(tx) = tx {
@@ -510,7 +510,7 @@ async fn run_loop(
                             for rt in repair {
                                 plan.add_task_excluded(
                                     &rt.description,
-                                    completed_ids.clone(),
+                                    completed_slugs.clone(),
                                     rt.role,
                                     rt.excluded_tools,
                                 );
@@ -544,7 +544,7 @@ async fn run_loop(
                     return Ok(None);
                 }
 
-                let completed_ids: Vec<uuid::Uuid> = plan.tasks.iter().map(|t| t.id).collect();
+                let all_slugs: Vec<String> = plan.tasks.iter().map(|t| t.slug.clone()).collect();
 
                 println!(
                     "\n🔭 Governor: Expanding mission with {} new task(s) (round {}/{}).",
@@ -563,7 +563,7 @@ async fn run_loop(
                 }
 
                 for nt in new_tasks {
-                    plan.add_task_excluded(&nt.description, completed_ids.clone(), nt.role, nt.excluded_tools);
+                    plan.add_task_excluded(&nt.description, all_slugs.clone(), nt.role, nt.excluded_tools);
                 }
 
                 expansion_rounds += 1;
@@ -579,7 +579,7 @@ async fn run_loop(
                     return Ok(None);
                 }
 
-                let completed_ids: Vec<uuid::Uuid> = plan.tasks.iter().map(|t| t.id).collect();
+                let all_slugs: Vec<String> = plan.tasks.iter().map(|t| t.slug.clone()).collect();
 
                 println!(
                     "\n🔧 Governor: Requesting quality refinement (round {}/{}).",
@@ -597,7 +597,7 @@ async fn run_loop(
                 }
 
                 for nt in new_tasks {
-                    plan.add_task_excluded(&nt.description, completed_ids.clone(), nt.role, nt.excluded_tools);
+                    plan.add_task_excluded(&nt.description, all_slugs.clone(), nt.role, nt.excluded_tools);
                 }
 
                 refinement_rounds += 1;

@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::engine::{AiProvider, ToolResponse};
@@ -70,23 +71,73 @@ pub async fn dispatch_tasks(
 ) {
     println!("⚙️  Dispatcher: Checking dependencies and routing to agents...");
 
-    loop {
-        let mut spawned = false;
+    // ── 0. Cycle guard ────────────────────────────────────────────────────────
+    if let Some(cycle) = detect_cycle(tasks) {
+        eprintln!("  ⚠️  Dispatcher: circular dependency detected — {cycle}. Affected tasks will never run.");
+        // Mark every task involved in a cycle as Failed so the Governor can
+        // react (retry/repair) rather than hanging forever.
+        for task in tasks.iter_mut() {
+            if matches!(task.status, TaskStatus::Pending) {
+                task.status = TaskStatus::Failed;
+                task.result = Some(format!("Circular dependency: {cycle}"));
+            }
+        }
+        return;
+    }
 
-        // 1. Identify which tasks are ready (Pending + dependencies met)
-        let completed_ids: Vec<uuid::Uuid> = tasks
+    // ── 1. Main DAG loop (sequential execution, dependency-ordered) ───────────
+    loop {
+        // Collect the slugs of every completed task (owned — avoids borrow conflicts).
+        let completed_slugs: HashSet<String> = tasks
             .iter()
             .filter(|t| matches!(t.status, TaskStatus::Completed))
-            .map(|t| t.id)
+            .map(|t| t.slug.clone())
             .collect();
 
-        // 2. Collect indices of ready tasks to avoid borrow-checker conflicts.
+        // Collect the slugs of every failed task (for cascade propagation).
+        let failed_slugs: HashSet<String> = tasks
+            .iter()
+            .filter(|t| matches!(t.status, TaskStatus::Failed))
+            .map(|t| t.slug.clone())
+            .collect();
+
+        // ── Cascade-fail: any Pending task that depends on a failed task ──────
+        let cascade_indices: Vec<usize> = tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| {
+                matches!(t.status, TaskStatus::Pending)
+                    && t.depends_on.iter().any(|dep| failed_slugs.contains(dep))
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        for idx in cascade_indices {
+            let failing_dep = tasks[idx]
+                .depends_on
+                .iter()
+                .find(|dep| failed_slugs.contains(dep.as_str()))
+                .cloned()
+                .unwrap_or_default();
+            let slug = tasks[idx].slug.clone();
+            let role = tasks[idx].role.as_str().to_string();
+            println!("  ⛔ Cascade-fail: '{}' skipped (dependency '{}' failed)", slug, failing_dep);
+            tasks[idx].status = TaskStatus::Failed;
+            tasks[idx].result = Some(format!("Skipped — dependency '{}' failed", failing_dep));
+            if let Some(tx) = tx {
+                let _ = tx
+                    .send(MissionUpdate::TaskFailed { slug, role })
+                    .await;
+            }
+        }
+
+        // ── Find tasks that are ready: Pending + all deps completed ───────────
         let ready_indices: Vec<usize> = tasks
             .iter()
             .enumerate()
             .filter(|(_, t)| {
                 matches!(t.status, TaskStatus::Pending)
-                    && t.depends_on.iter().all(|dep_id| completed_ids.contains(dep_id))
+                    && t.depends_on.iter().all(|dep| completed_slugs.contains(dep))
             })
             .map(|(i, _)| i)
             .collect();
@@ -94,9 +145,18 @@ pub async fn dispatch_tasks(
         println!("  📋 Found {} tasks ready to execute", ready_indices.len());
 
         if ready_indices.is_empty() {
+            // Nothing ready: either everything is done/failed, or we just
+            // cascaded some failures and need another pass to propagate them.
+            let still_pending = tasks.iter().any(|t| matches!(t.status, TaskStatus::Pending));
+            if still_pending {
+                // Cascade may have just failed new tasks — loop again to
+                // propagate the updated failed_slugs set.
+                continue;
+            }
             break;
         }
 
+        // ── Execute each ready task sequentially ──────────────────────────────
         for idx in ready_indices {
             let task = &mut tasks[idx];
             println!("  🔄 Executing task: {}", task.intent);
@@ -136,18 +196,11 @@ pub async fn dispatch_tasks(
                 }
             }
 
-            // Update the Context Bus with the agent's findings, keyed by the
-            // task's location-aware slug rather than the raw intent string.
+            // Store agent findings in the context bus (keyed by slug).
             if let Some(ref res) = task.result {
                 println!("  💾 Storing result in context as key: {}", task.slug);
                 context.data.insert(task.slug.clone(), res.clone());
             }
-
-            spawned = true;
-        }
-
-        if !spawned {
-            break;
         }
     }
 }
@@ -298,6 +351,107 @@ async fn execute_with_role(
             println!("    DEBUG: Provider returned Err: {}", err);
             task.status = TaskStatus::Failed;
         }
+    }
+}
+
+// ── Cycle detection ──────────────────────────────────────────────────────────
+
+/// Detect a dependency cycle among `tasks` using depth-first search.
+///
+/// Returns `Some("slug_a → slug_b → slug_a")` describing one cycle,
+/// or `None` if the graph is acyclic.
+pub(crate) fn detect_cycle(tasks: &[Task]) -> Option<String> {
+    // Build slug → depends_on adjacency map.
+    let deps: HashMap<String, Vec<String>> = tasks
+        .iter()
+        .map(|t| (t.slug.clone(), t.depends_on.clone()))
+        .collect();
+
+    let mut visited:   HashSet<String> = HashSet::new();
+    let mut rec_stack: HashSet<String> = HashSet::new();
+
+    for task in tasks {
+        if !visited.contains(&task.slug) {
+            if let Some(cycle) = dfs_cycle(&task.slug, &deps, &mut visited, &mut rec_stack) {
+                return Some(cycle);
+            }
+        }
+    }
+    None
+}
+
+fn dfs_cycle(
+    node: &str,
+    deps: &HashMap<String, Vec<String>>,
+    visited:   &mut HashSet<String>,
+    rec_stack: &mut HashSet<String>,
+) -> Option<String> {
+    visited.insert(node.to_string());
+    rec_stack.insert(node.to_string());
+
+    if let Some(neighbors) = deps.get(node) {
+        for neighbor in neighbors {
+            if !visited.contains(neighbor) {
+                if let Some(cycle) = dfs_cycle(neighbor, deps, visited, rec_stack) {
+                    return Some(cycle);
+                }
+            } else if rec_stack.contains(neighbor) {
+                return Some(format!("{} → {}", node, neighbor));
+            }
+        }
+    }
+
+    rec_stack.remove(node);
+    None
+}
+
+// ── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{AgentRole, Task, TaskStatus};
+    use uuid::Uuid;
+
+    fn make_task(slug: &str, depends_on: Vec<&str>) -> Task {
+        Task {
+            id: Uuid::new_v4(),
+            slug: slug.to_string(),
+            intent: slug.to_string(),
+            status: TaskStatus::Pending,
+            role: AgentRole::Analyst,
+            result: None,
+            depends_on: depends_on.into_iter().map(|s| s.to_string()).collect(),
+            excluded_tools: vec![],
+        }
+    }
+
+    #[test]
+    fn test_detect_cycle_none() {
+        // task_b and task_c both depend on task_a — valid diamond-free DAG.
+        let tasks = vec![
+            make_task("task_a", vec![]),
+            make_task("task_b", vec!["task_a"]),
+            make_task("task_c", vec!["task_a"]),
+        ];
+        assert!(detect_cycle(&tasks).is_none());
+    }
+
+    #[test]
+    fn test_detect_cycle_self_loop() {
+        // task_d depends on itself — should be caught.
+        let tasks = vec![
+            make_task("task_a", vec![]),
+            make_task("task_b", vec!["task_a"]),
+            make_task("task_c", vec!["task_a"]),
+            make_task("task_d", vec!["task_d"]),
+        ];
+        let result = detect_cycle(&tasks);
+        assert!(result.is_some(), "expected Some(cycle) for self-loop");
+        assert!(
+            result.unwrap().contains("task_d"),
+            "cycle description should mention task_d"
+        );
     }
 }
 

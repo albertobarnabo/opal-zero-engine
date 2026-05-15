@@ -126,7 +126,13 @@ pub struct Task {
     pub status: TaskStatus,
     pub role: AgentRole,
     pub result: Option<String>,
-    pub depends_on: Vec<Uuid>,
+    /// Slugs of tasks that must reach `Completed` before this task is eligible
+    /// to run.  An empty vec means "no prerequisites — run immediately".
+    /// Using `#[serde(default)]` keeps older mission snapshots (which either
+    /// omit the field or carry UUID strings from the previous schema) safe to
+    /// deserialise — unknown strings simply won't match any slug and are ignored.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
     /// Tool names that must not be offered to the agent for this task.
     /// Used by the re-planner to steer repair tasks away from previously
     /// failing tools (e.g. `python_interpreter` after a Coder failure).
