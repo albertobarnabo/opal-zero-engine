@@ -144,7 +144,12 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         let mut plan = build_plan_from_intent(&intent, &provider).await;
 
         // tx is dropped when run_mission returns, which closes the SSE stream.
-        let _ = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;
+        let result = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;
+        if let Err(ref e) = result {
+            if e.contains("time limit") {
+                eprintln!("[timeout] mission hit wall-clock limit");
+            }
+        }
     });
 
     let stream = ReceiverStream::new(rx).map(to_sse);
@@ -562,7 +567,7 @@ async fn refine_mission_handler(
     let id_cleanup = id.clone();
 
     tokio::spawn(async move {
-        let _ = axion_core::refine_mission(
+        let result = axion_core::refine_mission(
             &snapshot,
             &refinement_intent,
             &provider,
@@ -571,6 +576,12 @@ async fn refine_mission_handler(
             Some(tx),
         )
         .await;
+
+        if let Err(ref e) = result {
+            if e.contains("time limit") {
+                eprintln!("[timeout] mission {} hit wall-clock limit", id_cleanup);
+            }
+        }
 
         // Remove the mission ID from the in-flight set after streaming ends
         // (regardless of success or error).

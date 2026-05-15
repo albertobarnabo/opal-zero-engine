@@ -11,6 +11,8 @@ pub mod tools;
 
 pub use memory::MemoryStore;
 
+use std::time::Duration;
+
 /// Everything a downstream consumer needs to run a mission in one import.
 ///
 /// ```rust
@@ -26,6 +28,20 @@ pub mod prelude {
     pub use crate::{refine_mission, resume_mission, run_mission};
 }
 
+// ── Mission wall-clock timeout ────────────────────────────────────────────────
+
+const MISSION_TIMEOUT_SECS: u64 = 300; // 5 minutes default
+
+fn mission_timeout() -> Duration {
+    let secs = std::env::var("AXION_MISSION_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MISSION_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+// ── Governor / retry caps ─────────────────────────────────────────────────────
+
 const MAX_EXPANSIONS: u8 = 2;
 /// Maximum number of *Governor-triggered* auto-refinement rounds within a single
 /// `run_loop` execution.  This is intentionally separate from the number of
@@ -40,13 +56,49 @@ const MAX_REPAIRS: u8 = 1;
 /// - Allows the Governor to expand the mission up to `MAX_EXPANSIONS` rounds.
 /// - Streams `MissionUpdate` events through `tx` if provided (`None` = batch
 ///   mode; used by the CLI binary).
+/// - Enforces a wall-clock deadline (`AXION_MISSION_TIMEOUT_SECS`, default 300 s).
 ///
 /// Returns:
 /// - `Ok(None)`                     — every task completed successfully.
 /// - `Ok(Some(HandshakeRequest))`   — paused awaiting human feedback; call
 ///                                    [`resume_mission`] with the user's reply.
-/// - `Err(msg)`                     — unrecoverable failure after `max_attempts`.
+/// - `Err(msg)`                     — unrecoverable failure after `max_attempts`
+///                                    or deadline exceeded.
 pub async fn run_mission(
+    plan: &mut planner::Plan,
+    provider: &dyn engine::AiProvider,
+    governor: &dyn governor::Governor,
+    max_attempts: u8,
+    tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+) -> Result<Option<protocol::HandshakeRequest>, String> {
+    let timeout_dur = mission_timeout();
+    let tx_err = tx.clone(); // kept for the timeout error event
+
+    match tokio::time::timeout(
+        timeout_dur,
+        run_mission_inner(plan, provider, governor, max_attempts, tx),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_elapsed) => {
+            let msg = format!(
+                "Mission exceeded the {}s time limit (set AXION_MISSION_TIMEOUT_SECS to change).",
+                timeout_dur.as_secs()
+            );
+            if let Some(t) = tx_err {
+                let _ = t
+                    .send(protocol::MissionUpdate::MissionFailed { error: msg.clone() })
+                    .await;
+            }
+            Err(msg)
+        }
+    }
+}
+
+/// Inner body of [`run_mission`] — extracted so it can be wrapped by
+/// `tokio::time::timeout` without requiring a `'static` bound.
+async fn run_mission_inner(
     plan: &mut planner::Plan,
     provider: &dyn engine::AiProvider,
     governor: &dyn governor::Governor,
@@ -80,7 +132,43 @@ pub async fn run_mission(
 /// `user_feedback` is injected into the [`ContextBus`] and a targeted
 /// refinement task is appended to the plan so the agent can incorporate
 /// the user's instructions in the next execution round.
+///
+/// Enforces the same wall-clock deadline as [`run_mission`].
 pub async fn resume_mission(
+    plan: &mut planner::Plan,
+    user_feedback: &str,
+    provider: &dyn engine::AiProvider,
+    governor: &dyn governor::Governor,
+    max_attempts: u8,
+    tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+) -> Result<Option<protocol::HandshakeRequest>, String> {
+    let timeout_dur = mission_timeout();
+    let tx_err = tx.clone();
+
+    match tokio::time::timeout(
+        timeout_dur,
+        resume_mission_inner(plan, user_feedback, provider, governor, max_attempts, tx),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_elapsed) => {
+            let msg = format!(
+                "Mission exceeded the {}s time limit (set AXION_MISSION_TIMEOUT_SECS to change).",
+                timeout_dur.as_secs()
+            );
+            if let Some(t) = tx_err {
+                let _ = t
+                    .send(protocol::MissionUpdate::MissionFailed { error: msg.clone() })
+                    .await;
+            }
+            Err(msg)
+        }
+    }
+}
+
+/// Inner body of [`resume_mission`].
+async fn resume_mission_inner(
     plan: &mut planner::Plan,
     user_feedback: &str,
     provider: &dyn engine::AiProvider,
