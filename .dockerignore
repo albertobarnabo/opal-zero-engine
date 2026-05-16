@@ -1,6 +1,6 @@
 target/
-axion-stack/.next/
-axion-stack/node_modules/
+axion-demo/.next/
+axion-demo/node_modules/
 axion-sdk/dist/
 axion-sdk/node_modules/
 node_modules/

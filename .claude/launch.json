@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "axion-stack",
+      "name": "axion-demo",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3001,

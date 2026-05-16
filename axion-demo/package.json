@@ -1,15 +1,15 @@
 {
   "name": "axion-demo",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
-    "axion-sdk": "^1.1.0",
+    "@axion/sdk": "file:../axion-sdk",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

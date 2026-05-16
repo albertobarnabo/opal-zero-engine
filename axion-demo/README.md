@@ -1,107 +1,55 @@
-# Axion Demo
+# axion-demo
 
-A full-featured bento-grid UI for [Axion](https://github.com/albertobarnabo/axion-lab) missions. Stream structured multi-agent output into a live glassmorphism dashboard — metric cards, comparison tables, charts, timelines, and image cards appear in real time as agents complete their work.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-18%2B-green.svg)
 
-Built with [Next.js 15](https://nextjs.org), [Recharts](https://recharts.org), and [`axion-sdk`](https://www.npmjs.com/package/axion-sdk).
+**Real-time bento-grid UI for Axion missions. Stream structured agent output into an interactive glassmorphism dashboard — no configuration required.**
 
-![Axion Demo screenshot](https://albertobarnabo.it/axion/og.png)
-
----
-
-## Prerequisites
-
-You need a running **Axion server** to connect to. Either:
-
-- **Local:** clone [`axion-lab`](https://github.com/albertobarnabo/axion-lab) and run `cargo run -p axion-server`
-- **Docker:** `docker run -p 8080:8000 -e OPENAI_API_KEY=sk-... ghcr.io/albertobarnabo/axion-server:latest`
-
-The server needs `OPENAI_API_KEY` set. Optionally set `TAVILY_API_KEY` for live web search.
+axion-demo connects to an [axion-server](https://github.com/albertobarnabo/axion-engine) instance via SSE and renders the structured results of multi-agent missions as a live bento grid. Metric cards, comparison tables, charts, timelines, and image cards snap into place as agents complete their tasks. When the mission finishes you can refine it, export it, or archive it — all from the same interface.
 
 ---
 
-## Quick start
+## Getting started
 
 ```bash
-git clone https://github.com/albertobarnabo/axion-demo
-cd axion-demo
+git clone https://github.com/albertobarnabo/axion-ui
+cd axion-ui
 npm install
-cp .env.example .env.local   # edit if your server is not on localhost:8080
 npm run dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001). Type a mission intent and hit Execute.
+Open [http://localhost:3000](http://localhost:3000). That's it.
 
----
-
-## Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `NEXT_PUBLIC_AXION_URL` | `http://localhost:8080` | URL of your axion-server instance |
-
-API keys (OpenAI, Tavily, Axion auth) can also be entered in the Settings panel (⚙) at runtime — they are stored in localStorage and sent as request headers, never to any third party.
-
----
-
-## Using `axion-sdk` in your own app
-
-This demo uses [`axion-sdk`](https://www.npmjs.com/package/axion-sdk) for all server communication. You can embed the same capability in any React app:
+Point the UI at your axion-server instance from the **Settings** drawer (gear icon, bottom-left), or set it at build time:
 
 ```bash
-npm install axion-sdk
+NEXT_PUBLIC_AXION_URL=http://your-server:8080 npm run dev
 ```
 
-```tsx
-import { AxionClient } from 'axion-sdk'
-import { useMission } from 'axion-sdk/react'
+---
 
-const client = new AxionClient({ baseUrl: 'http://localhost:8080' })
+## Features
 
-export function MissionRunner() {
-  const { run, status, cards, activeAgent, error } = useMission({ client })
-
-  return (
-    <div>
-      <button onClick={() => run('Research the best EVs under $50k')} disabled={status === 'running'}>
-        {status === 'running' ? `Running… ${activeAgent?.role ?? ''}` : 'Run mission'}
-      </button>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {cards.map(card => (
-        <div key={card.key}>
-          <strong>{card.widget}</strong>: {JSON.stringify(card.props)}
-        </div>
-      ))}
-    </div>
-  )
-}
-```
-
-`useMission` returns:
-
-| Field | Type | Description |
-|---|---|---|
-| `run(intent, model?)` | `(string, string?) => Promise<void>` | Execute a new mission |
-| `refine(id, intent, model?)` | `(string, string, string?) => Promise<void>` | Refine an existing mission |
-| `status` | `"idle" \| "running" \| "complete" \| "failed"` | Current lifecycle state |
-| `cards` | `BentoCard[]` | Parsed output cards, ready to render |
-| `missionState` | `MissionState \| null` | Raw mission state (build your own renderer) |
-| `activeAgent` | `{ role, intent } \| null` | Currently executing agent |
-| `missionId` | `string \| null` | ID of the completed mission (use for refine) |
-| `error` | `string \| null` | Error message if status is "failed" |
-| `reset()` | `() => void` | Clear all state back to idle |
+- **Live SSE streaming** — task cards appear and update in real time as each agent finishes; no polling, no page refresh
+- **Bento grid renderer** — MetricCard, ChartCard, ComparisonTable, Timeline, and ImageCard components auto-layout based on the mission payload
+- **Iterative refinement** — submit a follow-up intent without clearing the grid; new findings merge in and new cards highlight automatically
+- **Execution trace panel** — expand any mission to see every agent's raw output, timing, and status
+- **Template gallery** — one-click presets for common mission types (market research, travel planning, competitive analysis, code audit)
+- **Export** — download mission results as Markdown, CSV, or styled HTML
+- **File upload** — attach images or data files (CSV, JSON, TXT) for agents to analyse
+- **Browser notifications** — get notified when a long-running mission completes, even if the tab is in the background
+- **API key drawer** — configure `OPENAI_API_KEY` and `TAVILY_API_KEY` from the UI without touching environment files
 
 ---
 
 ## Stack
 
-- **Framework:** Next.js 15 (App Router)
-- **Styling:** Tailwind CSS + custom glassmorphism design system
-- **Charts:** Recharts
-- **SDK:** [`axion-sdk`](https://www.npmjs.com/package/axion-sdk)
-- **Animations:** Framer Motion
+Next.js 14 · TypeScript · Tailwind CSS · Framer Motion · Recharts
 
 ---
 
 ## License
 
 MIT
+
+⭐ Star the repo if the UI saves you from building a dashboard from scratch.
