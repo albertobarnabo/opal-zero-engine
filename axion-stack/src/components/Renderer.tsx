@@ -193,7 +193,9 @@ export function Renderer({
               return (
                 <ImageCard
                   title={p.title as string | undefined}
-                  description={String(p.description ?? p.value ?? "")}
+                  description={String(
+                    p.image_url ?? p.photo_url ?? p.url ?? p.src ?? p.description ?? p.value ?? ""
+                  )}
                 />
               );
             default:

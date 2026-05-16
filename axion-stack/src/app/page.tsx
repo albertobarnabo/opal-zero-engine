@@ -1658,13 +1658,6 @@ export default function Home() {
             </p>
           )}
 
-          {/* Model selector */}
-          <ModelSelector
-            value={selectedModel}
-            onChange={setSelectedModel}
-            disabled={missionStatus === "streaming"}
-          />
-
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -1848,12 +1841,6 @@ export default function Home() {
       style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: "transparent" }}
     >
 
-      {/* ── Ambient mesh ──────────────────────────────────────────────────── */}
-      <div className="axion-mesh" aria-hidden="true">
-        <div className="axion-mesh-blob-1" />
-        <div className="axion-mesh-blob-2" />
-      </div>
-
       {/* ── Fixed glass nav ───────────────────────────────────────────────── */}
       <div
         style={{
@@ -1929,7 +1916,14 @@ export default function Home() {
           </AnimatePresence>
 
           {/* Right: action icons */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+
+            {/* Model selector — always visible as a persistent model indicator */}
+            <ModelSelector
+              value={selectedModel}
+              onChange={setSelectedModel}
+              disabled={missionStatus === "streaming"}
+            />
 
             {/* Refine — complete state only */}
             {missionStatus === "complete" && missionState && (
@@ -2167,8 +2161,11 @@ export default function Home() {
                 justifyContent: "center",
                 padding: "80px 24px 48px",
                 textAlign: "center",
+                position: "relative",
               }}
             >
+              {/* Grid overlay — exact pattern from landing page Hero */}
+              <div className="grid-faint" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
               {/* Version badge */}
               <motion.span
                 className="axion-mono-badge"

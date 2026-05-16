@@ -61,9 +61,9 @@ export function ModelSelector({ value, onChange, disabled = false }: ModelSelect
         </svg>
       </button>
 
-      {/* Dropdown */}
+      {/* Dropdown — opens upward so it never overlaps the textarea below */}
       {open && (
-        <div className="model-selector-dropdown" role="listbox">
+        <div className="model-selector-dropdown" role="listbox" style={{ bottom: "calc(100% + 6px)", top: "auto" }}>
           {MODEL_CATALOG.map((m) => (
             <div
               key={m.id}

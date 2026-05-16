@@ -35,9 +35,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${spaceGrotesk.variable} ${interTight.variable} ${jetbrainsMono.variable}`}
       style={{ overflow: "hidden", height: "100%" }}
     >
-      <body
-        style={{ overflow: "hidden", height: "100%", margin: 0 }}
-      >
+      <body style={{ overflow: "hidden", height: "100%", margin: 0 }}>
+        {/*
+          Fixed background layer — guarantees the gradient mesh fills the entire
+          viewport regardless of overflow:hidden on html/body. CSS background-attachment:fixed
+          on overflow:hidden roots is unreliable in Chrome; a position:fixed element is not.
+        */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: -2,
+            backgroundColor: "var(--axion-bg)",
+            backgroundImage: "var(--axion-gradient-mesh)",
+            pointerEvents: "none",
+          }}
+        />
+        {/* Grid-faint overlay — same as landing page Hero */}
+        <div
+          aria-hidden="true"
+          className="grid-faint"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: -1,
+            pointerEvents: "none",
+          }}
+        />
         {children}
       </body>
     </html>

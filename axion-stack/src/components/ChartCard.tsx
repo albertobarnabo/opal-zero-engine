@@ -33,9 +33,22 @@ function detectXKey(data: Record<string, string | number>[]): string {
 
 function detectDataKeys(data: Record<string, string | number>[], xKey: string): string[] {
   if (!data.length) return [];
-  return Object.keys(data[0]).filter(
-    (k) => k !== xKey && typeof data[0][k] === "number"
-  );
+  // Accept both real numbers and string-encoded numbers (LLMs often serialize as strings)
+  const numericKeys = Object.keys(data[0]).filter((k) => {
+    if (k === xKey) return false;
+    const v = data[0][k];
+    if (typeof v === "number") return true;
+    if (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v))) return true;
+    return false;
+  });
+  if (numericKeys.length <= 1) return numericKeys;
+  // Return only the key with the highest max value — avoids mixed-unit multi-series
+  // (e.g. price: 230 and rating: 4.5 must not share the same Y axis)
+  return [numericKeys.reduce((best, k) => {
+    const maxK    = Math.max(...data.map((row) => Number(row[k])    || 0));
+    const maxBest = Math.max(...data.map((row) => Number(row[best]) || 0));
+    return maxK > maxBest ? k : best;
+  })];
 }
 
 const SERIES_COLORS = [
@@ -82,6 +95,15 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
 
   const resolvedXKey = xKey ?? detectXKey(data);
   const resolvedDataKeys = dataKeys ?? detectDataKeys(data, resolvedXKey);
+
+  // Coerce string-encoded numbers to real numbers so Recharts renders them correctly
+  const normalizedData = data.map((row) => {
+    const out: Record<string, string | number> = { ...row };
+    for (const k of resolvedDataKeys) {
+      if (typeof out[k] === "string") out[k] = Number(out[k]);
+    }
+    return out;
+  });
   const isArea = chartType === "area" || (!chartType && resolvedDataKeys.length === 1);
 
   const gradientId = `chart-grad-${title?.replace(/\s+/g, "") ?? "default"}`;
@@ -89,12 +111,12 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
   return (
     <div
       style={{
-        background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
-        border: "1px solid var(--axion-glass-border, rgba(255,255,255,0.08))",
-        borderRadius: "var(--axion-radius, 14px)",
-        backdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
-        boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 40px 80px -30px rgba(0,0,0,0.65)",
+        background: "var(--axion-glass-bg)",
+        border: "1px solid var(--axion-glass-border)",
+        borderRadius: "var(--axion-radius)",
+        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        boxShadow: "var(--shadow-glass)",
         padding: "var(--axion-pad, 20px)",
       }}
     >
@@ -108,7 +130,7 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
       )}
       <ResponsiveContainer width="100%" height={180}>
         {isArea ? (
-          <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <AreaChart data={normalizedData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             <defs>
               {resolvedDataKeys.map((key, i) => (
                 <linearGradient key={key} id={`${gradientId}-${i}`} x1="0" y1="0" x2="0" y2="1">
@@ -149,7 +171,7 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
             ))}
           </AreaChart>
         ) : (
-          <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <BarChart data={normalizedData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
             <XAxis
               dataKey={resolvedXKey}

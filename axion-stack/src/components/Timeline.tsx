@@ -16,12 +16,12 @@ export function Timeline({ title, steps }: TimelineProps) {
   return (
     <div
       style={{
-        background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
-        border: "1px solid var(--axion-glass-border, rgba(255,255,255,0.08))",
-        borderRadius: "var(--axion-radius, 14px)",
-        backdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur, 28px)) saturate(130%)",
-        boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04), 0 40px 80px -30px rgba(0,0,0,0.65)",
+        background: "var(--axion-glass-bg)",
+        border: "1px solid var(--axion-glass-border)",
+        borderRadius: "var(--axion-radius)",
+        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        boxShadow: "var(--shadow-glass)",
         padding: "var(--axion-pad, 20px)",
       }}
     >

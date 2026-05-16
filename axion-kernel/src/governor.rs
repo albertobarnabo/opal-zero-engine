@@ -256,9 +256,12 @@ Examples: market_size_usd, growth_rate_pct, total_cost_eur, score_out_of_10\n\
 trend field: \"up\" | \"down\" | \"neutral\"\n\
 \n\
 ──────────────────────────────────────────\n\
-CHART CARD — time-series or comparative numeric data\n\
-Trigger: top-level key → ARRAY of objects, each with a \"period\" key + ≥1 numeric key\n\
-Best for: trends over time, forecasts, volume evolution\n\
+CHART CARD — time-series or large-N numeric rankings ONLY\n\
+Trigger: top-level key → ARRAY of objects with a \"period\" key + exactly ONE numeric key\n\
+ONLY appropriate for:\n\
+  a) Time-series with ≥3 data points ordered by date/period\n\
+  b) Numeric rankings of ≥5 items (e.g. top-10 cities by population)\n\
+For 2–4 items being compared → ALWAYS use ComparisonTable (it shows multiple attributes at once).\n\
 REQUIRED format:\n\
   \"revenue_trend\": [\n\
     {{\"period\":\"2021\",\"value\":4100}},\n\
@@ -266,6 +269,14 @@ REQUIRED format:\n\
     {{\"period\":\"2023\",\"value\":4700}}\n\
   ]\n\
 Rules: \"period\" must be a string label. Numbers must be numeric type, never strings. ≥3 data points.\n\
+Include ONLY ONE numeric field per array row — do NOT mix price and rating in the same array.\n\
+WRONG — 2 hotels as a bar chart:\n\
+  \"hotels\": [{{\"hotel\":\"Hotel Vion\",\"price\":230}},{{\"hotel\":\"Hotel Locarno\",\"price\":190}}]\n\
+  → suggested_widgets: [\"ChartCard:hotels\"]\n\
+CORRECT — 2 hotels as a comparison table:\n\
+  \"hotels\": [{{\"name\":\"Hotel Vion\",\"price_eur\":230,\"rating\":\"4.5★\",\"breakfast\":\"Yes\"}},\n\
+              {{\"name\":\"Hotel Locarno\",\"price_eur\":190,\"rating\":\"4.2★\",\"breakfast\":\"No\"}}]\n\
+  → suggested_widgets: [\"ComparisonTable:hotels\"]\n\
 \n\
 ──────────────────────────────────────────\n\
 COMPARISON TABLE — side-by-side comparison of items\n\
@@ -292,23 +303,23 @@ REQUIRED format:\n\
 ──────────────────────────────────────────\n\
 IMAGE CARD — visual representation of a place, product, or concept\n\
 Trigger: top-level key whose name contains \"image\", \"photo\", \"visual\", or \"scene\" — value is a STRING\n\
-Two modes:\n\
-  1. URL mode: value is a direct image URL (https://...) → renders as actual photo\n\
-  2. Scene mode: value is a vivid visual description → renders as styled atmospheric card\n\
-Best for: destinations, products, people, locations, concepts\n\
-Use URL mode whenever a direct image URL is available from web_search results.\n\
-Use scene mode as fallback when no image URL is found.\n\
-Examples:\n\
-  \"colosseum_image\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/1200px-Colosseo_2020.jpg\"\n\
-  \"market_visual\": \"Busy Italian street market at golden hour, stalls overflowing with fresh produce\"\n\
+CRITICAL: the value MUST be a direct image URL (starting with https://).\n\
+Look for \"Verified images for this topic:\" in the web_search tool output — copy one of those URLs.\n\
+If no verified image URL is available, OMIT the ImageCard entirely.\n\
+Do NOT put a text description as the value — it will NOT render as a photo.\n\
+WRONG:\n\
+  \"colosseum_photo\": \"The Colosseum in Rome, a famous ancient amphitheatre\"\n\
+CORRECT:\n\
+  \"colosseum_photo\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/1200px-Colosseo_2020.jpg\"\n\
 \n\
 ──────────────────────────────────────────\n\
 \n\
 REASONING STEP (perform this before building the payload):\n\
 1. What is the user's core intent? (analysis / planning / comparison / creative / research)\n\
 2. What components would make this most useful?\n\
-   * Always include ≥1 ChartCard if there is any temporal or comparative numeric data\n\
-   * Always include ≥1 ImageCard if the intent involves places, products, or visual subjects\n\
+   * Use ChartCard ONLY for time-series ≥3 points or numeric rankings ≥5 items\n\
+   * For 2–4 items being compared, use ComparisonTable (NOT ChartCard)\n\
+   * Include ≥1 ImageCard (URL mode only) if the intent involves places, products, or visual subjects\n\
    * Always include ≥1 ComparisonTable if the intent compares 2+ options\n\
    * Use MetricCards for the 3–5 most important standalone figures\n\
    * Use Timeline for any sequential or time-ordered content\n\
@@ -317,10 +328,10 @@ REASONING STEP (perform this before building the payload):\n\
 \n\
 ═══ IMAGE RETRIEVAL RULE ═══\n\
 When the intent involves visual subjects (places, products, people):\n\
-* Use web_search to find a direct image URL for each ImageCard\n\
-* Search query examples: \"Colosseum Rome wikipedia\", \"[subject] high resolution photo site:wikimedia.org\"\n\
-* Extract the direct .jpg/.png/.webp URL from results and use it as the key value\n\
-* If no direct URL is found, fall back to a vivid scene description string\n\
+* Check the web_search tool output for a \"Verified images for this topic:\" section — use those URLs directly\n\
+* If not present, run web_search with queries like \"Colosseum Rome wikipedia\" or \"[subject] photo site:wikimedia.org\"\n\
+* Only use URLs ending in .jpg, .jpeg, .png, .webp, or .gif\n\
+* If no verified image URL can be found, OMIT the ImageCard — never use a text description as the value\n\
 \n\
 ═══ PAYLOAD RULES ═══\n\
 * Use flat descriptive top-level keys (e.g. \"market_size_2024_usd\", \"growth_cagr_pct\", \"store_count_2025\")\n\
@@ -332,8 +343,8 @@ When the intent involves visual subjects (places, products, people):\n\
 \n\
 ═══ suggested_widgets (ALWAYS include) ═══\n\
 List every chart, image, and special card:\n\
-- 'ChartCard:key_name'  for every time-series or comparative numeric array\n\
-- 'ImageCard:key_name'  for every image URL or visual/scene string\n\
+- 'ChartCard:key_name'  for time-series ≥3 points or numeric rankings ≥5 items only\n\
+- 'ImageCard:key_name'  for keys containing a verified image URL (https://...)\n\
 - Example: [\"ChartCard:revenue_trend\",\"ComparisonTable:retail_categories\",\"ImageCard:colosseum_image\"]\n\
 \n\
 ═══ layout_strategy ═══\n\

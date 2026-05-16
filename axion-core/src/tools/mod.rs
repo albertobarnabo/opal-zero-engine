@@ -519,11 +519,14 @@ async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
         query: &'a str,
         search_depth: &'a str,
         max_results: u8,
+        include_images: bool,
     }
 
     #[derive(serde::Deserialize)]
     struct TavilyResponse {
         results: Vec<TavilyResult>,
+        #[serde(default)]
+        images: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -541,6 +544,7 @@ async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
             query,
             search_depth: "basic",
             max_results: 5,
+            include_images: true,
         })
         .send()
         .await
@@ -569,7 +573,20 @@ async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    Ok(format!("Live search results for '{}':\n\n{}", query, formatted))
+    let mut output = format!("Live search results for '{}':\n\n{}", query, formatted);
+
+    if !body.images.is_empty() {
+        let image_lines = body.images
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(i, url)| format!("  Image {}: {}", i + 1, url))
+            .collect::<Vec<_>>()
+            .join("\n");
+        output.push_str(&format!("\n\nVerified images for this topic:\n{}", image_lines));
+    }
+
+    Ok(output)
 }
 
 // ── Vision tool ───────────────────────────────────────────────────────────────
