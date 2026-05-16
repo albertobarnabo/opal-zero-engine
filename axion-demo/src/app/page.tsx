@@ -10,8 +10,8 @@ import { TemplateGallery } from "@/components/TemplateGallery";
 import { ModelSelector } from "@/components/ModelSelector";
 import { MODEL_CATALOG, type ModelId } from "@/data/models";
 import { ClarifyModal } from "@/components/ClarifyModal";
-import { AxionClient } from "@axion/sdk";
-import { useMission } from "@axion/sdk/react";
+import { AxionClient } from "axion-sdk";
+import { useMission } from "axion-sdk/react";
 import type {
   MissionEvent,
   TaskStartedEvent,
@@ -21,7 +21,7 @@ import type {
   MissionCompleteEvent,
   MissionFailedEvent,
   AwaitingFeedbackEvent,
-} from "@axion/sdk";
+} from "axion-sdk";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -578,7 +578,7 @@ export default function Home() {
   const hookClient = useMemo(
     () => typeof window !== "undefined"
       ? buildClient()
-      : new AxionClient({ baseUrl: "http://localhost:8080" }),
+      : new AxionClient({ baseUrl: process.env.NEXT_PUBLIC_AXION_URL ?? "http://localhost:8080" }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [settingsOpen]
   );
@@ -898,8 +898,9 @@ export default function Home() {
 
   /** Builds a fully-configured AxionClient from current localStorage keys. */
   function buildClient(): AxionClient {
+    const baseUrl = process.env.NEXT_PUBLIC_AXION_URL ?? "http://localhost:8080";
     return new AxionClient({
-      baseUrl:   "http://localhost:8080",
+      baseUrl,
       apiKey:    localStorage.getItem("axion_api_key")    ?? undefined,
       openAiKey: localStorage.getItem("axion_openai_key") ?? undefined,
       tavilyKey: localStorage.getItem("axion_tavily_key") ?? undefined,
@@ -921,7 +922,8 @@ export default function Home() {
         if (storedKey)    clarifyHeaders["X-Axion-Key"]  = storedKey;
         if (storedOpenAI) clarifyHeaders["X-OpenAI-Key"] = storedOpenAI;
 
-        const res = await fetch("http://localhost:8080/api/v1/clarify", {
+        const axionUrl = process.env.NEXT_PUBLIC_AXION_URL ?? "http://localhost:8080";
+        const res = await fetch(`${axionUrl}/api/v1/clarify`, {
           method:  "POST",
           headers: clarifyHeaders,
           body:    JSON.stringify({ intent }),
