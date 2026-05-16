@@ -1,6 +1,3 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseSSEStream = parseSSEStream;
 /**
  * Turns a streaming `Response` body into an `AsyncGenerator<MissionEvent>`.
  *
@@ -8,7 +5,7 @@ exports.parseSSEStream = parseSSEStream;
  * so every `data:` line is self-describing — the `event:` header is redundant
  * and can be safely ignored.
  */
-async function* parseSSEStream(response) {
+export async function* parseSSEStream(response) {
     if (!response.body)
         throw new Error("Response has no body");
     const reader = response.body.getReader();

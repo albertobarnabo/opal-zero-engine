@@ -1,8 +1,5 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.AxionClient = void 0;
-const stream_1 = require("./stream");
-class AxionClient {
+import { parseSSEStream } from "./stream";
+export class AxionClient {
     constructor(config) {
         // ── Missions ──────────────────────────────────────────────────────────────
         this.missions = {
@@ -61,7 +58,7 @@ class AxionClient {
         });
         if (!res.ok)
             await this._throwApiError(res);
-        yield* (0, stream_1.parseSSEStream)(res);
+        yield* parseSSEStream(res);
     }
     // ── Upload ────────────────────────────────────────────────────────────────
     async upload(file) {
@@ -97,7 +94,7 @@ class AxionClient {
         });
         if (!res.ok)
             await this._throwApiError(res);
-        yield* (0, stream_1.parseSSEStream)(res);
+        yield* parseSSEStream(res);
     }
     async _throwApiError(res) {
         let message = `HTTP ${res.status}`;
@@ -116,4 +113,3 @@ class AxionClient {
         throw err;
     }
 }
-exports.AxionClient = AxionClient;

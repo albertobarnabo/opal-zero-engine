@@ -1,4 +1,5 @@
 export { AxionClient } from "./client";
+export { parseBentoCards } from "./parseBentoCards";
 export type {
   AxionClientConfig,
   MissionEvent,
@@ -18,4 +19,8 @@ export type {
   MissionStatus,
   UploadResult,
   ConfigStatus,
+  BentoCard,
+  UseMissionOptions,
+  UseMissionReturn,
 } from "./types";
+// Note: useMission is NOT exported from the main entry — import from 'axion-sdk/react'

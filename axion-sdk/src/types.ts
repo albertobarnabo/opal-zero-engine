@@ -1,3 +1,5 @@
+import type { AxionClient } from './client';
+
 // ── Mission lifecycle ────────────────────────────────────────────────────────
 
 export type MissionStatus = "idle" | "running" | "complete" | "failed";
@@ -134,4 +136,48 @@ export interface AxionClientConfig {
   openAiKey?: string;
   /** X-Tavily-Key — optional per-request override */
   tavilyKey?: string;
+}
+
+// ── Bento card (parsed from MissionState) ────────────────────────────────────
+
+export interface BentoCard {
+  /** The key from data_payload, e.g. "cheapest_flight_usd" */
+  key: string;
+  /** Component type, e.g. "MetricCard", "ChartCard", "ComparisonTable", "Timeline", "ImageCard" */
+  widget: string;
+  /** The raw props object to pass to the rendering component */
+  props: Record<string, unknown>;
+  /** True if this card was added/updated by a refinement round */
+  isRefined?: boolean;
+}
+
+// ── useMission ────────────────────────────────────────────────────────────────
+
+export interface UseMissionOptions {
+  client: AxionClient;
+  /** Default model to use. Can be overridden per-call in run(). */
+  model?: string;
+  /** Called for every SSE event before the hook updates its own state. Use this for side effects (trace logs, banners, etc.) that the hook doesn't need to manage. */
+  onEvent?: (event: MissionEvent) => void;
+}
+
+export interface UseMissionReturn {
+  /** Execute a new mission. Clears previous state before starting. */
+  run: (intent: string, model?: string) => Promise<void>;
+  /** Refine an existing mission without clearing the card grid. */
+  refine: (missionId: string, intent: string, model?: string) => Promise<void>;
+  /** Current lifecycle state. */
+  status: MissionStatus;
+  /** Derived bento cards from the latest MissionState. */
+  cards: BentoCard[];
+  /** The agent currently executing (null when idle or complete). */
+  activeAgent: { role: string; intent: string } | null;
+  /** Non-null when status === "failed". */
+  error: string | null;
+  /** Set after mission_complete. Needed to call refine(). */
+  missionId: string | null;
+  /** Raw MissionState — use this if you want to build your own renderer. */
+  missionState: MissionState | null;
+  /** Reset all state back to idle. Does not abort an in-flight stream. */
+  reset: () => void;
 }

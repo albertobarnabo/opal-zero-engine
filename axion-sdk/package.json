@@ -1,14 +1,33 @@
 {
   "name": "axion-sdk",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "TypeScript client SDK for the Axion Intelligence Kernel",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    }
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
   },
   "devDependencies": {
+    "@types/react": "^18.3.28",
     "typescript": "^5.0.0"
   }
 }
