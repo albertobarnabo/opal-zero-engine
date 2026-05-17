@@ -1,0 +1,15 @@
+{
+  "name": "get_company_overview",
+  "description": "Fetches real-time company fundamentals from Alpha Vantage: name, sector, industry, market cap, P/E ratio, EPS, dividend yield, 52-week range, analyst price target, and beta. Requires ALPHA_VANTAGE_API_KEY. Use this for due diligence, investment analysis, and competitive comparisons.",
+  "is_async": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Stock ticker symbol (e.g. 'AAPL', 'TSLA', 'MSFT'). Must be a valid US exchange ticker."
+      }
+    },
+    "required": ["symbol"]
+  }
+}

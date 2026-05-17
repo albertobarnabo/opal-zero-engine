@@ -1,0 +1,20 @@
+{
+  "name": "get_price_history",
+  "description": "Fetches OHLCV daily price history for a stock from Alpha Vantage. Returns the 10 most recent trading days with open, high, low, close, and volume. Use 'compact' for recent data (last 100 days) or 'full' for complete history. Requires ALPHA_VANTAGE_API_KEY.",
+  "is_async": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Stock ticker symbol (e.g. 'AAPL', 'TSLA', 'MSFT')."
+      },
+      "period": {
+        "type": "string",
+        "description": "Output size: 'compact' (last 100 trading days, default) or 'full' (20+ years of history).",
+        "enum": ["compact", "full"]
+      }
+    },
+    "required": ["symbol"]
+  }
+}

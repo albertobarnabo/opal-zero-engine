@@ -45,6 +45,8 @@ export class AxionClient {
             this._headers["X-OpenAI-Key"] = config.openAiKey;
         if (config.tavilyKey)
             this._headers["X-Tavily-Key"] = config.tavilyKey;
+        if (config.alphaVantageKey)
+            this._headers["X-Alpha-Vantage-Key"] = config.alphaVantageKey;
     }
     // ── Core execution ────────────────────────────────────────────────────────
     async *execute(intent, model) {

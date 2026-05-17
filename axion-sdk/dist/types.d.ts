@@ -88,6 +88,7 @@ export interface UploadResult {
 export interface ConfigStatus {
     openai: boolean;
     tavily: boolean;
+    alpha_vantage?: boolean;
 }
 export interface AxionClientConfig {
     /** e.g. "http://localhost:8080" */
@@ -98,6 +99,8 @@ export interface AxionClientConfig {
     openAiKey?: string;
     /** X-Tavily-Key — optional per-request override */
     tavilyKey?: string;
+    /** X-Alpha-Vantage-Key — optional per-request override for financial data tools */
+    alphaVantageKey?: string;
 }
 export interface BentoCard {
     /** The key from data_payload, e.g. "cheapest_flight_usd" */

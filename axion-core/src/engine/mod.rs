@@ -86,6 +86,17 @@ pub trait AiProvider: Send + Sync {
         let _ = (prompt, image);
         Err("Vision analysis is not supported by this provider".to_string())
     }
+
+    /// Return a new provider instance configured to use the given text model.
+    ///
+    /// The default returns `None`, meaning the provider does not support
+    /// runtime model switching.  Override this in concrete implementations
+    /// (e.g. `OpenAIProvider`) so the dispatcher can downscale routine roles
+    /// (WebSearcher, Coder) to a cheaper model without rebuilding the whole
+    /// provider.
+    fn with_text_model(&self, _model: &str) -> Option<Box<dyn AiProvider>> {
+        None
+    }
 }
 
 // ── MockProvider ──────────────────────────────────────────────────────────────

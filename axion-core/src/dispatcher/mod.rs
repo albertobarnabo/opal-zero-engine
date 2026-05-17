@@ -265,6 +265,22 @@ async fn execute_with_role(
 ) {
     println!("    DEBUG: Agent starting task: {}", task.intent);
 
+    // ── Per-role model override ───────────────────────────────────────────────
+    // Ask the Governor which model this role should use.  If it returns Some(m)
+    // and the provider supports runtime model switching, create a role-specific
+    // provider instance; otherwise fall back to the original provider.
+    let role_model = governor.model_for_role(&task.role);
+    let role_provider_box: Option<Box<dyn AiProvider>> = role_model
+        .as_deref()
+        .and_then(|m| provider.with_text_model(m));
+    let effective_provider: &dyn AiProvider = role_provider_box
+        .as_deref()
+        .unwrap_or(provider);
+
+    if let Some(ref m) = role_model {
+        println!("    🤖 Role: {} → model: {}", task.role.as_str(), m);
+    }
+
     // ── System prefix comes from the Governor (pluggable, role-specific) ──────
     let system_prefix = governor.system_prompt_for_role(&task.role);
 
@@ -317,7 +333,7 @@ async fn execute_with_role(
         &role_label,
         retries,
         base_delay,
-        || provider.generate_response(&prompt, Some(tools.clone())),
+        || effective_provider.generate_response(&prompt, Some(tools.clone())),
     )
     .await
     {
@@ -344,7 +360,7 @@ async fn execute_with_role(
                             &role_label,
                             retries,
                             base_delay,
-                            || provider.submit_tool_result(
+                            || effective_provider.submit_tool_result(
                                 &prompt,
                                 Some(tools.clone()),
                                 &id,
@@ -499,8 +515,8 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     // synthesise and finalise findings, not to do arithmetic or replay memory
     // (those were causing the agent to call the wrong tool for finalize tasks).
     let names: &[&str] = match role {
-        AgentRole::Analyst     => &["web_search", "finalize_mission_state", "vision", "feedback", "memory_persist", "generate_document", "read_file"],
-        AgentRole::WebSearcher => &["web_search"],
+        AgentRole::Analyst     => &["web_search", "finalize_mission_state", "vision", "feedback", "memory_persist", "generate_document", "read_file", "get_company_overview", "get_price_history", "get_income_statement", "get_news_sentiment"],
+        AgentRole::WebSearcher => &["web_search", "get_company_overview", "get_price_history", "get_income_statement", "get_news_sentiment"],
         AgentRole::Planner     => &["calculator", "web_search", "write_file", "memory", "feedback", "memory_persist"],
         AgentRole::Coder       => &["python_interpreter", "write_file"],
     };

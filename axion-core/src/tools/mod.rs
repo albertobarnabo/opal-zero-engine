@@ -1,3 +1,4 @@
+mod financial;
 mod python;
 mod ui_builder;
 
@@ -78,6 +79,36 @@ pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Resu
     // Vision native fallback: runs when vision.wasm is absent (tests, offline).
     if name == "vision" {
         return execute_vision_native(arguments).await;
+    }
+    // Alpha Vantage financial data tools
+    if name == "get_company_overview" {
+        #[derive(serde::Deserialize)]
+        struct Args { symbol: String }
+        let args: Args = serde_json::from_str(arguments)
+            .map_err(|e| format!("Failed to parse get_company_overview arguments: {}", e))?;
+        return financial::get_company_overview(&args.symbol).await;
+    }
+    if name == "get_price_history" {
+        #[derive(serde::Deserialize)]
+        struct Args { symbol: String, #[serde(default = "default_period")] period: String }
+        fn default_period() -> String { "compact".to_string() }
+        let args: Args = serde_json::from_str(arguments)
+            .map_err(|e| format!("Failed to parse get_price_history arguments: {}", e))?;
+        return financial::get_price_history(&args.symbol, &args.period).await;
+    }
+    if name == "get_income_statement" {
+        #[derive(serde::Deserialize)]
+        struct Args { symbol: String }
+        let args: Args = serde_json::from_str(arguments)
+            .map_err(|e| format!("Failed to parse get_income_statement arguments: {}", e))?;
+        return financial::get_income_statement(&args.symbol).await;
+    }
+    if name == "get_news_sentiment" {
+        #[derive(serde::Deserialize)]
+        struct Args { symbol: String }
+        let args: Args = serde_json::from_str(arguments)
+            .map_err(|e| format!("Failed to parse get_news_sentiment arguments: {}", e))?;
+        return financial::get_news_sentiment(&args.symbol).await;
     }
 
     // ── 3. Synchronous native fallback ────────────────────────────────────────

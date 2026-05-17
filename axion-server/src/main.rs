@@ -130,6 +130,12 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
             unsafe { std::env::set_var("TAVILY_API_KEY", key) };
         }
     }
+    if let Some(key) = headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()) {
+        if !key.is_empty() {
+            // SAFETY: same rationale as above.
+            unsafe { std::env::set_var("ALPHA_VANTAGE_API_KEY", key) };
+        }
+    }
 
     // Model resolution: body → x-axion-model header → AXION_MODEL env → default
     let model = req.model.clone()
@@ -153,7 +159,7 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         }
     }
 
-    let provider = match OpenAIProvider::new_with_model(model) {
+    let provider = match OpenAIProvider::new_with_model(model.clone()) {
         Ok(p) => p,
         Err(e) => {
             return (
@@ -164,7 +170,7 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         }
     };
 
-    let governor = AxionGovernor::new();
+    let governor = AxionGovernor::with_model(model.as_deref().unwrap_or("gpt-4o-mini"));
 
     // Channel capacity 64 — enough for a full mission with expansions without
     // back-pressure. Sends are fire-and-forget (errors silently dropped).
@@ -539,6 +545,12 @@ async fn refine_mission_handler(
             unsafe { std::env::set_var("TAVILY_API_KEY", key) };
         }
     }
+    if let Some(key) = headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()) {
+        if !key.is_empty() {
+            // SAFETY: same rationale as above.
+            unsafe { std::env::set_var("ALPHA_VANTAGE_API_KEY", key) };
+        }
+    }
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
             StatusCode::BAD_REQUEST,
@@ -603,7 +615,7 @@ async fn refine_mission_handler(
         }
     }
 
-    let provider = match OpenAIProvider::new_with_model(model) {
+    let provider = match OpenAIProvider::new_with_model(model.clone()) {
         Ok(p)  => p,
         Err(e) => {
             in_flight.lock().await.remove(&id);
@@ -615,7 +627,7 @@ async fn refine_mission_handler(
         }
     };
 
-    let governor = AxionGovernor::new();
+    let governor = AxionGovernor::with_model(model.as_deref().unwrap_or("gpt-4o-mini"));
     let (tx, rx) = tokio::sync::mpsc::channel::<MissionUpdate>(64);
     let refinement_intent = req.intent.clone();
 
@@ -708,18 +720,18 @@ Given the user's intent below, identify the MOST CRITICAL missing parameters —
 if unknown, would cause the AI to guess and likely produce wrong or irrelevant output.\n\
 \n\
 Rules:\n\
-- Return at most 3 questions. Fewer is better. Only ask what truly matters.\n\
+- Return at most 3 questions. Fewer is better. If in doubt, return 0.\n\
 - If the intent is self-contained and actionable as-is, return an empty questions array.\n\
-- Do not ask about things the AI can reasonably assume or research itself \
-  (e.g. \"what is the capital of France\").\n\
+- Do not ask about things the AI can reasonably assume or research itself.\n\
 - Do ask about things that are personal, preference-based, or physically specific \
-  (e.g. departure city, budget, date range, dietary restrictions, specific product version).\n\
-- Each question must have: key (snake_case identifier), question (friendly sentence), \
-  required (true/false), placeholder (example answer).\n\
+  (e.g. departure city, budget, date range, specific product version, target company name).\n\
+- IMPORTANT: every question must have required = false. The user may not know the answer, \
+  and the AI can still proceed with partial or no context. Never block the user.\n\
+- Use a friendly, conversational tone. The placeholder should be a realistic example answer.\n\
 \n\
 Respond ONLY with valid JSON in this exact format:\n\
 {{\"complete\": true | false, \"questions\": [\
-{{\"key\": \"...\", \"question\": \"...\", \"required\": true, \"placeholder\": \"...\"}}]}}\n\
+{{\"key\": \"...\", \"question\": \"...\", \"required\": false, \"placeholder\": \"...\"}}]}}\n\
 \n\
 User intent: {}",
         req.intent
@@ -747,7 +759,7 @@ User intent: {}",
 /// `GET /api/v1/config/status`
 ///
 /// Reports which API keys are currently configured via environment variables.
-/// Returns HTTP 200 JSON `{ "openai": bool, "tavily": bool }` — always succeeds.
+/// Returns HTTP 200 JSON `{ "openai": bool, "tavily": bool, "alpha_vantage": bool }` — always succeeds.
 async fn config_status_handler() -> impl IntoResponse {
     let openai = std::env::var("OPENAI_API_KEY")
         .map(|v| !v.is_empty())
@@ -755,7 +767,10 @@ async fn config_status_handler() -> impl IntoResponse {
     let tavily = std::env::var("TAVILY_API_KEY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
-    Json(json!({ "openai": openai, "tavily": tavily }))
+    let alpha_vantage = std::env::var("ALPHA_VANTAGE_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    Json(json!({ "openai": openai, "tavily": tavily, "alpha_vantage": alpha_vantage }))
 }
 
 /// `POST /api/v1/upload`
@@ -862,6 +877,7 @@ async fn main() {
             axum::http::header::HeaderName::from_static("x-axion-key"),
             axum::http::header::HeaderName::from_static("x-openai-key"),
             axum::http::header::HeaderName::from_static("x-tavily-key"),
+            axum::http::header::HeaderName::from_static("x-alpha-vantage-key"),
             axum::http::header::HeaderName::from_static("x-axion-model"),
         ]);
 

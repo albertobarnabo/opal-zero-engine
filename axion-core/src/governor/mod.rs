@@ -63,6 +63,16 @@ pub trait Governor: Send + Sync {
     /// behaviour (tool preference, output style, constraints) can be tuned
     /// without modifying the core dispatch loop.
     fn system_prompt_for_role(&self, role: &AgentRole) -> String;
+
+    /// Optional: return the model string to use for a given agent role.
+    ///
+    /// The dispatcher calls this before every task and, when `Some(model)` is
+    /// returned, creates a role-specific provider via
+    /// [`AiProvider::with_text_model`].  Return `None` to use the provider's
+    /// default model unchanged.
+    fn model_for_role(&self, _role: &AgentRole) -> Option<String> {
+        None
+    }
 }
 
 // ── Shared code-level gate helpers ────────────────────────────────────────────

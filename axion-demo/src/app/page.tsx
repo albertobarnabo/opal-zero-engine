@@ -10,6 +10,8 @@ import { TemplateGallery } from "@/components/TemplateGallery";
 import { ModelSelector } from "@/components/ModelSelector";
 import { MODEL_CATALOG, type ModelId } from "@/data/models";
 import { ClarifyModal } from "@/components/ClarifyModal";
+import { ModeSelector } from "@/components/ModeSelector";
+import { OrchestrationGraph } from "@/components/OrchestrationGraph";
 import { AxionClient } from "@axion/sdk";
 import { useMission } from "@axion/sdk/react";
 import type {
@@ -557,6 +559,8 @@ export default function Home() {
   const [isClarifying, setIsClarifying]           = useState(false);
   /** Set to true before closing the modal so the post-close useEffect fires runMission(). */
   const pendingRunRef = useRef(false);
+  /** Set to true once the user has passed the clarify gate — prevents re-checking on the second runMission() call. */
+  const clarifyPassedRef = useRef(false);
 
   // ── Image upload ───────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -589,10 +593,11 @@ export default function Home() {
   const activeAgent = missionHook.activeAgent;
   const fetchError = missionHook.error ?? localFetchError;
 
-  const [configStatus, setConfigStatus] = useState<{ openai: boolean; tavily: boolean } | null>(null);
+  const [configStatus, setConfigStatus] = useState<{ openai: boolean; tavily: boolean; alpha_vantage?: boolean } | null>(null);
   const [draftAxionKey, setDraftAxionKey] = useState("");
   const [draftOpenAI, setDraftOpenAI] = useState("");
   const [draftTavily, setDraftTavily] = useState("");
+  const [draftAlphaVantage, setDraftAlphaVantage] = useState("");
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">(
     typeof window !== "undefined" && "Notification" in window
@@ -768,10 +773,12 @@ export default function Home() {
     function hydrate(openai: boolean) {
       const storedAxionKey = localStorage.getItem("axion_api_key") ?? "";
       const storedOpenAI = localStorage.getItem("axion_openai_key") ?? "";
-      const storedTavily = localStorage.getItem("axion_tavily_key") ?? "";
-      if (storedAxionKey) setDraftAxionKey(storedAxionKey);
-      if (storedOpenAI) setDraftOpenAI(storedOpenAI);
-      if (storedTavily) setDraftTavily(storedTavily);
+      const storedTavily       = localStorage.getItem("axion_tavily_key")        ?? "";
+      const storedAlphaVantage = localStorage.getItem("axion_alpha_vantage_key") ?? "";
+      if (storedAxionKey)    setDraftAxionKey(storedAxionKey);
+      if (storedOpenAI)      setDraftOpenAI(storedOpenAI);
+      if (storedTavily)      setDraftTavily(storedTavily);
+      if (storedAlphaVantage) setDraftAlphaVantage(storedAlphaVantage);
       if (!openai && !storedOpenAI) setSettingsOpen(true);
     }
 
@@ -902,7 +909,8 @@ export default function Home() {
       baseUrl:   "http://localhost:8080",
       apiKey:    localStorage.getItem("axion_api_key")    ?? undefined,
       openAiKey: localStorage.getItem("axion_openai_key") ?? undefined,
-      tavilyKey: localStorage.getItem("axion_tavily_key") ?? undefined,
+      tavilyKey:       localStorage.getItem("axion_tavily_key")        ?? undefined,
+      alphaVantageKey: localStorage.getItem("axion_alpha_vantage_key") ?? undefined,
     });
   }
 
@@ -910,9 +918,8 @@ export default function Home() {
     if (!intent.trim() || missionStatus === "streaming") return;
 
     // ── Pre-flight clarification check ──────────────────────────────────────
-    // Only run when the modal is not already showing (avoids re-checking after
-    // the user has already answered or skipped).
-    if (!showClarifyModal) {
+    // Skip if the user has already passed the clarify gate for this execution.
+    if (!clarifyPassedRef.current) {
       setIsClarifying(true);
       try {
         const clarifyHeaders: Record<string, string> = { "Content-Type": "application/json" };
@@ -950,6 +957,7 @@ export default function Home() {
       Notification.requestPermission().then((perm) => setNotifPermission(perm));
     }
 
+    clarifyPassedRef.current = false; // reset for the next fresh execution
     setMissionStatus("streaming");
     setStreamCards({});
     setCardOrder([]);
@@ -995,7 +1003,8 @@ export default function Home() {
       setIntent((prev) => `${prev}. Additional context: ${answerLines.join(". ")}`);
     }
 
-    // Close modal; useEffect will call runMission() once state settles.
+    // Mark clarify as passed so the second runMission() call skips the check.
+    clarifyPassedRef.current = true;
     pendingRunRef.current = true;
     setClarifyQuestions([]);
     setShowClarifyModal(false);
@@ -1688,9 +1697,10 @@ export default function Home() {
   // ── Settings helpers ─────────────────────────────────────────────────────────
 
   function saveSettings() {
-    const axionKeyTrimmed = draftAxionKey.trim();
-    const openAITrimmed = draftOpenAI.trim();
-    const tavilyTrimmed = draftTavily.trim();
+    const axionKeyTrimmed      = draftAxionKey.trim();
+    const openAITrimmed        = draftOpenAI.trim();
+    const tavilyTrimmed        = draftTavily.trim();
+    const alphaVantageTrimmed  = draftAlphaVantage.trim();
     if (axionKeyTrimmed) {
       localStorage.setItem("axion_api_key", axionKeyTrimmed);
     } else {
@@ -1706,6 +1716,11 @@ export default function Home() {
     } else {
       localStorage.removeItem("axion_tavily_key");
     }
+    if (alphaVantageTrimmed) {
+      localStorage.setItem("axion_alpha_vantage_key", alphaVantageTrimmed);
+    } else {
+      localStorage.removeItem("axion_alpha_vantage_key");
+    }
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 2000);
     setSettingsOpen(false);
@@ -1714,27 +1729,7 @@ export default function Home() {
   // Badge: shown when OpenAI is not configured via env AND not stored locally
   const showConfigBadge = configStatus?.openai === false && !draftOpenAI.trim();
 
-  // ── Quick chips (idle state) ──────────────────────────────────────────────
-  const QUICK_CHIPS = [
-    { id: "market-sizing",       icon: "📊", label: "Market Sizing",       intent: "Market sizing for [Industry] in [Year]. Estimate TAM, SAM, and SOM with methodology, data sources, and key assumptions." },
-    { id: "competitive-analysis",icon: "🔍", label: "Competitive Analysis", intent: "Competitive analysis: [Your Company/Product] vs its top 3 competitors. Cover positioning, pricing, strengths, weaknesses, and market share." },
-    { id: "investment-thesis",   icon: "📈", label: "Investment Thesis",    intent: "Build an investment thesis for [Company or Asset]. Cover business model, financials, competitive moat, risks, and valuation." },
-    { id: "system-architecture", icon: "🏗️", label: "System Architecture",  intent: "Architect a system for [Problem Description]. Define components, data flows, technology choices, trade-offs, and an implementation roadmap." },
-    { id: "business-plan",       icon: "🚀", label: "Business Plan",        intent: "Create a business plan for [Business Idea]. Cover problem, solution, market, GTM strategy, revenue model, team needs, and 12-month milestones." },
-    { id: "insights-synthesis",  icon: "💡", label: "Insights Synthesis",   intent: "Synthesise research on [Topic] into 5–7 actionable insights. For each insight: evidence, implication, and recommended action." },
-  ];
-
   // ── Streaming status label (inferred from active agent) ───────────────────
-  const streamingStatus = (() => {
-    if (!hasCards && !activeAgent) return "Planning...";
-    if (activeAgent?.role === "WebSearcher") return "Researching...";
-    if (activeAgent?.role === "Analyst")     return "Analysing...";
-    if (activeAgent?.role === "Coder")       return "Computing...";
-    if (activeAgent?.role === "Planner")     return "Planning...";
-    if (traceEvents.some(e => e.type === "governor_expand")) return "Synthesising...";
-    return "Processing...";
-  })();
-
   // ── Helper: export mission ───────────────────────────────────────────────
   function handleExport() {
     const id = activeMissionId ?? missionMeta?.mission_id;
@@ -2147,57 +2142,22 @@ export default function Home() {
                 {commandBarContent}
               </motion.div>
 
-              {/* Quick-start chips */}
+              {/* Mode selector — 2×2 grid of vertical intelligence modes */}
               <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.36, duration: 0.38 }}
-                style={{
-                  marginTop: 18,
-                  display: "flex",
-                  gap: 8,
-                  flexWrap: "wrap",
-                  justifyContent: "center",
-                  maxWidth: 680,
-                }}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.34, duration: 0.42 }}
+                style={{ width: "100%", maxWidth: 840, marginTop: 44 }}
               >
-                {QUICK_CHIPS.map(chip => (
-                  <button
-                    key={chip.id}
-                    onClick={() => { setIntent(chip.intent); setTimeout(() => textareaRef.current?.focus(), 50); }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "7px 15px",
-                      borderRadius: 999,
-                      cursor: "pointer",
-                      background: "rgba(255,255,255,0.048)",
-                      border: "0.5px solid rgba(255,255,255,0.10)",
-                      color: "rgba(255,255,255,0.52)",
-                      fontSize: 12,
-                      fontWeight: 500,
-                      backdropFilter: "blur(8px)",
-                      WebkitBackdropFilter: "blur(8px)",
-                      transition: "background 0.15s, color 0.15s, border-color 0.15s",
-                    }}
-                    onMouseEnter={e => {
-                      const el = e.currentTarget as HTMLButtonElement;
-                      el.style.background = "rgba(255,255,255,0.09)";
-                      el.style.color = "rgba(255,255,255,0.82)";
-                      el.style.borderColor = "rgba(255,255,255,0.18)";
-                    }}
-                    onMouseLeave={e => {
-                      const el = e.currentTarget as HTMLButtonElement;
-                      el.style.background = "rgba(255,255,255,0.048)";
-                      el.style.color = "rgba(255,255,255,0.52)";
-                      el.style.borderColor = "rgba(255,255,255,0.10)";
-                    }}
-                  >
-                    <span style={{ fontSize: 14 }}>{chip.icon}</span>
-                    {chip.label}
-                  </button>
-                ))}
+                <ModeSelector
+                  onSelect={(q) => {
+                    // Fill the textarea with the selected query template.
+                    // runMission() reads intent from its closure (React state), so we do
+                    // NOT auto-submit here — the user edits the [bracket slots] first.
+                    setIntent(q);
+                    setTimeout(() => textareaRef.current?.focus(), 50);
+                  }}
+                />
               </motion.div>
             </motion.div>
           )}
@@ -2217,60 +2177,43 @@ export default function Home() {
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                justifyContent: "center",
-                gap: 22,
-                padding: "86px 24px 48px",
+                justifyContent: "flex-start",
+                gap: 0,
+                padding: "0 24px 48px",
+                paddingTop: 100,
                 textAlign: "center",
               }}
             >
-              {/* Pulsing spinner */}
-              <div style={{
-                width: 52, height: 52, borderRadius: "50%",
-                border: "2px solid rgba(167,202,220,0.25)",
-                borderTopColor: "var(--axion-accent,#a7cadc)",
-                animation: "spin 1.1s linear infinite",
-                boxShadow: "0 0 28px rgba(167,202,220,0.18)",
-              }} />
-
               {/* Intent text */}
               <p style={{
-                fontSize: "clamp(1rem, 2.5vw, 1.35rem)",
+                fontSize: "clamp(0.95rem, 2vw, 1.2rem)",
                 fontWeight: 500,
                 color: "rgba(235,239,242,0.82)",
-                maxWidth: 520,
+                maxWidth: 560,
                 lineHeight: 1.45,
                 letterSpacing: "-0.02em",
                 fontFamily: "var(--axion-font-display)",
+                marginBottom: 8,
               }}>
                 {intent}
               </p>
 
-              {/* Cycling status */}
-              <AnimatePresence mode="wait">
-                <motion.p
-                  key={streamingStatus}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.2 }}
-                  style={{
-                    fontSize: 13,
-                    color: "var(--axion-accent,#a7cadc)",
-                    fontWeight: 400,
-                    letterSpacing: "0.04em",
-                    opacity: 0.70,
-                  }}
-                >
-                  {streamingStatus}
-                </motion.p>
-              </AnimatePresence>
-
               {/* Governor expand banner */}
               {governorBanner && (
-                <p style={{ fontSize: 12, color: "rgba(167,202,220,0.55)", maxWidth: 380 }}>
+                <p style={{ fontSize: 12, color: "rgba(167,202,220,0.55)", maxWidth: 380, marginBottom: 12 }}>
                   {governorBanner}
                 </p>
               )}
+
+              {/* Live orchestration graph */}
+              <div style={{ width: "100%", maxWidth: 760 }}>
+                <OrchestrationGraph
+                  cards={streamCards}
+                  cardOrder={cardOrder}
+                  activeAgent={activeAgent}
+                  intent={intent}
+                />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2299,6 +2242,56 @@ export default function Home() {
                   </div>
                 </div>
               )}
+
+              {/* ── Mission trace — graph survives completion ──────────────────── */}
+              {cardOrder.length > 0 && (() => {
+                // slug → durationMs from traceEvents
+                const timings: Record<string, number> = {};
+                for (const e of traceEvents) {
+                  if (e.slug && e.durationMs !== undefined) timings[e.slug] = e.durationMs;
+                }
+                const agentCount  = cardOrder.length;
+                const totalMs     = Object.values(timings).reduce((a, b) => a + b, 0);
+                const totalSec    = totalMs > 0 ? (totalMs / 1000).toFixed(1) : null;
+                return (
+                  <div style={{ padding: "0 24px", maxWidth: 1280, margin: "0 auto 32px" }}>
+                    <div style={{
+                      borderRadius: 14,
+                      background: "rgba(167,202,220,0.03)",
+                      border: "0.5px solid rgba(167,202,220,0.12)",
+                      overflow: "hidden",
+                    }}>
+                      {/* Header row */}
+                      <div style={{
+                        padding: "10px 16px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        borderBottom: "0.5px solid rgba(167,202,220,0.08)",
+                      }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "rgba(110,231,183,0.70)" }}>
+                          Mission Trace
+                        </span>
+                        <span style={{ fontSize: 10, color: "rgba(167,202,220,0.45)", fontFamily: "var(--axion-font-mono, monospace)" }}>
+                          {agentCount} agent{agentCount !== 1 ? "s" : ""}
+                          {totalSec ? ` · ${totalSec}s total` : ""}
+                        </span>
+                      </div>
+                      {/* Graph */}
+                      <div style={{ padding: "4px 16px 12px" }}>
+                        <OrchestrationGraph
+                          cards={streamCards}
+                          cardOrder={cardOrder}
+                          activeAgent={null}
+                          intent={intent}
+                          timings={timings}
+                          traceMode
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Bento grid */}
               {missionState && (() => {
@@ -2717,6 +2710,7 @@ export default function Home() {
               { label: "Axion API Key", value: draftAxionKey, setter: setDraftAxionKey, placeholder: "axion_sk_...", hint: "Required when the server has AXION_API_KEY set. Leave blank for local dev.", success: null },
               { label: "OpenAI API Key", value: draftOpenAI, setter: setDraftOpenAI, placeholder: "sk-...", hint: configStatus?.openai && !draftOpenAI ? "✓ Configured via environment" : "Required for all missions.", success: configStatus?.openai && !draftOpenAI ? true : null },
               { label: "Tavily Search Key", value: draftTavily, setter: setDraftTavily, placeholder: "tvly-...", hint: configStatus?.tavily && !draftTavily ? "✓ Configured via environment" : "Optional — enables live web search.", success: configStatus?.tavily && !draftTavily ? true : null },
+              { label: "Alpha Vantage Key", value: draftAlphaVantage, setter: setDraftAlphaVantage, placeholder: "e.g. A1B2C3D4E5F6G7H8", hint: configStatus?.alpha_vantage && !draftAlphaVantage ? "✓ Configured via environment" : "Optional — enables real-time stock data (get_company_overview, get_price_history, etc.).", success: configStatus?.alpha_vantage && !draftAlphaVantage ? true : null },
             ].map(field => (
               <div key={field.label} style={{ marginBottom: 24 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>{field.label}</label>
@@ -2923,6 +2917,7 @@ export default function Home() {
           }
           onSubmit={runMissionWithAnswers}
           onSkip={() => {
+            clarifyPassedRef.current = true;
             pendingRunRef.current = true;
             setClarifyQuestions([]);
             setShowClarifyModal(false);

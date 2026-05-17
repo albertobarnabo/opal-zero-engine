@@ -121,21 +121,24 @@ export interface UploadResult {
 // ── Config ───────────────────────────────────────────────────────────────────
 
 export interface ConfigStatus {
-  openai: boolean;
-  tavily: boolean;
+  openai:         boolean;
+  tavily:         boolean;
+  alpha_vantage?: boolean;
 }
 
 // ── Client config ────────────────────────────────────────────────────────────
 
 export interface AxionClientConfig {
   /** e.g. "http://localhost:8080" */
-  baseUrl:    string;
+  baseUrl:          string;
   /** X-Axion-Key — omit for local dev (when AXION_API_KEY is not set on the server) */
-  apiKey?:    string;
+  apiKey?:          string;
   /** X-OpenAI-Key — optional per-request override */
-  openAiKey?: string;
+  openAiKey?:       string;
   /** X-Tavily-Key — optional per-request override */
-  tavilyKey?: string;
+  tavilyKey?:       string;
+  /** X-Alpha-Vantage-Key — optional per-request override for financial data tools */
+  alphaVantageKey?: string;
 }
 
 // ── Bento card (parsed from MissionState) ────────────────────────────────────

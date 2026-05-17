@@ -226,6 +226,21 @@ async fn post_to_openai(
         .map_err(|e| format!("Failed to parse response: {}", e))
 }
 
+// ── model_for_role helper ─────────────────────────────────────────────────────
+
+/// Returns the OpenAI model to use for a given agent role.
+///
+/// Reasoning-heavy roles (Planner, Analyst) keep the user-selected model.
+/// Routine roles (WebSearcher, Coder) always downscale to `gpt-4o-mini` to
+/// reduce cost and latency — they are not bottlenecked by reasoning capability.
+pub fn model_for_role(selected_model: &str, role: &axion_core::protocol::AgentRole) -> String {
+    use axion_core::protocol::AgentRole;
+    match role {
+        AgentRole::WebSearcher | AgentRole::Coder => "gpt-4o-mini".to_string(),
+        AgentRole::Planner | AgentRole::Analyst   => selected_model.to_string(),
+    }
+}
+
 // ── AiProvider implementation ─────────────────────────────────────────────────
 
 #[async_trait]
@@ -309,6 +324,13 @@ impl AiProvider for OpenAIProvider {
         };
 
         parse_response(post_to_openai(&client, &self.api_key, &body).await?)
+    }
+
+    fn with_text_model(&self, model: &str) -> Option<Box<dyn AiProvider>> {
+        Some(Box::new(OpenAIProvider {
+            api_key:    self.api_key.clone(),
+            text_model: model.to_string(),
+        }))
     }
 
     /// Multimodal request: text prompt + image → gpt-4o vision.

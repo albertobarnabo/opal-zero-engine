@@ -15,9 +15,10 @@ export class AxionClient {
   constructor(config: AxionClientConfig) {
     this.base = config.baseUrl.replace(/\/$/, "");
     this._headers = { "Content-Type": "application/json" };
-    if (config.apiKey)    this._headers["X-Axion-Key"]   = config.apiKey;
-    if (config.openAiKey) this._headers["X-OpenAI-Key"]  = config.openAiKey;
-    if (config.tavilyKey) this._headers["X-Tavily-Key"]  = config.tavilyKey;
+    if (config.apiKey)          this._headers["X-Axion-Key"]          = config.apiKey;
+    if (config.openAiKey)       this._headers["X-OpenAI-Key"]         = config.openAiKey;
+    if (config.tavilyKey)       this._headers["X-Tavily-Key"]         = config.tavilyKey;
+    if (config.alphaVantageKey) this._headers["X-Alpha-Vantage-Key"]  = config.alphaVantageKey;
   }
 
   // ── Core execution ────────────────────────────────────────────────────────

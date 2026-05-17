@@ -98,9 +98,10 @@ export function ModelSelector({ value, onChange, disabled = false }: ModelSelect
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 3 }}>
                 {m.description}
               </div>
-              {/* Row 3: cost */}
+              {/* Row 3: cost + routing note */}
               <div className="model-option-cost">
                 ${m.inputPer1M.toFixed(2)} in&nbsp;/&nbsp;${m.outputPer1M.toFixed(2)} out per 1M tokens
+                &nbsp;·&nbsp;Routine agents auto-use gpt-4o-mini
               </div>
             </div>
           ))}

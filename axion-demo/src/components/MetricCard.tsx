@@ -32,8 +32,12 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
   const [displayed, setDisplayed] = useState<number>(0);
   const [hasAnimated, setHasAnimated] = useState(false);
 
-  // Normalise raw numbers to formatted strings before animation extraction
-  const rawStr = typeof value === "number" ? formatValue(value) : String(value);
+  // Normalise raw numbers to formatted strings before animation extraction.
+  // LLMs sometimes serialize large numbers as JSON strings — handle both.
+  const numericValue = typeof value === "string" && value.trim() !== "" && !isNaN(Number(value))
+    ? Number(value)
+    : value;
+  const rawStr = typeof numericValue === "number" ? formatValue(numericValue) : String(numericValue);
   const prefix = rawStr.match(/^[^0-9]*/)?.[0] ?? "";
   // Capture everything after the last digit as suffix (handles "B", "M", "K", "%")
   const suffix = rawStr.replace(/^.*[0-9]/, "");
@@ -83,7 +87,7 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
     : !hasAnimated
     ? `${prefix}0${suffix}`                          // not yet animated: start at 0
     : displayed === target
-    ? typeof value === "number" ? formatValue(value) : value  // animation done: formatted
+    ? typeof numericValue === "number" ? formatValue(numericValue) : String(numericValue)  // animation done: formatted
     : `${prefix}${displayed}${suffix}`;              // animating: show counted value
 
   return (
