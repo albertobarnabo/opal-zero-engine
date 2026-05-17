@@ -43,6 +43,8 @@ struct TaskRequest {
     intent: String,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    schema: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -177,11 +179,20 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<MissionUpdate>(64);
 
     let intent = req.intent.clone();
+    let schema = req.schema.clone();
     tokio::spawn(async move {
         // Build a dynamic plan from the user's intent via the LLM planner.
         // run_mission clears context defensively, so no state from a previous
         // mission can leak.
         let mut plan = build_plan_from_intent(&intent, &provider).await;
+
+        // If the caller supplied an output schema, inject it into the context bus
+        // so the Analyst can include it in finalize_mission_state.
+        if let Some(ref s) = schema {
+            if let Ok(schema_str) = serde_json::to_string(s) {
+                plan.context.data.insert("__output_schema".into(), schema_str);
+            }
+        }
 
         // tx is dropped when run_mission returns, which closes the SSE stream.
         let result = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;
@@ -905,15 +916,19 @@ async fn main() {
         .layer(cors);
 
     println!(
-        "Axion server starting — max_tokens={}, temperature={}",
+        "🚀 Axion Server v{} starting — max_tokens={}, temperature={}, AV-key={}",
+        env!("CARGO_PKG_VERSION"),
         std::env::var("AXION_MAX_TOKENS").unwrap_or_else(|_| "4096".into()),
         std::env::var("AXION_TEMPERATURE").unwrap_or_else(|_| "0.1".into()),
+        if std::env::var("ALPHA_VANTAGE_API_KEY").is_ok() { "set ✓" } else { "not set" },
     );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .expect("Failed to bind to 0.0.0.0:8080");
+        .unwrap_or_else(|_| panic!("Failed to bind to {}", addr));
 
-    println!("🌐 Axion Server listening on http://0.0.0.0:8080");
+    println!("🌐 Axion Server listening on http://{}", addr);
     axum::serve(listener, app).await.unwrap();
 }
