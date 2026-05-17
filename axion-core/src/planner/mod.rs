@@ -45,8 +45,27 @@ impl Plan {
         role: AgentRole,
         excluded_tools: Vec<String>,
     ) -> String {
-        let id   = Uuid::new_v4();
-        let slug = make_slug(description);
+        let id        = Uuid::new_v4();
+        let base_slug = make_slug(description);
+
+        // ── Slug uniqueness ───────────────────────────────────────────────────
+        // If two tasks produce the same base slug (same first 6 significant
+        // words), append an incrementing suffix so the cycle detector and
+        // dependency resolver can tell them apart.
+        let slug = if !self.tasks.iter().any(|t| t.slug == base_slug) {
+            base_slug
+        } else {
+            let mut candidate;
+            let mut counter = 2usize;
+            loop {
+                candidate = format!("{}_{}", base_slug, counter);
+                if !self.tasks.iter().any(|t| t.slug == candidate) {
+                    break;
+                }
+                counter += 1;
+            }
+            candidate
+        };
 
         // Guard: remove any dependency whose slug equals or starts with this
         // task's own slug.  This prevents self-referential depends_on entries
@@ -122,15 +141,41 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
         let json_str = crate::governor::extract_json(&text).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<PlanJson>(&json_str) {
             if !parsed.tasks.is_empty() {
-                for t in parsed.tasks {
+                for t in &parsed.tasks {
                     let role = match t.role.as_str() {
                         "Analyst" => AgentRole::Analyst,
                         "Coder"   => AgentRole::Coder,
                         _         => AgentRole::WebSearcher,
                     };
-                    plan.add_task(&t.description, t.depends_on, role);
+                    // Add all non-Analyst tasks first with the LLM's depends_on.
+                    // Analyst tasks are wired below after we know the real slugs.
+                    if !matches!(role, AgentRole::Analyst) {
+                        plan.add_task(&t.description, t.depends_on.clone(), role);
+                    }
                 }
-                return plan;
+
+                // ── Fix Bug 1: wire Analyst to actual computed non-Analyst slugs ──
+                //
+                // The LLM guesses slug strings in depends_on, but those strings
+                // rarely match what make_slug() computes from each description.
+                // We override every Analyst task's depends_on with the true slugs
+                // of every non-Analyst task already in the plan so the Analyst is
+                // always schedulable once all WebSearchers have completed.
+                let non_analyst_slugs: Vec<String> = plan.tasks
+                    .iter()
+                    .filter(|t| !matches!(t.role, AgentRole::Analyst))
+                    .map(|t| t.slug.clone())
+                    .collect();
+
+                for t in &parsed.tasks {
+                    if matches!(t.role.as_str(), "Analyst") {
+                        plan.add_task(&t.description, non_analyst_slugs.clone(), AgentRole::Analyst);
+                    }
+                }
+
+                if !plan.tasks.is_empty() {
+                    return plan;
+                }
             }
         }
     }
@@ -245,24 +290,37 @@ pub async fn repair_failed_tasks(
         return vec![];
     }
 
-    // Short-circuit: if the failing task was finalize_mission_state, inject a
-    // targeted retry with a simplified payload rather than asking the LLM for
-    // generic alternatives (which tend to change the topic entirely).
-    let finalize_failed = failed
-        .iter()
-        .any(|t| matches!(t.role, AgentRole::Analyst) && t.intent.contains("finalize_mission_state"));
-    if finalize_failed {
-        println!("  🧠 Re-planner: finalize_mission_state failed — injecting targeted retry.");
-        return vec![crate::governor::NewTask {
-            description: "Call finalize_mission_state with a SIMPLIFIED payload. \
+    // ── Short-circuit: Analyst failure → direct retry ────────────────────────
+    //
+    // When any Analyst task failed (whether because of a deadlock, a bad LLM
+    // response, or a failed finalize_mission_state call), the correct repair is
+    // to re-inject the same Analyst intent — never to re-plan WebSearcher data
+    // collection, which regenerates duplicate slugs and causes circular deps.
+    //
+    // If the task was specifically finalize_mission_state, use a simplified
+    // payload prompt as before; otherwise just retry the original intent.
+    let analyst_failed = failed.iter().find(|t| matches!(t.role, AgentRole::Analyst));
+    if let Some(failed_analyst) = analyst_failed {
+        if failed_analyst.intent.contains("finalize_mission_state") {
+            println!("  🧠 Re-planner: finalize_mission_state failed — injecting targeted retry.");
+            return vec![crate::governor::NewTask {
+                description: "Call finalize_mission_state with a SIMPLIFIED payload. \
 Use a flat structured_data_payload with 3-5 scalar keys only (strings or numbers). \
 Pull the most important facts from the PREVIOUS TASK RESULTS in your context \
 (prices, totals, recommendations) and map each one to a descriptive key. \
 Call finalize_mission_state EXACTLY ONCE."
-                .to_string(),
-            role: AgentRole::Analyst,
-            excluded_tools: vec![],
-        }];
+                    .to_string(),
+                role: AgentRole::Analyst,
+                excluded_tools: vec![],
+            }];
+        } else {
+            println!("  🧠 Re-planner: Analyst failed — retrying original Analyst intent directly.");
+            return vec![crate::governor::NewTask {
+                description: failed_analyst.intent.clone(),
+                role: AgentRole::Analyst,
+                excluded_tools: vec![],
+            }];
+        }
     }
 
     let failed_summary: String = failed

@@ -292,6 +292,30 @@ async fn execute_with_role(
         prompt.push_str(&build_context_window(context, CONTEXT_CHAR_BUDGET));
     }
 
+    // ── Schema constraint for Analyst role ───────────────────────────────────
+    // When the caller supplied an output schema (injected into the context bus
+    // as __output_schema), append a hard contract to the Analyst prompt so that
+    // finalize_mission_state uses exactly the declared top-level keys.
+    if matches!(task.role, crate::protocol::AgentRole::Analyst) {
+        if let Some(schema_str) = context.data.get("__output_schema") {
+            if let Ok(schema_val) = serde_json::from_str::<serde_json::Value>(schema_str) {
+                if let Some(obj) = schema_val.as_object() {
+                    let lines: String = obj
+                        .iter()
+                        .map(|(k, v)| format!("- {} ({})\n", k, v.as_str().unwrap_or("unknown")))
+                        .collect();
+                    prompt.push_str(&format!(
+                        "\n\nOUTPUT SCHEMA CONTRACT:\n\
+                         Your data_payload MUST use exactly these top-level keys:\n\
+                         {}\
+                         Omit any key for which you have no data. Do not add keys outside this list.",
+                        lines
+                    ));
+                }
+            }
+        }
+    }
+
     prompt.push_str(&format!("\nTASK: {}", task.intent));
     println!("    DEBUG: Generated prompt: {}", prompt);
 
@@ -516,7 +540,7 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     // (those were causing the agent to call the wrong tool for finalize tasks).
     let names: &[&str] = match role {
         AgentRole::Analyst     => &["web_search", "finalize_mission_state", "vision", "feedback", "memory_persist", "generate_document", "read_file", "get_company_overview", "get_price_history", "get_income_statement", "get_news_sentiment"],
-        AgentRole::WebSearcher => &["web_search", "get_company_overview", "get_price_history", "get_income_statement", "get_news_sentiment"],
+        AgentRole::WebSearcher => &["web_search"],
         AgentRole::Planner     => &["calculator", "web_search", "write_file", "memory", "feedback", "memory_persist"],
         AgentRole::Coder       => &["python_interpreter", "write_file"],
     };

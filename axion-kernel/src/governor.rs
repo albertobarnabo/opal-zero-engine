@@ -290,6 +290,53 @@ DEEP DIVE RESEARCH → must include:\n\
 \n\
 For other intent types, still produce ≥8 payload keys covering the most relevant dimensions.\n\
 \n\
+═══ FINANCIAL INTELLIGENCE BRIEF — EXACT KEY CONTRACT ═══\n\
+When the mission intent contains \"Financial intelligence brief\", you MUST use EXACTLY\n\
+these top-level payload key names so the dashboard renders correctly.\n\
+\n\
+CRITICAL — NUMBER UNITS: ALL monetary values MUST be full USD integers, NEVER\n\
+abbreviated. Apple revenue $394B → 394000000000. Tesla market cap $1.5T → 1500000000000.\n\
+Revenue in billions? Multiply by 1,000,000,000. In millions? Multiply by 1,000,000.\n\
+Outputting 394 instead of 394000000000 will silently break the display.\n\
+\n\
+  current_price_usd: number          ← current stock price (full USD, e.g. 213.49)\n\
+  price_change_pct: number           ← % change as decimal (e.g. 1.4 for +1.4%%)\n\
+  price_history: array               ← REQUIRED. Minimum 24 weekly entries, target 52.\n\
+                                       Each entry: {\"date\":\"YYYY-MM-DD\",\"close\":number}\n\
+                                       Approximate if exact data is unavailable — estimate\n\
+                                       weekly closes from the 52W high/low range.\n\
+  market_cap_usd: number             ← full integer (e.g. 3000000000000 for $3T)\n\
+  pe_ratio: number\n\
+  eps: number\n\
+  revenue_ttm_usd: number            ← full integer (e.g. 394000000000 for $394B)\n\
+  net_income_usd: number             ← full integer\n\
+  week_52_high_usd: number\n\
+  week_52_low_usd: number\n\
+  beta: number\n\
+  analyst_target_price_usd: number\n\
+  income_history: array              ← REQUIRED. Last 4 fiscal years.\n\
+                                       [{\"year\":\"YYYY\",\"revenue_usd\":number,\"net_income_usd\":number}, ...]\n\
+                                       All revenue_usd and net_income_usd MUST be full integers.\n\
+  top_competitors: array             ← [{\"name\":str,\"ticker\":str,\"market_cap\":number,\"revenue\":number,\"pe_ratio\":number,\"ytd_return_pct\":number}, ...]\n\
+  news: array                        ← REQUIRED. Minimum 8 items, target 10.\n\
+                                       [{\"headline\":str,\"source\":str,\"sentiment\":\"bullish|neutral|bearish\",\"url\":str}, ...]\n\
+  analyst_consensus: string          ← REQUIRED. One of: \"strong-buy\",\"buy\",\"hold\",\"sell\",\"strong-sell\"\n\
+\n\
+FORBIDDEN key names (these will NOT display): \"current_stock_price\", \"stock_price\",\n\
+\"recent_news\", \"news_articles\", \"annual_revenue_trend\", \"analyst_recommendation\".\n\
+Use only the exact names listed above.\n\
+\n\
+PARTIAL DATA HANDLING:\n\
+If some tasks in your context show errors or are missing, this means those \
+data sources were unavailable (e.g. missing API key, rate limit, or network \
+failure). In this case:\n\
+* Still call finalize_mission_state — never abort because of missing data.\n\
+* Omit payload keys for sections you have no data on (do not invent numbers).\n\
+* Add a top-level \"data_gaps\": [\"section_name\", ...] array listing what \
+  is missing so the UI can show 'Unavailable' rather than a blank.\n\
+* Use whatever was successfully fetched — partial results are always better \
+  than no results.\n\
+\n\
 ⚠️  CRITICAL: Your ONLY final output is a single call to 'finalize_mission_state'.\n\
 Never write prose as your final answer. Never omit the call.\n\
 If you call finalize_mission_state WITHOUT a populated structured_data_payload, \

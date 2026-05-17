@@ -577,12 +577,6 @@ async fn run_loop(
                                     Some("[Superseded — repair plan injected]".to_string());
                             }
 
-                            let completed_slugs: Vec<String> = plan.tasks
-                                .iter()
-                                .filter(|t| matches!(t.status, protocol::TaskStatus::Completed))
-                                .map(|t| t.slug.clone())
-                                .collect();
-
                             if let Some(tx) = tx {
                                 let _ = tx
                                     .send(protocol::MissionUpdate::GovernorExpand {
@@ -595,13 +589,31 @@ async fn run_loop(
                                     .await;
                             }
 
+                            // ── Fix Bug 2: sequential deps for repair tasks ───
+                            //
+                            // Using `completed_slugs` as deps for every repair
+                            // task causes circular deps when a repair task's
+                            // slug collides with a name already in
+                            // `completed_slugs` (the cycle detector overwrites
+                            // the old entry with the new one, then sees A→B and
+                            // B→A in the same batch).
+                            //
+                            // Instead: repair task N depends only on repair
+                            // task N-1.  All prior context is always available
+                            // through the context bus regardless of deps.
+                            let mut prev_repair_slug: Option<String> = None;
                             for rt in repair {
-                                plan.add_task_excluded(
+                                let deps = prev_repair_slug
+                                    .iter()
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                let slug = plan.add_task_excluded(
                                     &rt.description,
-                                    completed_slugs.clone(),
+                                    deps,
                                     rt.role,
                                     rt.excluded_tools,
                                 );
+                                prev_repair_slug = Some(slug);
                             }
 
                             repair_rounds += 1;
@@ -693,11 +705,32 @@ async fn run_loop(
         }
     }
 
-    let unfinished = plan
-        .tasks
+    let unfinished: Vec<&protocol::Task> = plan.tasks
         .iter()
         .filter(|t| !matches!(t.status, protocol::TaskStatus::Completed))
-        .count();
+        .collect();
+
+    // If the Analyst produced a MissionState despite some tasks failing,
+    // treat as partial success — show real data with missing fields rather
+    // than a blank error screen.
+    if extract_mission_state(&plan.tasks).is_some() {
+        println!(
+            "  ⚠️  {} task(s) failed but Analyst produced a result — \
+             emitting partial success.",
+            unfinished.len()
+        );
+        finish_success(plan, original_task_count, tx).await;
+        return Ok(None);
+    }
+
+    // True failure: no useful data was produced.
+    let failed_summary: String = unfinished
+        .iter()
+        .map(|t| format!("  • {} ({})", t.slug, t.result.as_deref().unwrap_or("no result")))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    println!("  ❌ Mission failed. Failed tasks:\n{}", failed_summary);
 
     if let Err(e) = persistence::save_snapshot(plan, original_task_count, "failed") {
         println!("  ⚠️  Could not save mission snapshot: {}", e);
@@ -705,7 +738,7 @@ async fn run_loop(
 
     let error = format!(
         "{} task(s) could not be completed after {} attempts",
-        unfinished, max_attempts
+        unfinished.len(), max_attempts
     );
 
     if let Some(tx) = tx {
