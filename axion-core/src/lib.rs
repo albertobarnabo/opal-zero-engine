@@ -105,8 +105,16 @@ async fn run_mission_inner(
     max_attempts: u8,
     tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
 ) -> Result<Option<protocol::HandshakeRequest>, String> {
+    // Preserve caller-injected schema before wiping context, then restore after.
+    let preserved_schema = plan.context.data.remove("__output_schema");
+
     // Wipe any context from a previous run on this plan object.
     plan.context.clear();
+
+    // Restore the schema so Analyst and State Finalizer can read it.
+    if let Some(schema) = preserved_schema {
+        plan.context.data.insert("__output_schema".into(), schema);
+    }
 
     // ── Inject cross-mission persistent memory into the context bus ───────────
     let memory = memory::MemoryStore::new(std::path::Path::new("memory"));

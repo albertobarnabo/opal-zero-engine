@@ -1,4 +1,4 @@
-import type { AxionConfig, AxionSchema } from "./types";
+import type { AxionConfig, AxionSchema } from "./types.js";
 
 export interface StreamHandlers {
   onTaskStarted:   (slug: string, role: string, intent: string) => void;

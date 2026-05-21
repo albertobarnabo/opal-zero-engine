@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { streamMission } from "./stream";
-import type { AgentState, MissionStatus, UseAxionOptions, UseAxionResult } from "./types";
+import { streamMission } from "./stream.js";
+import type { AgentState, MissionStatus, UseAxionOptions, UseAxionResult } from "./types.js";
 
 export function useAxion<T = Record<string, unknown>>(
   intent: string,

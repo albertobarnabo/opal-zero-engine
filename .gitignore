@@ -3,3 +3,6 @@
 **/*.rs.bk
 /output/
 /missions/
+
+axion-server/missions/
+axion.log

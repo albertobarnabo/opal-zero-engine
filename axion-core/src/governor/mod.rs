@@ -64,6 +64,28 @@ pub trait Governor: Send + Sync {
     /// without modifying the core dispatch loop.
     fn system_prompt_for_role(&self, role: &AgentRole) -> String;
 
+    /// Minimal Analyst prompt used when the caller supplies an explicit output
+    /// schema. Omits all component-type examples so the schema contract wins.
+    fn schema_analyst_prompt(&self) -> String {
+        "You are the Analyst agent in the Axion multi-agent system.\n\
+The WebSearcher agents have already collected all needed data — it is in PREVIOUS TASK RESULTS.\n\
+Your ONLY job is to call finalize_mission_state ONCE with a structured data_payload.\n\
+\n\
+RULES:\n\
+* Read the MANDATORY OUTPUT SCHEMA at the top — use EXACTLY those key names, no others.\n\
+* Fill each key from the PREVIOUS TASK RESULTS already in your context.\n\
+* Do NOT call web_search first — the WebSearchers already ran. Call finalize_mission_state directly.\n\
+* Numbers must be numeric type — NEVER strings. 11000000000 not \"11B\".\n\
+* Arrays must be real arrays, not comma-separated strings.\n\
+* Omit a key only if you truly have zero data for it — never invent values.\n\
+\n\
+PARTIAL DATA: If some sections have no data, still call finalize_mission_state with\n\
+whatever you have. Partial results are always better than nothing.\n\
+\n\
+⚠️  CRITICAL: Your FIRST and ONLY tool call must be finalize_mission_state. Never write prose.\n\
+".to_string()
+    }
+
     /// Optional: return the model string to use for a given agent role.
     ///
     /// The dispatcher calls this before every task and, when `Some(model)` is
@@ -162,9 +184,64 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
             "  🧠 Governor: State Finalizer triggered — {} bytes across {} task(s).",
             total_result_bytes, completed_count
         );
-        return Some(ValidationResult::Expand(vec![NewTask {
-            description:
+
+        // When the caller supplied an output schema, replace the generic Rome
+        // travel example with one that uses the actual required keys so the LLM
+        // doesn't copy the wrong structure.
+        let schema_keys: Option<Vec<String>> = context
+            .data
+            .get("__output_schema")
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .and_then(|v| {
+                v.as_object()
+                    .map(|obj| obj.keys().cloned().collect::<Vec<_>>())
+            });
+
+        let finalizer_description = if let Some(keys) = schema_keys {
+            let keys_list = keys
+                .iter()
+                .map(|k| format!("      \"{k}\": <value from your research>"))
+                .collect::<Vec<_>>()
+                .join(",\n");
+            let widget_examples = keys
+                .iter()
+                .take(3)
+                .map(|k| format!("\"MetricCard:{k}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
                 "Call finalize_mission_state with a fully populated structured_data_payload.\n\
+\n\
+🔒 STRICT KEY CONTRACT — structured_data_payload MUST use ONLY these exact top-level keys:\n\
+{keys_list_block}\
+⛔ DO NOT add any other keys. Keys not in this list will be silently dropped and show NOTHING in the UI.\n\
+⛔ Do NOT invent key names. Use the exact names listed above, verbatim.\n\
+\n\
+⚠️  COMMON MISTAKE — do NOT do this:\n\
+  finalize_mission_state({{\n\
+    \"summary\": \"Overview...\",\n\
+    \"suggested_widgets\": [\"MetricCard:some_key\"],\n\
+    \"verification_logs\": [...]\n\
+  }})\n\
+This is WRONG. suggested_widgets contains labels only — it does NOT contain the actual data.\n\
+\n\
+✅ CORRECT — structured_data_payload with ONLY the required keys:\n\
+  finalize_mission_state({{\n\
+    \"summary\": \"<one-sentence summary of findings>\",\n\
+    \"suggested_widgets\": [{widget_examples}],\n\
+    \"structured_data_payload\": {{\n\
+{keys_list}\n\
+    }}\n\
+  }})\n\
+\n\
+Now extract ALL findings from the PREVIOUS TASK RESULTS in your context and call finalize_mission_state EXACTLY ONCE.",
+                keys_list_block = keys
+                    .iter()
+                    .map(|k| format!("  - {k}\n"))
+                    .collect::<String>(),
+            )
+        } else {
+            "Call finalize_mission_state with a fully populated structured_data_payload.\n\
 \n\
 ⚠️  COMMON MISTAKE — do NOT do this:\n\
   finalize_mission_state({\n\
@@ -177,27 +254,24 @@ This is WRONG. suggested_widgets contains labels only — it does NOT contain th
 ✅ CORRECT — always include structured_data_payload with real values:\n\
   finalize_mission_state({\n\
     \"summary\": \"Weekend trip to Rome: flights from $24, hotels from $131/night.\",\n\
-    \"suggested_widgets\": [\"MetricCard:cheapest_flight_usd\", \"ComparisonTable:hotels\", \"Timeline:itinerary\", \"ImageCard:colosseum_photo\"],\n\
+    \"suggested_widgets\": [\"MetricCard:cheapest_flight_usd\", \"ComparisonTable:hotels\", \"Timeline:itinerary\"],\n\
     \"structured_data_payload\": {\n\
       \"cheapest_flight_usd\": 24,\n\
       \"hotel_budget_min_usd\": 131,\n\
-      \"top_neighborhoods\": \"Trastevere, Centro Storico, Prati\",\n\
       \"hotels\": [\n\
-        {\"name\": \"Hotel Vilon\", \"stars\": 5, \"price_per_night_usd\": 250, \"neighborhood\": \"Centro Storico\"},\n\
-        {\"name\": \"Hotel Locarno\", \"stars\": 4, \"price_per_night_usd\": 180, \"neighborhood\": \"Tridente\"}\n\
+        {\"name\": \"Hotel Vilon\", \"stars\": 5, \"price_per_night_usd\": 250},\n\
+        {\"name\": \"Hotel Locarno\", \"stars\": 4, \"price_per_night_usd\": 180}\n\
       ],\n\
-      \"itinerary\": [\n\
-        {\"label\": \"Day 1 Morning — Colosseum\", \"description\": \"Guided tour. Tickets 18 EUR. Open 9:00-19:00.\", \"time\": \"9:00\"},\n\
-        {\"label\": \"Day 1 Afternoon — Roman Forum\", \"description\": \"Included with Colosseum ticket.\", \"time\": \"14:00\"},\n\
-        {\"label\": \"Day 2 Morning — Vatican Museums\", \"description\": \"Book in advance. 20 EUR entry.\", \"time\": \"9:00\"}\n\
-      ],\n\
-      \"colosseum_photo\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Colosseo_2020.jpg/1200px-Colosseo_2020.jpg\",\n\
-      \"sources\": [{\"label\": \"TripAdvisor\", \"url\": \"https://www.tripadvisor.com/Attractions-g187791-Activities-Rome_Lazio.html\"}]\n\
+      \"sources\": [{\"label\": \"TripAdvisor\", \"url\": \"https://www.tripadvisor.com\"}]\n\
     }\n\
   })\n\
 \n\
 Now extract ALL findings from the PREVIOUS TASK RESULTS in your context and call finalize_mission_state EXACTLY ONCE with a structured_data_payload that matches this pattern."
-                    .to_string(),
+                .to_string()
+        };
+
+        return Some(ValidationResult::Expand(vec![NewTask {
+            description: finalizer_description,
             role: AgentRole::Analyst,
             excluded_tools: vec![],
         }]));

@@ -1,4 +1,4 @@
-import type { AgentState } from "./types";
+import type { AgentState } from "./types.js";
 interface AgentStripProps {
     agents: AgentState[];
     style?: React.CSSProperties;

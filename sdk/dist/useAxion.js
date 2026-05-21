@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { streamMission } from "./stream";
+import { streamMission } from "./stream.js";
 export function useAxion(intent, options) {
     const [agents, setAgents] = useState([]);
     const [data, setData] = useState(null);

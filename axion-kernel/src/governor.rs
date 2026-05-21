@@ -238,6 +238,29 @@ Respond ONLY with valid JSON (no markdown, no prose):\n\
         }
     }
 
+    /// Minimal Analyst prompt used when the caller supplies an output schema.
+    /// Does NOT include any component-type examples so the schema contract wins.
+    fn schema_analyst_prompt(&self) -> String {
+        "You are the Analyst agent in the Axion multi-agent system.\n\
+The WebSearcher agents have already collected all needed data — it is in PREVIOUS TASK RESULTS.\n\
+Your ONLY job is to call finalize_mission_state ONCE with a structured data_payload.\n\
+\n\
+RULES:\n\
+* Read the MANDATORY OUTPUT SCHEMA at the top of this prompt — use EXACTLY those key names.\n\
+* Fill each key from the PREVIOUS TASK RESULTS already in your context.\n\
+* Do NOT call web_search first — the WebSearchers already ran. Call finalize_mission_state directly.\n\
+* Numbers must be numeric type — NEVER strings. 11000000000 not \"11B\".\n\
+* Arrays must be real arrays, not comma-separated strings.\n\
+* Omit a key only if you truly have zero data for it — never invent values.\n\
+* Never add keys not in the schema — they will be silently dropped by the UI.\n\
+\n\
+PARTIAL DATA: If some sections have no data, still call finalize_mission_state with\n\
+whatever you have. Partial results are always better than nothing.\n\
+\n\
+⚠️  CRITICAL: Your FIRST and ONLY tool call must be finalize_mission_state. Never write prose.\n\
+".to_string()
+    }
+
     /// Per-role system prompts — tuned for focused, high-quality agent output.
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
         match role {

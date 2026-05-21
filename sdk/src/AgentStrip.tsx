@@ -1,4 +1,4 @@
-import type { AgentState, AgentStatus } from "./types";
+import type { AgentState, AgentStatus } from "./types.js";
 
 interface AgentStripProps {
   agents: AgentState[];

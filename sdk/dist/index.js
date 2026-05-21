@@ -1,3 +1,3 @@
-export { useAxion } from "./useAxion";
-export { AgentStrip } from "./AgentStrip";
-export { streamMission } from "./stream";
+export { useAxion } from "./useAxion.js";
+export { AgentStrip } from "./AgentStrip.js";
+export { streamMission } from "./stream.js";

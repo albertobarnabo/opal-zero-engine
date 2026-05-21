@@ -47,7 +47,8 @@ fn build_context_window(bus: &ContextBus, char_budget: usize) -> String {
 
     for (slug, result) in &entries {
         let body: String = if result.len() > ENTRY_CAP {
-            format!("{}… [truncated]", &result[..ENTRY_CAP])
+            let safe_end = result.floor_char_boundary(ENTRY_CAP);
+            format!("{}… [truncated]", &result[..safe_end])
         } else {
             result.to_string()
         };
@@ -281,43 +282,71 @@ async fn execute_with_role(
         println!("    🤖 Role: {} → model: {}", task.role.as_str(), m);
     }
 
-    // ── System prefix comes from the Governor (pluggable, role-specific) ──────
-    let system_prefix = governor.system_prompt_for_role(&task.role);
+    // ── Schema contract extracted before prompt assembly ─────────────────────
+    // When the caller supplied an output schema it MUST lead the Analyst prompt
+    // so it overrides the generic component-format examples that follow.
+    let schema_contract: Option<String> =
+        context.data.get("__output_schema").and_then(|s| {
+            serde_json::from_str::<serde_json::Value>(s).ok().and_then(|v| {
+                v.as_object().map(|obj| {
+                    let keys: String = obj
+                        .keys()
+                        .map(|k| format!("  - {k}\n"))
+                        .collect();
 
-    // ── Build the full prompt: prefix + context + task ────────────────────────
-    let mut prompt = system_prefix;
+                    match task.role {
+                        crate::protocol::AgentRole::Analyst => format!(
+                            "🔒 MANDATORY OUTPUT SCHEMA — THIS OVERRIDES ALL EXAMPLES BELOW:\n\
+                             The calling application requires data_payload to use EXACTLY these \
+                             top-level keys. Any key not in this list will be silently dropped by the UI.\n\
+                             {keys}\
+                             Do NOT use ChartCard:, MetricCard:, ComparisonTable:, or Timeline: \
+                             prefixes. Use the plain key names above verbatim.\n\
+                             Omit a key only if you have zero data for it — never invent values.\n\n",
+                        ),
+                        crate::protocol::AgentRole::Planner => format!(
+                            "🔒 REQUIRED OUTPUT SECTIONS:\n\
+                             The final Analyst must populate these specific data sections.\n\
+                             Create one focused WebSearcher task per section so the Analyst \
+                             has the data it needs:\n\
+                             {keys}\
+                             Do not create generic research tasks — each task must target \
+                             one of the sections listed above.\n\n",
+                        ),
+                        _ => String::new(),
+                    }
+                })
+            })
+        })
+        .filter(|s| !s.is_empty());
+
+    // ── System prefix — use minimal schema-aware prompt when schema is present ─
+    let system_prefix =
+        if schema_contract.is_some()
+            && matches!(task.role, crate::protocol::AgentRole::Analyst)
+        {
+            println!("    🔒 Analyst: schema_contract=Some → using schema_analyst_prompt");
+            governor.schema_analyst_prompt()
+        } else {
+            if matches!(task.role, crate::protocol::AgentRole::Analyst) {
+                println!("    ⚠️  Analyst: schema_contract=None → using full system_prompt_for_role");
+            }
+            governor.system_prompt_for_role(&task.role)
+        };
+
+    // ── Build the full prompt: schema contract (if any) + prefix + context + task
+    let mut prompt = String::new();
+    if let Some(ref contract) = schema_contract {
+        prompt.push_str(contract);
+    }
+    prompt.push_str(&system_prefix);
 
     if !context.data.is_empty() {
         prompt.push_str("\nPREVIOUS TASK RESULTS:\n");
         prompt.push_str(&build_context_window(context, CONTEXT_CHAR_BUDGET));
     }
 
-    // ── Schema constraint for Analyst role ───────────────────────────────────
-    // When the caller supplied an output schema (injected into the context bus
-    // as __output_schema), append a hard contract to the Analyst prompt so that
-    // finalize_mission_state uses exactly the declared top-level keys.
-    if matches!(task.role, crate::protocol::AgentRole::Analyst) {
-        if let Some(schema_str) = context.data.get("__output_schema") {
-            if let Ok(schema_val) = serde_json::from_str::<serde_json::Value>(schema_str) {
-                if let Some(obj) = schema_val.as_object() {
-                    let lines: String = obj
-                        .iter()
-                        .map(|(k, v)| format!("- {} ({})\n", k, v.as_str().unwrap_or("unknown")))
-                        .collect();
-                    prompt.push_str(&format!(
-                        "\n\nOUTPUT SCHEMA CONTRACT:\n\
-                         Your data_payload MUST use exactly these top-level keys:\n\
-                         {}\
-                         Omit any key for which you have no data. Do not add keys outside this list.",
-                        lines
-                    ));
-                }
-            }
-        }
-    }
-
     prompt.push_str(&format!("\nTASK: {}", task.intent));
-    println!("    DEBUG: Generated prompt: {}", prompt);
 
     // Get available tools for this role, then strip any the task has blacklisted
     // (set by the re-planner when a tool has already failed once).
@@ -351,6 +380,13 @@ async fn execute_with_role(
     let retries    = max_llm_retries();
     let base_delay = retry_base_delay_ms();
     let role_label = task.role.as_str().to_string();
+
+    // Diagnostic: log the exact tool list offered so failures are easy to trace.
+    println!(
+        "    🔧 Tools offered to {}: [{}]",
+        role_label,
+        tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")
+    );
 
     // ── First LLM turn — wrapped in retry loop ────────────────────────────────
     match call_with_retry(
@@ -532,23 +568,40 @@ mod tests {
 fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
     use crate::protocol::AgentRole;
 
-    // Role → canonical tool names.
+    // Alpha Vantage tools require an API key to be set — offering them without a
+    // key causes the LLM to eagerly call them, the tool fails immediately, and the
+    // whole Analyst task is marked Failed.  Only include them when the key exists.
+    let has_av_key = std::env::var("ALPHA_VANTAGE_API_KEY")
+        .map(|k| !k.is_empty())
+        .unwrap_or(false);
+
+    // Role → canonical tool names (built dynamically so we can gate AV tools).
     //
-    // Analyst: web_search + finalize_mission_state + persistence helpers only.
-    // calculator and memory are intentionally excluded: the Analyst's job is to
-    // synthesise and finalise findings, not to do arithmetic or replay memory
-    // (those were causing the agent to call the wrong tool for finalize tasks).
-    let names: &[&str] = match role {
-        AgentRole::Analyst     => &["web_search", "finalize_mission_state", "vision", "feedback", "memory_persist", "generate_document", "read_file", "get_company_overview", "get_price_history", "get_income_statement", "get_news_sentiment"],
-        AgentRole::WebSearcher => &["web_search"],
-        AgentRole::Planner     => &["calculator", "web_search", "write_file", "memory", "feedback", "memory_persist"],
-        AgentRole::Coder       => &["python_interpreter", "write_file"],
+    // Analyst: web_search + finalize_mission_state + persistence helpers.
+    // Alpha Vantage tools are added only when the env key is present.
+    let names: Vec<&str> = match role {
+        AgentRole::Analyst => {
+            let mut v = vec![
+                "web_search", "finalize_mission_state", "vision",
+                "feedback", "memory_persist", "generate_document", "read_file",
+            ];
+            if has_av_key {
+                v.extend_from_slice(&[
+                    "get_company_overview", "get_price_history",
+                    "get_income_statement", "get_news_sentiment",
+                ]);
+            }
+            v
+        }
+        AgentRole::WebSearcher => vec!["web_search"],
+        AgentRole::Planner     => vec!["calculator", "web_search", "write_file", "memory", "feedback", "memory_persist"],
+        AgentRole::Coder       => vec!["python_interpreter", "write_file"],
     };
 
     // Use the live registry when available; fall back to hard-coded constructors
     // so tests that skip Registry::init_default() continue to work.
     if let Some(reg) = crate::registry::Registry::get() {
-        let tools = reg.tools_for_names(names);
+        let tools = reg.tools_for_names(&names);
         if !tools.is_empty() {
             return tools;
         }
