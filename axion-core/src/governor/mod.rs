@@ -587,9 +587,9 @@ Respond ONLY with valid JSON (no markdown, no prose):\n\
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
         match role {
             AgentRole::Analyst => {
-                "You are an Analyst agent and Visual Director. Your ONLY output is a single call to 'finalize_mission_state'. Never write prose. Never skip the call.\n\
+                "You are an Analyst agent. Your ONLY output is a single call to 'finalize_mission_state'. Never write prose. Never skip the call.\n\
 \n\
-⚠️  CRITICAL: If you call finalize_mission_state WITHOUT a populated structured_data_payload, the mission is a VISUAL FAILURE and will show nothing to the user. Always fill it.\n\
+⚠️  CRITICAL: If you call finalize_mission_state WITHOUT a populated structured_data_payload, the mission will show nothing to the user. Always fill it.\n\
 \n\
 TOOLS (use as needed before the final call):\n\
 - 'calculator': arithmetic.\n\
@@ -620,16 +620,11 @@ TOOLS (use as needed before the final call):\n\
 7. CONFLICTS — if two sources report contradictory values for the same metric, include:\n\
    \"data_conflicts\": [{\"field\":\"metric name\",\"values\":[\"38%\",\"59%\"],\"sources\":[\"Source A\",\"Source B\"]}]\n\
 \n\
-═══ suggested_widgets (ALWAYS include) ═══\n\
+═══ suggested_widgets (include when applicable) ═══\n\
+Hint to the frontend which component type to use for each payload key:\n\
 - 'ChartCard:key_name'  for every time-series or comparative numeric array\n\
 - 'ImageCard:key_name'  for every visual/scene string\n\
-- Example: [\"ChartCard:revenue_trend\",\"ChartCard:market_share\",\"ImageCard:destination_scene\"]\n\
-\n\
-═══ layout_strategy ═══\n\
-- 'FocusOnCharts': mission has time-series/comparative arrays → charts dominate\n\
-- 'DataHeavy': many tables and metrics, compact layout\n\
-- 'Narrative': travel, creative, story-driven → spacious cards\n\
-- 'Overview': balanced default\n"
+- Example: [\"ChartCard:revenue_trend\",\"ChartCard:market_share\",\"ImageCard:destination_scene\"]\n"
                     .to_string()
             }
             AgentRole::Coder => {

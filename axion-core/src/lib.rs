@@ -793,13 +793,21 @@ async fn run_loop(
     Err(error)
 }
 
-/// Extract the final [`MissionState`] from completed task results, if any.
-fn extract_mission_state(tasks: &[protocol::Task]) -> Option<protocol::MissionState> {
+/// Extract the final mission state JSON from completed task results, if any.
+///
+/// Returns the raw JSON value rather than a typed `MissionState` so that
+/// presentation-layer fields injected by `finalize_mission_state` (e.g.
+/// `design_tokens`, `suggested_widgets`) are preserved for the server layer
+/// to forward to the frontend without ever entering the kernel's type system.
+fn extract_mission_state(tasks: &[protocol::Task]) -> Option<serde_json::Value> {
     tasks
         .iter()
         .filter_map(|t| t.result.as_ref())
-        .filter_map(|r| serde_json::from_str::<protocol::MissionState>(r).ok())
-        .filter(|s| !s.data_payload.is_null())
+        .filter_map(|r| serde_json::from_str::<serde_json::Value>(r).ok())
+        .filter(|v| {
+            // Must parse as a valid MissionState (has a non-null data_payload).
+            v.get("data_payload").map(|p| !p.is_null()).unwrap_or(false)
+        })
         .last()
 }
 

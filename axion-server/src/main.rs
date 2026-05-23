@@ -20,6 +20,124 @@ use tokio::sync::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use tower_http::cors::CorsLayer;
 
+// ── UI presentation types (server layer only) ─────────────────────────────────
+
+/// Glassmorphism / theme tokens for the web frontend.
+///
+/// These are presentation-layer concerns that live in the server, not the
+/// kernel.  The Analyst may include them in the `finalize_mission_state` tool
+/// call; the server extracts them here and forwards them to the client without
+/// polluting `axion_core::protocol::MissionState`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct DesignTokens {
+    #[serde(default = "dt_primary_accent")]
+    primary_accent: String,
+    #[serde(default = "dt_glass_intensity")]
+    glass_intensity: f32,
+    #[serde(default = "dt_theme_preset")]
+    theme_preset: String,
+    #[serde(default = "dt_layout_density")]
+    layout_density: String,
+    #[serde(default = "dt_border_radius")]
+    border_radius: u32,
+    #[serde(default = "dt_surface_opacity")]
+    surface_opacity: f32,
+    #[serde(default = "dt_layout_strategy")]
+    layout_strategy: String,
+}
+
+fn dt_primary_accent()   -> String { "#8b9cf4".to_string() }
+fn dt_glass_intensity()  -> f32    { 0.60 }
+fn dt_theme_preset()     -> String { "minimalist".to_string() }
+fn dt_layout_density()   -> String { "spacious".to_string() }
+fn dt_border_radius()    -> u32    { 24 }
+fn dt_surface_opacity()  -> f32    { 0.06 }
+fn dt_layout_strategy()  -> String { "Overview".to_string() }
+
+impl Default for DesignTokens {
+    fn default() -> Self {
+        DesignTokens {
+            primary_accent:  dt_primary_accent(),
+            glass_intensity: dt_glass_intensity(),
+            theme_preset:    dt_theme_preset(),
+            layout_density:  dt_layout_density(),
+            border_radius:   dt_border_radius(),
+            surface_opacity: dt_surface_opacity(),
+            layout_strategy: dt_layout_strategy(),
+        }
+    }
+}
+
+/// Wire representation of mission output sent to the frontend.
+///
+/// Wraps the kernel's `MissionState` (fact payload only) with UI-layer fields
+/// so the frontend receives everything it needs in a single object.
+/// Design tokens and widget hints are extracted from the raw task-result JSON
+/// at the server boundary — they never enter the kernel's type system.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct RichMissionState {
+    intent_resolved: bool,
+    data_payload: serde_json::Value,
+    #[serde(default)]
+    verification_logs: Vec<String>,
+    #[serde(default)]
+    design_tokens: DesignTokens,
+    #[serde(default)]
+    suggested_widgets: Vec<String>,
+}
+
+/// Build a `RichMissionState` from a raw JSON value that was produced by the
+/// `finalize_mission_state` tool.  Design-token and widget-hint fields that
+/// the Analyst embedded in the result JSON are promoted to the presentation
+/// layer here; the kernel never sees them as typed fields.
+fn enrich_mission_state(raw: serde_json::Value) -> RichMissionState {
+    let intent_resolved = raw["intent_resolved"].as_bool().unwrap_or(true);
+    let data_payload    = raw["data_payload"].clone();
+    let verification_logs: Vec<String> = raw["verification_logs"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let design_tokens: DesignTokens = raw
+        .get("design_tokens")
+        .and_then(|dt| serde_json::from_value(dt.clone()).ok())
+        .unwrap_or_default();
+
+    // Clamp visual ranges so invalid LLM output can't break the frontend.
+    let design_tokens = DesignTokens {
+        glass_intensity: design_tokens.glass_intensity.clamp(0.0, 1.0),
+        surface_opacity: design_tokens.surface_opacity.clamp(0.0, 1.0),
+        border_radius:   design_tokens.border_radius.min(48),
+        primary_accent:  if design_tokens.primary_accent.starts_with('#') {
+            design_tokens.primary_accent
+        } else {
+            dt_primary_accent()
+        },
+        ..design_tokens
+    };
+
+    let suggested_widgets: Vec<String> = raw["suggested_widgets"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    RichMissionState {
+        intent_resolved,
+        data_payload,
+        verification_logs,
+        design_tokens,
+        suggested_widgets,
+    }
+}
+
 // ── Standard API error type ───────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -110,9 +228,42 @@ async fn health() -> &'static str {
 }
 
 /// Convert a `MissionUpdate` into a typed SSE `Event`.
+///
+/// For `MissionComplete` events, the raw `mission_state` JSON value is
+/// enriched with UI-layer fields (design tokens, widget hints) extracted from
+/// the Analyst's tool-call result before being forwarded to the client.
 fn to_sse(update: MissionUpdate) -> Result<Event, Infallible> {
     let name = update.event_name();
-    let data = serde_json::to_string(&update).unwrap_or_default();
+
+    // For MissionComplete, replace the kernel's bare mission_state JSON with a
+    // RichMissionState that includes design_tokens and suggested_widgets.
+    let data = match update {
+        MissionUpdate::MissionComplete {
+            ref intent,
+            task_count,
+            expanded_task_count,
+            ref mission_id,
+            ref layout_hint,
+            ref mission_state,
+        } => {
+            let rich_state = mission_state
+                .as_ref()
+                .map(|raw| enrich_mission_state(raw.clone()));
+
+            serde_json::json!({
+                "type": "mission_complete",
+                "intent": intent,
+                "task_count": task_count,
+                "expanded_task_count": expanded_task_count,
+                "mission_id": mission_id,
+                "layout_hint": layout_hint,
+                "mission_state": rich_state,
+            })
+            .to_string()
+        }
+        other => serde_json::to_string(&other).unwrap_or_default(),
+    };
+
     Ok(Event::default().event(name).data(data))
 }
 

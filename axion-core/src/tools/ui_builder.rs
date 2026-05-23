@@ -1,11 +1,11 @@
-use crate::protocol::{DesignTokens, MissionState};
+use crate::protocol::MissionState;
 
 /// Execute the `finalize_mission_state` tool.
 ///
 /// The Analyst passes a `structured_data_payload` (free-form JSON object),
-/// `design_tokens` (visual theme), an optional `summary`, and optional
-/// `verification_logs`.  Missing or invalid `design_tokens` fall back to the
-/// default minimalist theme rather than failing the mission.
+/// an optional `summary`, and optional `verification_logs`.
+/// Design-token and widget-hint fields from the LLM are intentionally ignored
+/// here — they are presentation concerns handled by the server layer.
 pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct FinalizeArgs {
@@ -14,11 +14,14 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
         #[serde(default)]
         structured_data_payload: serde_json::Value,
         #[serde(default)]
-        design_tokens: Option<DesignTokens>,
-        #[serde(default)]
         verification_logs: Vec<String>,
+        // Accept (and pass through) suggested_widgets and design_tokens so the
+        // server layer can extract them from the raw result JSON.  They are not
+        // stored in MissionState — they live only on the wire representation.
         #[serde(default)]
         suggested_widgets: Vec<String>,
+        #[serde(default)]
+        design_tokens: serde_json::Value,
     }
 
     // Parse leniently — if the whole JSON is malformed, that's the only hard error.
@@ -60,33 +63,38 @@ pub fn finalize_mission_state(arguments: &str) -> Result<String, String> {
         }
     }
 
-    // Use provided tokens or fall back to defaults; clamp ranges.
-    let mut tokens = args.design_tokens.unwrap_or_default();
-    tokens.glass_intensity  = tokens.glass_intensity.clamp(0.0, 1.0);
-    tokens.surface_opacity  = tokens.surface_opacity.clamp(0.0, 1.0);
-    tokens.border_radius    = tokens.border_radius.min(48);
-    if tokens.primary_accent.is_empty() {
-        tokens.primary_accent = "#6366f1".to_string();
-    }
-
     let mut logs = args.verification_logs;
-    if !tokens.primary_accent.starts_with('#') {
-        logs.push(format!(
-            "design_tokens.primary_accent '{}' is not a valid hex color — using default.",
-            tokens.primary_accent
-        ));
-        tokens.primary_accent = "#6366f1".to_string();
-    }
     logs.push("Mission state finalized.".to_string());
 
     let state = MissionState {
         intent_resolved: true,
         data_payload: args.structured_data_payload,
         verification_logs: logs,
-        design_tokens: tokens,
-        suggested_widgets: args.suggested_widgets,
     };
 
-    serde_json::to_string(&state)
-        .map_err(|e| format!("Failed to serialize MissionState: {}", e))
+    // Serialize the core MissionState, then inject the presentation-layer fields
+    // (suggested_widgets, design_tokens) into the JSON so the server layer can
+    // extract them at the SSE boundary without them ever being part of MissionState.
+    let mut json_val = serde_json::to_value(&state)
+        .map_err(|e| format!("Failed to serialize MissionState: {}", e))?;
+
+    if let Some(obj) = json_val.as_object_mut() {
+        if !args.suggested_widgets.is_empty() {
+            obj.insert(
+                "suggested_widgets".into(),
+                serde_json::Value::Array(
+                    args.suggested_widgets
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+        if !args.design_tokens.is_null() {
+            obj.insert("design_tokens".into(), args.design_tokens);
+        }
+    }
+
+    serde_json::to_string(&json_val)
+        .map_err(|e| format!("Failed to serialize task result: {}", e))
 }
