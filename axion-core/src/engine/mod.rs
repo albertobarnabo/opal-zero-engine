@@ -165,6 +165,7 @@ pub struct SimpleProvider {
     base_url: String,
     model: String,
     api_key: String,
+    client: reqwest::Client,
 }
 
 impl SimpleProvider {
@@ -174,10 +175,15 @@ impl SimpleProvider {
         model: impl Into<String>,
         api_key: impl Into<String>,
     ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(request_timeout())
+            .build()
+            .expect("HTTP client build failed");
         SimpleProvider {
             base_url: base_url.into(),
             model: model.into(),
             api_key: api_key.into(),
+            client,
         }
     }
 
@@ -373,10 +379,6 @@ impl AiProvider for SimpleProvider {
         prompt: &str,
         tools: Option<Vec<Tool>>,
     ) -> Result<ToolResponse, String> {
-        let client = reqwest::Client::builder()
-            .timeout(request_timeout())
-            .build()
-            .expect("HTTP client build failed");
         let sp_tools = sp_build_tools(tools);
         let body = SpRequest {
             model: self.model.clone(),
@@ -391,7 +393,7 @@ impl AiProvider for SimpleProvider {
             tool_choice: sp_tools.as_ref().map(|_| "auto".to_string()),
             tools: sp_tools,
         };
-        sp_parse(sp_post(&client, &self.base_url, &self.api_key, &body).await?)
+        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?)
     }
 
     async fn submit_tool_result(
@@ -403,10 +405,6 @@ impl AiProvider for SimpleProvider {
         tool_arguments: &str,
         tool_result: &str,
     ) -> Result<ToolResponse, String> {
-        let client = reqwest::Client::builder()
-            .timeout(request_timeout())
-            .build()
-            .expect("HTTP client build failed");
         let sp_tools = sp_build_tools(tools);
         let body = SpRequest {
             model: self.model.clone(),
@@ -442,7 +440,7 @@ impl AiProvider for SimpleProvider {
             tool_choice: sp_tools.as_ref().map(|_| "auto".to_string()),
             tools: sp_tools,
         };
-        sp_parse(sp_post(&client, &self.base_url, &self.api_key, &body).await?)
+        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?)
     }
 
     /// Vision request using the multimodal chat completions format.
@@ -460,10 +458,6 @@ impl AiProvider for SimpleProvider {
             return Err("ImageData has neither base64 nor url".to_string());
         };
 
-        let client = reqwest::Client::builder()
-            .timeout(request_timeout())
-            .build()
-            .expect("HTTP client build failed");
         let body = SpRequest {
             model: self.model.clone(),
             messages: vec![SpMessage {
@@ -480,6 +474,6 @@ impl AiProvider for SimpleProvider {
             tools: None,
             tool_choice: None,
         };
-        sp_parse(sp_post(&client, &self.base_url, &self.api_key, &body).await?)
+        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?)
     }
 }
