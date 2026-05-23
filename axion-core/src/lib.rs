@@ -25,7 +25,8 @@ pub mod prelude {
     pub use crate::planner::{build_plan_from_intent, Plan};
     pub use crate::protocol::{AgentRole, ContextBus, HandshakeRequest, MissionUpdate, Task, TaskStatus};
     pub use crate::registry::Registry;
-    pub use crate::{refine_mission, resume_mission, run_mission};
+    pub use crate::tools::RequestKeys;
+    pub use crate::{refine_mission, refine_mission_with_keys, resume_mission, run_mission};
 }
 
 // ── Mission wall-clock timeout ────────────────────────────────────────────────
@@ -273,6 +274,22 @@ async fn resume_mission_inner(
 /// - After all tasks finish, back-fills any prior `data_payload` keys that the
 ///   refinement Analyst did not explicitly include, then overwrites the original
 ///   `missions/<id>.json` with the merged snapshot.
+/// Like [`refine_mission`] but also accepts per-request API key overrides.
+///
+/// Use this variant when keys are provided per-request (e.g. via HTTP headers)
+/// to avoid the data race that would occur if the caller used `set_var`.
+pub async fn refine_mission_with_keys(
+    snapshot: &persistence::MissionSnapshot,
+    refinement_intent: &str,
+    provider: &dyn engine::AiProvider,
+    governor: &dyn governor::Governor,
+    max_attempts: u8,
+    tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+    keys: tools::RequestKeys,
+) -> Result<Option<protocol::HandshakeRequest>, String> {
+    refine_mission_inner(snapshot, refinement_intent, provider, governor, max_attempts, tx, keys).await
+}
+
 pub async fn refine_mission(
     snapshot: &persistence::MissionSnapshot,
     refinement_intent: &str,
@@ -280,6 +297,18 @@ pub async fn refine_mission(
     governor: &dyn governor::Governor,
     max_attempts: u8,
     tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+) -> Result<Option<protocol::HandshakeRequest>, String> {
+    refine_mission_inner(snapshot, refinement_intent, provider, governor, max_attempts, tx, tools::RequestKeys::default()).await
+}
+
+async fn refine_mission_inner(
+    snapshot: &persistence::MissionSnapshot,
+    refinement_intent: &str,
+    provider: &dyn engine::AiProvider,
+    governor: &dyn governor::Governor,
+    max_attempts: u8,
+    tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+    keys: tools::RequestKeys,
 ) -> Result<Option<protocol::HandshakeRequest>, String> {
     use std::sync::{Arc, Mutex};
 
@@ -320,6 +349,9 @@ pub async fn refine_mission(
         provider,
     )
     .await;
+
+    // Inject per-request API keys so tools can use them without mutating globals.
+    plan.keys = keys;
 
     // ── 3. Pre-populate context bus with prior task results ───────────────────
     for (k, v) in &snapshot.context.data {
@@ -499,6 +531,8 @@ async fn run_loop(
     max_attempts: u8,
     tx: Option<&tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
 ) -> Result<Option<protocol::HandshakeRequest>, String> {
+    // Borrow the keys from the plan once for the whole loop lifetime.
+    // `plan.keys` is never mutated here; we only need a reference.
     let mut retry_attempts: u8 = 0;
     let mut expansion_rounds: u8 = 0;
     let mut refinement_rounds: u8 = 0;
@@ -511,6 +545,7 @@ async fn run_loop(
             provider,
             governor,
             tx,
+            &plan.keys,
         )
         .await;
 

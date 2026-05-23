@@ -5,6 +5,7 @@ use std::time::Duration;
 use crate::engine::{AiProvider, ToolResponse};
 use crate::governor::Governor;
 use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool};
+use crate::tools::RequestKeys;
 
 // Maximum characters of prior-task context to include in an agent's prompt.
 // At ~4 chars/token this is ≈1 500 tokens, leaving ≥2 500 tokens of headroom
@@ -69,6 +70,7 @@ pub async fn dispatch_tasks(
     provider: &dyn AiProvider,
     governor: &dyn Governor,
     tx: Option<&tokio::sync::mpsc::Sender<MissionUpdate>>,
+    keys: &RequestKeys,
 ) {
     println!("⚙️  Dispatcher: Checking dependencies and routing to agents...");
 
@@ -186,7 +188,7 @@ pub async fn dispatch_tasks(
                     .await;
             }
 
-            execute_with_role(task, context, provider, governor).await;
+            execute_with_role(task, context, provider, governor, keys).await;
             println!("  ✅ Task completed with status: {:?}", task.status);
 
             // Emit the outcome event.
@@ -263,6 +265,7 @@ async fn execute_with_role(
     context: &ContextBus,
     provider: &dyn AiProvider,
     governor: &dyn Governor,
+    keys: &RequestKeys,
 ) {
     println!("    DEBUG: Agent starting task: {}", task.intent);
 
@@ -358,7 +361,7 @@ async fn execute_with_role(
     let is_finalize_task = task.intent.to_lowercase().contains("finalize_mission_state");
 
     let tools: Vec<Tool> = if is_finalize_task {
-        let finalize_only: Vec<Tool> = get_tools_for_role(&task.role)
+        let finalize_only: Vec<Tool> = get_tools_for_role(&task.role, keys)
             .into_iter()
             .filter(|t| !task.excluded_tools.contains(&t.name))
             .filter(|t| t.name == "finalize_mission_state")
@@ -371,7 +374,7 @@ async fn execute_with_role(
             finalize_only
         }
     } else {
-        get_tools_for_role(&task.role)
+        get_tools_for_role(&task.role, keys)
             .into_iter()
             .filter(|t| !task.excluded_tools.contains(&t.name))
             .collect()
@@ -404,7 +407,7 @@ async fn execute_with_role(
         }
         Ok(ToolResponse::ToolCall { id, name, arguments }) => {
             println!("    🛠️ Executing {} with args: {}", name, arguments);
-            match crate::tools::execute_tool(&name, &arguments, &task.id.to_string()).await {
+            match crate::tools::execute_tool(&name, &arguments, &task.id.to_string(), keys).await {
                 Ok(tool_result) => {
                     println!("    🔧 Tool Result: {}", tool_result);
 
@@ -565,15 +568,13 @@ mod tests {
     }
 }
 
-fn get_tools_for_role(role: &crate::protocol::AgentRole) -> Vec<Tool> {
+fn get_tools_for_role(role: &crate::protocol::AgentRole, keys: &RequestKeys) -> Vec<Tool> {
     use crate::protocol::AgentRole;
 
     // Alpha Vantage tools require an API key to be set — offering them without a
     // key causes the LLM to eagerly call them, the tool fails immediately, and the
     // whole Analyst task is marked Failed.  Only include them when the key exists.
-    let has_av_key = std::env::var("ALPHA_VANTAGE_API_KEY")
-        .map(|k| !k.is_empty())
-        .unwrap_or(false);
+    let has_av_key = keys.alpha_vantage().is_some();
 
     // Role → canonical tool names (built dynamically so we can gate AV tools).
     //

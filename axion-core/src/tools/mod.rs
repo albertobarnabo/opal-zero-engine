@@ -13,7 +13,43 @@ struct VisionProxy {
     prompt: String,
 }
 
-pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Result<String, String> {
+/// Per-request API key overrides.
+///
+/// These are captured once per HTTP request and threaded through the call chain
+/// to avoid the data race caused by `std::env::set_var` in concurrent handlers.
+/// Each field falls back to the corresponding environment variable when `None`
+/// or empty.
+#[derive(Clone, Debug, Default)]
+pub struct RequestKeys {
+    pub openai_key:        Option<String>,
+    pub tavily_key:        Option<String>,
+    pub alpha_vantage_key: Option<String>,
+}
+
+impl RequestKeys {
+    /// Return the effective Tavily key: explicit override → env var → None.
+    pub fn tavily(&self) -> Option<String> {
+        if let Some(ref k) = self.tavily_key {
+            if !k.is_empty() { return Some(k.clone()); }
+        }
+        std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty())
+    }
+
+    /// Return the effective Alpha Vantage key: explicit override → env var → None.
+    pub fn alpha_vantage(&self) -> Option<String> {
+        if let Some(ref k) = self.alpha_vantage_key {
+            if !k.is_empty() { return Some(k.clone()); }
+        }
+        std::env::var("ALPHA_VANTAGE_API_KEY").ok().filter(|k| !k.is_empty())
+    }
+}
+
+pub async fn execute_tool(
+    name: &str,
+    arguments: &str,
+    mission_id: &str,
+    keys: &RequestKeys,
+) -> Result<String, String> {
     // ── 1. Registry validation + Wasm-first dispatch ──────────────────────────
     //
     // When the registry is initialised (normal production path), we:
@@ -61,7 +97,7 @@ pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Resu
                 // forward the image to the vision LLM to get the actual analysis.
                 if name == "vision" {
                     return match wasm_result {
-                        Ok(proxy_json) => invoke_vision_llm(&proxy_json).await,
+                        Ok(proxy_json) => invoke_vision_llm(&proxy_json, keys.openai_key.as_deref()).await,
                         Err(e) => Err(e),
                     };
                 }
@@ -74,11 +110,11 @@ pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Resu
     // ── 2. Async native tools ─────────────────────────────────────────────────
     // Handled before the synchronous dispatch match.
     if name == "web_search" {
-        return execute_web_search(arguments).await;
+        return execute_web_search(arguments, keys.tavily().as_deref()).await;
     }
     // Vision native fallback: runs when vision.wasm is absent (tests, offline).
     if name == "vision" {
-        return execute_vision_native(arguments).await;
+        return execute_vision_native(arguments, keys.openai_key.as_deref()).await;
     }
     // Alpha Vantage financial data tools
     if name == "get_company_overview" {
@@ -86,7 +122,10 @@ pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Resu
         struct Args { symbol: String }
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| format!("Failed to parse get_company_overview arguments: {}", e))?;
-        return financial::get_company_overview(&args.symbol).await;
+        let av_key = keys.alpha_vantage().ok_or_else(|| {
+            "ALPHA_VANTAGE_API_KEY not set".to_string()
+        })?;
+        return financial::get_company_overview(&args.symbol, &av_key).await;
     }
     if name == "get_price_history" {
         #[derive(serde::Deserialize)]
@@ -94,21 +133,30 @@ pub async fn execute_tool(name: &str, arguments: &str, mission_id: &str) -> Resu
         fn default_period() -> String { "compact".to_string() }
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| format!("Failed to parse get_price_history arguments: {}", e))?;
-        return financial::get_price_history(&args.symbol, &args.period).await;
+        let av_key = keys.alpha_vantage().ok_or_else(|| {
+            "ALPHA_VANTAGE_API_KEY not set".to_string()
+        })?;
+        return financial::get_price_history(&args.symbol, &args.period, &av_key).await;
     }
     if name == "get_income_statement" {
         #[derive(serde::Deserialize)]
         struct Args { symbol: String }
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| format!("Failed to parse get_income_statement arguments: {}", e))?;
-        return financial::get_income_statement(&args.symbol).await;
+        let av_key = keys.alpha_vantage().ok_or_else(|| {
+            "ALPHA_VANTAGE_API_KEY not set".to_string()
+        })?;
+        return financial::get_income_statement(&args.symbol, &av_key).await;
     }
     if name == "get_news_sentiment" {
         #[derive(serde::Deserialize)]
         struct Args { symbol: String }
         let args: Args = serde_json::from_str(arguments)
             .map_err(|e| format!("Failed to parse get_news_sentiment arguments: {}", e))?;
-        return financial::get_news_sentiment(&args.symbol).await;
+        let av_key = keys.alpha_vantage().ok_or_else(|| {
+            "ALPHA_VANTAGE_API_KEY not set".to_string()
+        })?;
+        return financial::get_news_sentiment(&args.symbol, &av_key).await;
     }
 
     // ── 3. Synchronous native fallback ────────────────────────────────────────
@@ -525,7 +573,9 @@ fn execute_read_file(arguments: &str) -> Result<String, String> {
     Ok(format!("File: {}\nSize: {} bytes\n\n{}", name, content.len(), content))
 }
 
-async fn execute_web_search(arguments: &str) -> Result<String, String> {
+/// `tavily_key_override` is the per-request Tavily key (already resolved via
+/// `RequestKeys::tavily()`); pass `None` to use only the env var.
+async fn execute_web_search(arguments: &str, tavily_key_override: Option<&str>) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct SearchArgs {
         query: String,
@@ -534,12 +584,15 @@ async fn execute_web_search(arguments: &str) -> Result<String, String> {
     let args: SearchArgs = serde_json::from_str(arguments)
         .map_err(|e| format!("Failed to parse search arguments: {}", e))?;
 
-    // Use the real Tavily API when a key is present; otherwise return a neutral
-    // fallback that tells the agent to rely on training knowledge rather than
-    // fabricating invented data.
-    match std::env::var("TAVILY_API_KEY") {
-        Ok(key) => tavily_search(&args.query, &key).await,
-        Err(_) => Ok(simulated_search(&args.query)),
+    // Use the per-request key when provided; otherwise fall back to the env var.
+    // Never call set_var — read directly to avoid the concurrent-handler race.
+    let effective_key = tavily_key_override
+        .map(|k| k.to_owned())
+        .or_else(|| std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty()));
+
+    match effective_key {
+        Some(key) => tavily_search(&args.query, &key).await,
+        None => Ok(simulated_search(&args.query)),
     }
 }
 
@@ -625,9 +678,12 @@ async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
 /// Native fallback for the vision tool when `vision.wasm` is not present.
 ///
 /// Reads the requested image from `uploads/`, base64-encodes it, and either:
-/// - Calls the gpt-4o vision API when `OPENAI_API_KEY` is available, or
+/// - Calls the gpt-4o vision API when an OpenAI key is available, or
 /// - Returns basic file metadata (useful in tests and offline mode).
-async fn execute_vision_native(arguments: &str) -> Result<String, String> {
+///
+/// `openai_key_override` is the per-request OpenAI key; `None` falls back to
+/// `OPENAI_API_KEY` env var.
+async fn execute_vision_native(arguments: &str, openai_key_override: Option<&str>) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct VisionArgs {
         file_path: String,
@@ -659,12 +715,18 @@ async fn execute_vision_native(arguments: &str) -> Result<String, String> {
             .to_string()
     });
 
-    match std::env::var("OPENAI_API_KEY") {
-        Ok(key) => {
+    // Per-request key takes priority; fall back to env var.
+    let effective_key = openai_key_override
+        .map(|k| k.to_owned())
+        .filter(|k| !k.is_empty())
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()));
+
+    match effective_key {
+        Some(key) => {
             let b64 = base64_encode(&bytes);
             call_gpt4v(&b64, mime, &prompt, &key).await
         }
-        Err(_) => {
+        None => {
             // No API key — return file metadata so tests and offline runs work.
             Ok(format!(
                 "Image file '{}' loaded ({}, {} bytes). \
@@ -679,7 +741,10 @@ async fn execute_vision_native(arguments: &str) -> Result<String, String> {
 
 /// Called after `vision.wasm` produces a base64 proxy JSON.
 /// Extracts the image data and forwards it to the gpt-4o vision API.
-async fn invoke_vision_llm(proxy_json: &str) -> Result<String, String> {
+///
+/// `openai_key_override` is the per-request OpenAI key; `None` falls back to
+/// `OPENAI_API_KEY` env var.
+async fn invoke_vision_llm(proxy_json: &str, openai_key_override: Option<&str>) -> Result<String, String> {
     let proxy: VisionProxy = serde_json::from_str(proxy_json)
         .map_err(|e| format!("vision: invalid proxy JSON from Wasm: {}", e))?;
 
@@ -691,9 +756,14 @@ async fn invoke_vision_llm(proxy_json: &str) -> Result<String, String> {
         proxy.prompt.clone()
     };
 
-    match std::env::var("OPENAI_API_KEY") {
-        Ok(key) => call_gpt4v(&proxy.image_base64, &proxy.mime_type, &prompt, &key).await,
-        Err(_) => Ok(format!(
+    let effective_key = openai_key_override
+        .map(|k| k.to_owned())
+        .filter(|k| !k.is_empty())
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()));
+
+    match effective_key {
+        Some(key) => call_gpt4v(&proxy.image_base64, &proxy.mime_type, &prompt, &key).await,
+        None => Ok(format!(
             "Image '{}' ({}) prepared for vision analysis ({} base64 chars). \
              [Set OPENAI_API_KEY to enable AI analysis]",
             proxy.file_path,

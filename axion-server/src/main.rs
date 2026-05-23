@@ -117,27 +117,18 @@ fn to_sse(update: MissionUpdate) -> Result<Event, Infallible> {
 }
 
 async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
-    // Allow the frontend to supply API keys per-request via custom headers.
-    // Safety: this is a local single-user tool with no concurrent env readers
-    // outside Rust code, so the relaxed atomicity of set_var is acceptable.
-    if let Some(key) = headers.get("x-openai-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: single-user local tool; no signal handlers read env vars.
-            unsafe { std::env::set_var("OPENAI_API_KEY", key) };
-        }
-    }
-    if let Some(key) = headers.get("x-tavily-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: same rationale as above.
-            unsafe { std::env::set_var("TAVILY_API_KEY", key) };
-        }
-    }
-    if let Some(key) = headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: same rationale as above.
-            unsafe { std::env::set_var("ALPHA_VANTAGE_API_KEY", key) };
-        }
-    }
+    // Capture per-request API keys from custom headers.
+    // These are stored in RequestKeys and threaded through the call chain, so
+    // concurrent handlers never race on global environment variables.
+    let openai_key  = headers.get("x-openai-key").and_then(|v| v.to_str().ok()).map(String::from);
+    let tavily_key  = headers.get("x-tavily-key").and_then(|v| v.to_str().ok()).map(String::from);
+    let av_key      = headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()).map(String::from);
+
+    let request_keys = RequestKeys {
+        openai_key:        openai_key.clone().filter(|k| !k.is_empty()),
+        tavily_key:        tavily_key.filter(|k| !k.is_empty()),
+        alpha_vantage_key: av_key.clone().filter(|k| !k.is_empty()),
+    };
 
     // Model resolution: body → x-axion-model header → AXION_MODEL env → default
     let model = req.model.clone()
@@ -161,7 +152,10 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         }
     }
 
-    let provider = match OpenAIProvider::new_with_model(model.clone()) {
+    let provider = match OpenAIProvider::new_with_explicit_key(
+        model.clone(),
+        openai_key.filter(|k| !k.is_empty()),
+    ) {
         Ok(p) => p,
         Err(e) => {
             return (
@@ -180,11 +174,45 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
 
     let intent = req.intent.clone();
     let schema = req.schema.clone();
+
+    // ── Pre-flight: check if the schema requires Alpha Vantage and the key is absent ──
+    // Financial schemas include keys like current_price_usd, price_history, etc.
+    // If the key is missing we fail fast with a clear message instead of silently
+    // producing empty cards after a full (expensive) mission run.
+    const AV_KEYS: &[&str] = &[
+        "current_price_usd", "price_history", "market_cap_usd", "pe_ratio",
+        "eps", "revenue_ttm_usd", "income_history", "top_competitors",
+        "analyst_consensus", "week_52_high_usd",
+    ];
+    let needs_av = schema.as_ref().map(|s| {
+        s.as_object().map(|obj| {
+            AV_KEYS.iter().any(|k| obj.contains_key(*k))
+        }).unwrap_or(false)
+    }).unwrap_or(false);
+
+    let av_key_set = request_keys.alpha_vantage().is_some();
+
+    if needs_av && !av_key_set {
+        let (tx, rx) = tokio::sync::mpsc::channel::<MissionUpdate>(1);
+        let _ = tx.send(MissionUpdate::MissionFailed {
+            error: "Alpha Vantage API key required for financial data (price history, \
+                    fundamentals, competitors). Add your key in Settings or set \
+                    ALPHA_VANTAGE_API_KEY on the server.".into(),
+        }).await;
+        drop(tx);
+        let stream = ReceiverStream::new(rx).map(to_sse);
+        return Sse::new(stream).keep_alive(KeepAlive::default()).into_response();
+    }
+
     tokio::spawn(async move {
         // Build a dynamic plan from the user's intent via the LLM planner.
         // run_mission clears context defensively, so no state from a previous
         // mission can leak.
         let mut plan = build_plan_from_intent(&intent, &provider).await;
+
+        // Inject the per-request API keys so tools can use them without
+        // mutating global environment variables.
+        plan.keys = request_keys;
 
         // If the caller supplied an output schema, inject it into the context bus
         // so the Analyst can include it in finalize_mission_state.
@@ -543,25 +571,14 @@ async fn refine_mission_handler(
     AxumPath(id): AxumPath<String>,
     Json(req): Json<RefineRequest>,
 ) -> Response {
-    // Honour per-request API key headers (same logic as the execute handler).
-    if let Some(key) = headers.get("x-openai-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: single-user local tool; no signal handlers read env vars.
-            unsafe { std::env::set_var("OPENAI_API_KEY", key) };
-        }
-    }
-    if let Some(key) = headers.get("x-tavily-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: same rationale as above.
-            unsafe { std::env::set_var("TAVILY_API_KEY", key) };
-        }
-    }
-    if let Some(key) = headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: same rationale as above.
-            unsafe { std::env::set_var("ALPHA_VANTAGE_API_KEY", key) };
-        }
-    }
+    // Capture per-request API keys — same pattern as the execute handler.
+    let openai_key = headers.get("x-openai-key").and_then(|v| v.to_str().ok()).map(String::from);
+    let request_keys = RequestKeys {
+        openai_key:        openai_key.clone().filter(|k| !k.is_empty()),
+        tavily_key:        headers.get("x-tavily-key").and_then(|v| v.to_str().ok()).map(String::from).filter(|k| !k.is_empty()),
+        alpha_vantage_key: headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()).map(String::from).filter(|k| !k.is_empty()),
+    };
+
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return (
             StatusCode::BAD_REQUEST,
@@ -626,7 +643,10 @@ async fn refine_mission_handler(
         }
     }
 
-    let provider = match OpenAIProvider::new_with_model(model.clone()) {
+    let provider = match OpenAIProvider::new_with_explicit_key(
+        model.clone(),
+        openai_key.filter(|k| !k.is_empty()),
+    ) {
         Ok(p)  => p,
         Err(e) => {
             in_flight.lock().await.remove(&id);
@@ -647,13 +667,14 @@ async fn refine_mission_handler(
     let id_cleanup = id.clone();
 
     tokio::spawn(async move {
-        let result = axion_core::refine_mission(
+        let result = axion_core::refine_mission_with_keys(
             &snapshot,
             &refinement_intent,
             &provider,
             &governor,
             3,
             Some(tx),
+            request_keys,
         )
         .await;
 
@@ -711,16 +732,18 @@ async fn clarify_handler(
         return fail_open;
     }
 
-    // Honour per-request OpenAI key header (same pattern as execute handler).
-    if let Some(key) = headers.get("x-openai-key").and_then(|v| v.to_str().ok()) {
-        if !key.is_empty() {
-            // SAFETY: single-user local tool; no signal handlers read env vars.
-            unsafe { std::env::set_var("OPENAI_API_KEY", key) };
-        }
-    }
+    // Capture per-request OpenAI key — pass directly to the provider instead of
+    // calling set_var to avoid the concurrent-handler race condition.
+    let openai_key = headers.get("x-openai-key")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .filter(|k| !k.is_empty());
 
     // Always use gpt-4o-mini — this call is cheap and speed matters.
-    let provider = match OpenAIProvider::new_with_model(Some("gpt-4o-mini".to_string())) {
+    let provider = match OpenAIProvider::new_with_explicit_key(
+        Some("gpt-4o-mini".to_string()),
+        openai_key,
+    ) {
         Ok(p)  => p,
         Err(_) => return fail_open,
     };

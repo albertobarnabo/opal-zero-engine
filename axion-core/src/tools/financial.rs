@@ -1,23 +1,12 @@
 //! Alpha Vantage financial data tools.
 //!
 //! Four async functions that fetch real market data for a given ticker symbol.
-//! Each reads `ALPHA_VANTAGE_API_KEY` from the environment at call time, so the
-//! key can be injected per-request via `std::env::set_var` in the server handler.
+//! Each accepts an explicit `api_key` parameter so callers can pass a
+//! per-request key without mutating global environment variables.
 //!
 //! Rate-limit and invalid-key responses from Alpha Vantage are surfaced as
 //! `Err(...)` so the LLM receives a clear error message instead of silently
 //! empty data.
-
-// ── Shared helpers ─────────────────────────────────────────────────────────────
-
-/// Read and validate the API key, returning a clear error if missing.
-fn av_api_key() -> Result<String, String> {
-    std::env::var("ALPHA_VANTAGE_API_KEY").map_err(|_| {
-        "ALPHA_VANTAGE_API_KEY environment variable not set. \
-         Obtain a free key at https://www.alphavantage.co/support/#api-key and set it."
-            .to_string()
-    })
-}
 
 /// Check for the two standard Alpha Vantage error envelopes.
 fn check_av_errors(data: &serde_json::Value) -> Result<(), String> {
@@ -38,8 +27,7 @@ fn check_av_errors(data: &serde_json::Value) -> Result<(), String> {
 
 /// Fetch company fundamentals: name, sector, market cap, P/E, EPS, dividend,
 /// 52-week range, and analyst target price.
-pub async fn get_company_overview(symbol: &str) -> Result<String, String> {
-    let api_key = av_api_key()?;
+pub async fn get_company_overview(symbol: &str, api_key: &str) -> Result<String, String> {
     let url = format!(
         "https://www.alphavantage.co/query?function=OVERVIEW&symbol={}&apikey={}",
         symbol, api_key
@@ -116,8 +104,7 @@ pub async fn get_company_overview(symbol: &str) -> Result<String, String> {
 
 /// Fetch OHLCV daily price history. `period` is either `"compact"` (last 100
 /// trading days) or `"full"` (20+ years). Returns the 10 most recent bars.
-pub async fn get_price_history(symbol: &str, period: &str) -> Result<String, String> {
-    let api_key = av_api_key()?;
+pub async fn get_price_history(symbol: &str, period: &str, api_key: &str) -> Result<String, String> {
 
     // Alpha Vantage uses "compact" or "full" for the output size parameter
     let output_size = match period.to_lowercase().as_str() {
@@ -202,8 +189,7 @@ pub async fn get_price_history(symbol: &str, period: &str) -> Result<String, Str
 
 /// Fetch the last 4 annual income statements: revenue, gross profit, operating
 /// income, net income, and EPS.
-pub async fn get_income_statement(symbol: &str) -> Result<String, String> {
-    let api_key = av_api_key()?;
+pub async fn get_income_statement(symbol: &str, api_key: &str) -> Result<String, String> {
     let url = format!(
         "https://www.alphavantage.co/query?function=INCOME_STATEMENT&symbol={}&apikey={}",
         symbol, api_key
@@ -277,8 +263,7 @@ pub async fn get_income_statement(symbol: &str) -> Result<String, String> {
 
 /// Fetch recent news and sentiment scores for a ticker.
 /// Returns up to 5 articles with title, source, time, and overall sentiment.
-pub async fn get_news_sentiment(symbol: &str) -> Result<String, String> {
-    let api_key = av_api_key()?;
+pub async fn get_news_sentiment(symbol: &str, api_key: &str) -> Result<String, String> {
     let url = format!(
         "https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={}&limit=5&apikey={}",
         symbol, api_key

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::engine::{AiProvider, ToolResponse};
 use crate::protocol::{AgentRole, ContextBus, Task, TaskStatus};
+use crate::tools::RequestKeys;
 
 // Slug format used when building dependency references for the LLM prompt.
 // Must match `make_slug()`: first ≤6 significant words, lowercased, joined with "_".
@@ -17,6 +18,9 @@ pub struct Plan {
     pub original_intent: String,
     pub tasks: Vec<Task>,
     pub context: ContextBus,
+    /// Per-request API key overrides.  Not persisted to snapshots.
+    #[serde(skip, default)]
+    pub keys: RequestKeys,
 }
 
 impl Plan {
@@ -26,6 +30,7 @@ impl Plan {
             original_intent: intent.to_string(),
             tasks: Vec::new(),
             context: ContextBus::default(),
+            keys: RequestKeys::default(),
         }
     }
 

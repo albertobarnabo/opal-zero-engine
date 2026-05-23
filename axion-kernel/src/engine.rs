@@ -59,6 +59,26 @@ impl OpenAIProvider {
         }
         Ok(provider)
     }
+
+    /// Create a provider with an explicit API key, bypassing the environment.
+    ///
+    /// Use this for per-request key injection to avoid the data race that occurs
+    /// when multiple concurrent handlers call `std::env::set_var("OPENAI_API_KEY", …)`.
+    /// `api_key` must be non-empty; pass `None` to fall back to `OPENAI_API_KEY` env var.
+    pub fn new_with_explicit_key(
+        model: Option<String>,
+        api_key: Option<String>,
+    ) -> Result<Self, String> {
+        let key = match api_key {
+            Some(k) if !k.is_empty() => k,
+            _ => env::var("OPENAI_API_KEY")
+                .map_err(|_| "OPENAI_API_KEY environment variable not set".to_string())?,
+        };
+        let text_model = model.unwrap_or_else(|| {
+            env::var("AXION_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
+        });
+        Ok(OpenAIProvider { api_key: key, text_model })
+    }
 }
 
 // ── Private HTTP types ────────────────────────────────────────────────────────
