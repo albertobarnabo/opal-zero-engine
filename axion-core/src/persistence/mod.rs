@@ -121,7 +121,7 @@ pub fn save_snapshot(
         .unwrap_or_default()
         .as_secs();
 
-    let id = format!("mission_{}_{}", timestamp, slugify(&plan.original_intent, 5));
+    let id = format!("mission_{}_{}", timestamp, crate::util::slugify(&plan.original_intent, 5));
 
     let mission_state: Option<MissionState> = plan
         .tasks
@@ -165,83 +165,9 @@ pub fn save_snapshot(
     Ok(id)
 }
 
-/// Derive a compact, filename-safe slug from arbitrary text.
-/// Lowercases, strips stop-words, takes up to `max_words` tokens, joins with `_`.
-pub fn slugify(text: &str, max_words: usize) -> String {
-    const STOP: &[&str] = &[
-        "a", "an", "the", "in", "on", "at", "to", "for", "of", "and", "or",
-        "is", "are", "be", "this", "that", "it", "with", "from", "by",
-    ];
-
-    let words: Vec<String> = text
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(|w| w.to_lowercase())
-        .filter(|w| !STOP.contains(&w.as_str()) && w.len() > 1)
-        .take(max_words)
-        .collect();
-
-    if words.is_empty() {
-        return "mission".to_string();
-    }
-    words.join("_")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── slugify ──────────────────────────────────────────────────────────────
-
-    #[test]
-    fn slugify_empty_string_returns_mission() {
-        assert_eq!(slugify("", 5), "mission");
-    }
-
-    #[test]
-    fn slugify_all_stop_words_returns_mission() {
-        assert_eq!(slugify("a the is an in on at to for of", 5), "mission");
-    }
-
-    #[test]
-    fn slugify_emoji_only_returns_mission() {
-        assert_eq!(slugify("🚀🌍✨", 5), "mission");
-    }
-
-    #[test]
-    fn slugify_max_words_respected() {
-        let result = slugify("find cheap flights from london to rome paris berlin", 3);
-        let parts: Vec<&str> = result.split('_').collect();
-        assert!(parts.len() <= 3, "Got {} words: {:?}", parts.len(), parts);
-    }
-
-    #[test]
-    fn slugify_very_long_input_capped() {
-        let long = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10";
-        let result = slugify(long, 5);
-        let parts: Vec<&str> = result.split('_').collect();
-        assert_eq!(parts.len(), 5);
-    }
-
-    #[test]
-    fn slugify_lowercases_all_words() {
-        let result = slugify("FIND FLIGHTS ROME", 5);
-        assert_eq!(result, result.to_lowercase());
-    }
-
-    #[test]
-    fn slugify_filters_stop_words_from_output() {
-        let result = slugify("find the best hotels in rome", 5);
-        let parts: Vec<&str> = result.split('_').collect();
-        assert!(!parts.contains(&"the"), "Stop word 'the' should be removed");
-        assert!(!parts.contains(&"in"), "Stop word 'in' should be removed");
-    }
-
-    #[test]
-    fn slugify_single_significant_word() {
-        let result = slugify("rome", 5);
-        assert_eq!(result, "rome");
-    }
 
     // ── save_snapshot ────────────────────────────────────────────────────────
 

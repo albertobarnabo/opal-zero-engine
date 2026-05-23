@@ -8,6 +8,7 @@ pub mod planner;
 pub mod protocol;
 pub mod registry;
 pub mod tools;
+pub mod util;
 
 pub use memory::MemoryStore;
 
