@@ -1,6 +1,6 @@
 {
-  "name": "@axion/react",
-  "version": "0.1.0",
+  "name": "axion-sdk",
+  "version": "2.0.0",
   "description": "React SDK for Axion AI orchestration",
   "type": "module",
   "main": "dist/index.js",
