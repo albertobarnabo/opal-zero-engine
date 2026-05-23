@@ -171,13 +171,25 @@ pub async fn dispatch_tasks(
             break;
         }
 
-        // ── Execute each ready task sequentially ──────────────────────────────
-        for idx in ready_indices {
+        // ── Execute all ready tasks concurrently ──────────────────────────────
+        //
+        // Strategy: snapshot the context bus (read-only clone) before the
+        // batch, fan out all ready tasks as concurrent futures using
+        // `futures::future::join_all`, then write results back to the task
+        // slots after all futures complete.
+        //
+        // We use join_all (not tokio::spawn) because the function receives
+        // `&dyn AiProvider` / `&dyn Governor` references that are not
+        // `'static`, so they cannot be moved into independently spawned
+        // tasks.  join_all still achieves true I/O concurrency: while one
+        // future is awaiting a network response the runtime polls the others.
+
+        // Mark all ready tasks as Running and emit TaskStarted events before
+        // fanning out, so the stream reflects the correct state immediately.
+        for &idx in &ready_indices {
             let task = &mut tasks[idx];
             println!("  🔄 Executing task: {}", task.intent);
             task.status = TaskStatus::Running;
-
-            // Notify the stream that this agent is now working.
             if let Some(tx) = tx {
                 let _ = tx
                     .send(MissionUpdate::TaskStarted {
@@ -187,34 +199,64 @@ pub async fn dispatch_tasks(
                     })
                     .await;
             }
+        }
 
-            execute_with_role(task, context, provider, governor, keys).await;
-            println!("  ✅ Task completed with status: {:?}", task.status);
+        // Snapshot context for the concurrent batch (tasks read, not write).
+        let context_snapshot = context.clone();
 
-            // Emit the outcome event.
+        // Clone each ready task so we can execute them concurrently without
+        // holding a mutable borrow on `tasks`.
+        let task_snapshots: Vec<(usize, Task)> = ready_indices
+            .iter()
+            .map(|&idx| (idx, tasks[idx].clone()))
+            .collect();
+
+        // Build one future per ready task and await them all concurrently.
+        let futs: Vec<_> = task_snapshots
+            .into_iter()
+            .map(|(idx, mut task_copy)| {
+                let ctx = context_snapshot.clone();
+                async move {
+                    execute_with_role(&mut task_copy, &ctx, provider, governor, keys).await;
+                    (idx, task_copy)
+                }
+            })
+            .collect();
+
+        let batch_results = futures::future::join_all(futs).await;
+
+        println!("  ✅ Batch of {} tasks completed", batch_results.len());
+
+        // Write results back, emit outcome events, and update the context bus.
+        for (idx, finished_task) in batch_results {
+            tasks[idx].status = finished_task.status.clone();
+            tasks[idx].result = finished_task.result.clone();
+
+            println!("  ✅ Task '{}' completed with status: {:?}", finished_task.slug, finished_task.status);
+
             if let Some(tx) = tx {
-                if matches!(task.status, TaskStatus::Completed) {
+                if matches!(finished_task.status, TaskStatus::Completed) {
                     let _ = tx
                         .send(MissionUpdate::TaskCompleted {
-                            slug: task.slug.clone(),
-                            role: task.role.as_str().to_string(),
-                            result: task.result.clone().unwrap_or_default(),
+                            slug: finished_task.slug.clone(),
+                            role: finished_task.role.as_str().to_string(),
+                            result: finished_task.result.clone().unwrap_or_default(),
                         })
                         .await;
-                } else if matches!(task.status, TaskStatus::Failed) {
+                } else if matches!(finished_task.status, TaskStatus::Failed) {
                     let _ = tx
                         .send(MissionUpdate::TaskFailed {
-                            slug: task.slug.clone(),
-                            role: task.role.as_str().to_string(),
+                            slug: finished_task.slug.clone(),
+                            role: finished_task.role.as_str().to_string(),
                         })
                         .await;
                 }
             }
 
             // Store agent findings in the context bus (keyed by slug).
-            if let Some(ref res) = task.result {
-                println!("  💾 Storing result in context as key: {}", task.slug);
-                context.data.insert(task.slug.clone(), res.clone());
+            if let Some(ref res) = finished_task.result {
+                println!("  💾 Storing result in context as key: {}", finished_task.slug);
+                context.data.insert(finished_task.slug.clone(), res.clone());
             }
         }
     }
