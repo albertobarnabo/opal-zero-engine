@@ -609,6 +609,127 @@ mod tests {
             "cycle description should mention task_d"
         );
     }
+
+    // ── Additional cycle-detection tests ─────────────────────────────────────
+
+    #[test]
+    fn test_detect_cycle_linear_chain_no_cycle() {
+        // A → B → C: no cycle.
+        let tasks = vec![
+            make_task("a", vec![]),
+            make_task("b", vec!["a"]),
+            make_task("c", vec!["b"]),
+        ];
+        assert!(detect_cycle(&tasks).is_none(), "linear chain must be acyclic");
+    }
+
+    #[test]
+    fn test_detect_cycle_two_independent_tasks_no_cycle() {
+        // A and B have no relationship at all.
+        let tasks = vec![
+            make_task("alpha", vec![]),
+            make_task("beta", vec![]),
+        ];
+        assert!(detect_cycle(&tasks).is_none(), "independent tasks must be acyclic");
+    }
+
+    #[test]
+    fn test_detect_cycle_direct_ab_ba() {
+        // A → B and B → A: direct 2-node cycle.
+        let tasks = vec![
+            make_task("node_a", vec!["node_b"]),
+            make_task("node_b", vec!["node_a"]),
+        ];
+        let result = detect_cycle(&tasks);
+        assert!(result.is_some(), "A→B→A must be detected as a cycle");
+        let desc = result.unwrap();
+        // The description must mention both nodes.
+        assert!(
+            desc.contains("node_a") || desc.contains("node_b"),
+            "cycle description must name at least one involved node; got: {desc}"
+        );
+    }
+
+    #[test]
+    fn test_detect_cycle_longer_loop_abc_a() {
+        // A → B → C → A: 3-node cycle.
+        let tasks = vec![
+            make_task("p", vec!["r"]),
+            make_task("q", vec!["p"]),
+            make_task("r", vec!["q"]),
+        ];
+        let result = detect_cycle(&tasks);
+        assert!(result.is_some(), "A→B→C→A must be detected as a cycle");
+    }
+
+    // ── build_context_window tests ────────────────────────────────────────────
+
+    fn make_bus(entries: &[(&str, &str)]) -> ContextBus {
+        let mut bus = ContextBus::default();
+        for (k, v) in entries {
+            bus.data.insert(k.to_string(), v.to_string());
+        }
+        bus
+    }
+
+    #[test]
+    fn context_window_empty_bus_returns_empty_string() {
+        let bus = ContextBus::default();
+        let out = build_context_window(&bus, 1_000);
+        assert_eq!(out, "", "empty bus must produce empty context window");
+    }
+
+    #[test]
+    fn context_window_single_entry_included() {
+        let bus = make_bus(&[("task_one", "hello world")]);
+        let out = build_context_window(&bus, 10_000);
+        assert!(out.contains("task_one"), "output must contain the slug key");
+        assert!(out.contains("hello world"), "output must contain the entry value");
+    }
+
+    #[test]
+    fn context_window_respects_char_budget() {
+        // Build a bus with two entries whose combined formatted size exceeds the
+        // tight budget so only the first (longest key, priority) fits.
+        let long_val = "x".repeat(50);
+        let bus = make_bus(&[
+            ("longer_key_here", &long_val),
+            ("short", &long_val),
+        ]);
+        // Budget just enough for one entry but not two.
+        // "[longer_key_here]: " + 50 x's + "\n" ≈ 71 chars
+        let budget = 80;
+        let out = build_context_window(&bus, budget);
+        assert!(
+            out.len() <= budget,
+            "output length {} exceeds budget {budget}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn context_window_long_entry_truncated_not_dropped() {
+        // A single entry whose value exceeds ENTRY_CAP (600) must appear truncated.
+        let big_val = "z".repeat(800);
+        let bus = make_bus(&[("big_task", &big_val)]);
+        let out = build_context_window(&bus, 10_000);
+        // The entry must be present but not contain the full 800 chars.
+        assert!(out.contains("big_task"), "key must appear even when value is truncated");
+        assert!(out.contains("… [truncated]"), "truncation marker must be present");
+        // The raw 800-char value must NOT appear verbatim.
+        assert!(!out.contains(&big_val), "full oversized value must not appear verbatim");
+    }
+
+    #[test]
+    fn context_window_all_entries_fit_when_budget_large() {
+        let bus = make_bus(&[
+            ("task_alpha", "result alpha"),
+            ("task_beta",  "result beta"),
+        ]);
+        let out = build_context_window(&bus, 100_000);
+        assert!(out.contains("task_alpha"));
+        assert!(out.contains("task_beta"));
+    }
 }
 
 fn get_tools_for_role(role: &crate::protocol::AgentRole, keys: &RequestKeys) -> Vec<Tool> {

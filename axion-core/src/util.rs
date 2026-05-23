@@ -113,4 +113,26 @@ mod tests {
         assert_ne!(result, "mission");
         assert_eq!(result.len(), 8);
     }
+
+    #[test]
+    fn slugify_basic_sentence_underscore_joined() {
+        // Normal sentence: stop-words removed, joined with underscores.
+        let result = slugify("find cheap flights to rome", 5);
+        // "to" is a stop word → "find_cheap_flights_rome"
+        assert_eq!(result, "find_cheap_flights_rome");
+    }
+
+    #[test]
+    fn slugify_output_contains_no_spaces() {
+        let result = slugify("search hotels in paris france", 5);
+        assert!(!result.contains(' '), "slug must not contain spaces");
+    }
+
+    #[test]
+    fn slugify_single_char_tokens_stripped() {
+        // Tokens of length ≤ 1 are stripped alongside stop-words.
+        let result = slugify("x hotels y paris", 5);
+        // "x" and "y" are ≤1 char → stripped; output = "hotels_paris"
+        assert_eq!(result, "hotels_paris");
+    }
 }

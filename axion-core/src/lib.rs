@@ -829,3 +829,156 @@ async fn finish_success(
             .await;
     }
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{AgentRole, MissionState, Task, TaskStatus};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    fn make_plan_with_result(result_json: &str) -> planner::Plan {
+        let mut plan = planner::Plan::new("test intent");
+        let task = Task {
+            id: Uuid::new_v4(),
+            slug: "analyst_task".to_string(),
+            intent: "finalize".to_string(),
+            status: TaskStatus::Completed,
+            role: AgentRole::Analyst,
+            result: Some(result_json.to_string()),
+            depends_on: vec![],
+            excluded_tools: vec![],
+        };
+        plan.tasks.push(task);
+        plan
+    }
+
+    fn mission_state_json(payload: serde_json::Value) -> String {
+        let ms = MissionState {
+            intent_resolved: true,
+            data_payload: payload,
+            verification_logs: vec![],
+        };
+        serde_json::to_string(&ms).unwrap()
+    }
+
+    // ── backfill_prior_keys tests ─────────────────────────────────────────────
+
+    #[test]
+    fn backfill_adds_missing_prior_keys() {
+        // New analyst produced only "new_key"; prior had "old_key" too.
+        let new_result = mission_state_json(json!({ "new_key": "new_value" }));
+        let mut plan = make_plan_with_result(&new_result);
+
+        let prior_state = Some(MissionState {
+            intent_resolved: true,
+            data_payload: json!({ "new_key": "prior_value", "old_key": "old_value" }),
+            verification_logs: vec![],
+        });
+
+        backfill_prior_keys(&mut plan, &prior_state);
+
+        // The task result should now contain "old_key".
+        let patched_str = plan.tasks[0].result.as_ref().unwrap();
+        let patched: MissionState = serde_json::from_str(patched_str).unwrap();
+        let obj = patched.data_payload.as_object().unwrap();
+        assert!(obj.contains_key("old_key"), "prior key 'old_key' must be back-filled");
+        assert_eq!(obj["old_key"], "old_value");
+    }
+
+    #[test]
+    fn backfill_does_not_overwrite_new_keys() {
+        // Both new and prior payloads have "shared_key" but with different values.
+        // The new value must win.
+        let new_result = mission_state_json(json!({ "shared_key": "new_value" }));
+        let mut plan = make_plan_with_result(&new_result);
+
+        let prior_state = Some(MissionState {
+            intent_resolved: true,
+            data_payload: json!({ "shared_key": "old_value" }),
+            verification_logs: vec![],
+        });
+
+        backfill_prior_keys(&mut plan, &prior_state);
+
+        let patched_str = plan.tasks[0].result.as_ref().unwrap();
+        let patched: MissionState = serde_json::from_str(patched_str).unwrap();
+        let obj = patched.data_payload.as_object().unwrap();
+        assert_eq!(
+            obj["shared_key"], "new_value",
+            "new value must not be overwritten by back-fill"
+        );
+    }
+
+    #[test]
+    fn backfill_no_panic_when_prior_state_is_none() {
+        let new_result = mission_state_json(json!({ "key": "val" }));
+        let mut plan = make_plan_with_result(&new_result);
+
+        // Must return without panicking.
+        backfill_prior_keys(&mut plan, &None);
+
+        // Plan is unchanged.
+        let result_str = plan.tasks[0].result.as_ref().unwrap();
+        let ms: MissionState = serde_json::from_str(result_str).unwrap();
+        assert_eq!(ms.data_payload["key"], "val");
+    }
+
+    #[test]
+    fn backfill_no_panic_when_no_task_has_valid_mission_state() {
+        // Plan has a task with a non-JSON result (no valid MissionState).
+        let mut plan = planner::Plan::new("test");
+        let task = Task {
+            id: Uuid::new_v4(),
+            slug: "plain_task".to_string(),
+            intent: "plain text result".to_string(),
+            status: TaskStatus::Completed,
+            role: AgentRole::Analyst,
+            result: Some("plain text, not JSON".to_string()),
+            depends_on: vec![],
+            excluded_tools: vec![],
+        };
+        plan.tasks.push(task);
+
+        let prior_state = Some(MissionState {
+            intent_resolved: true,
+            data_payload: json!({ "prior_key": "prior_val" }),
+            verification_logs: vec![],
+        });
+
+        // Must not panic even though no task result parses as MissionState.
+        backfill_prior_keys(&mut plan, &prior_state);
+        assert_eq!(plan.tasks[0].result.as_deref(), Some("plain text, not JSON"));
+    }
+
+    #[test]
+    fn backfill_no_panic_when_task_result_is_none() {
+        // Task has no result at all.
+        let mut plan = planner::Plan::new("test");
+        let task = Task {
+            id: Uuid::new_v4(),
+            slug: "empty_task".to_string(),
+            intent: "no result".to_string(),
+            status: TaskStatus::Pending,
+            role: AgentRole::Analyst,
+            result: None,
+            depends_on: vec![],
+            excluded_tools: vec![],
+        };
+        plan.tasks.push(task);
+
+        let prior_state = Some(MissionState {
+            intent_resolved: true,
+            data_payload: json!({ "k": "v" }),
+            verification_logs: vec![],
+        });
+
+        // Must not panic.
+        backfill_prior_keys(&mut plan, &prior_state);
+        assert!(plan.tasks[0].result.is_none());
+    }
+}
