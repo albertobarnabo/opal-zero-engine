@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::engine::{AiProvider, ToolResponse};
-use crate::protocol::{AgentRole, ContextBus, MissionState, Task, TaskStatus};
+use crate::protocol::{AgentRole, ContextBus, MissionState, Task, TaskStatus, CTX_OUTPUT_SCHEMA, CTX_USER_FEEDBACK};
 
 // Total result text above this byte threshold (across ≥2 completed tasks) is
 // considered "data-rich" and triggers a UI generation pass.
@@ -115,7 +115,7 @@ whatever you have. Partial results are always better than nothing.\n\
 pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<ValidationResult> {
     // ── 1. HITL ───────────────────────────────────────────────────────────────
     let prefix = crate::protocol::AWAITING_FEEDBACK_PREFIX;
-    if !context.data.contains_key("user_feedback") {
+    if !context.data.contains_key(CTX_USER_FEEDBACK) {
         for task in tasks.iter().filter(|t| matches!(t.status, TaskStatus::Completed)) {
             if let Some(ref result) = task.result {
                 if let Some(question) = result.strip_prefix(prefix) {
@@ -190,7 +190,7 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
         // doesn't copy the wrong structure.
         let schema_keys: Option<Vec<String>> = context
             .data
-            .get("__output_schema")
+            .get(CTX_OUTPUT_SCHEMA)
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
             .and_then(|v| {
                 v.as_object()

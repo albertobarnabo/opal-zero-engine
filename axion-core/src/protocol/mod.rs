@@ -8,6 +8,30 @@ use std::collections::HashMap;
 /// `validate_mission` scans for this prefix to detect a requested human pause.
 pub const AWAITING_FEEDBACK_PREFIX: &str = "__AWAITING_FEEDBACK__: ";
 
+// ── ContextBus well-known keys ────────────────────────────────────────────────
+
+/// ContextBus key for the caller-supplied JSON output schema.
+/// Written before the mission starts; read by the Analyst and State Finalizer
+/// to enforce the required `structured_data_payload` shape.
+pub const CTX_OUTPUT_SCHEMA: &str = "__output_schema";
+
+/// ContextBus key for the cross-mission persistent memory summary.
+/// Injected at mission start (and refreshed on resume) from the memory store.
+pub const CTX_GLOBAL_MEMORY: &str = "__global_memory";
+
+/// ContextBus key that holds the human user's feedback text on resume.
+/// Its presence is also used as a guard to skip re-detection of the
+/// awaiting-feedback signal in `check_code_gates`.
+pub const CTX_USER_FEEDBACK: &str = "user_feedback";
+
+/// ContextBus key for the question the agent asked the user before pausing.
+/// Stored alongside `CTX_USER_FEEDBACK` so the refinement task has full context.
+pub const CTX_FEEDBACK_QUESTION: &str = "awaiting_feedback_question";
+
+/// ContextBus key for the structured payload from a prior mission run.
+/// Injected during `refine_mission` so the Analyst can reference previous results.
+pub const CTX_PRIOR_MISSION_STATE: &str = "prior_mission_state";
+
 /// Returned by `run_mission` when the mission is paused awaiting human input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeRequest {

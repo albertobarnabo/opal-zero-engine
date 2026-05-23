@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::engine::{AiProvider, ToolResponse};
 use crate::governor::Governor;
-use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool};
+use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool, CTX_OUTPUT_SCHEMA};
 use crate::tools::RequestKeys;
 
 // Maximum characters of prior-task context to include in an agent's prompt.
@@ -331,7 +331,7 @@ async fn execute_with_role(
     // When the caller supplied an output schema it MUST lead the Analyst prompt
     // so it overrides the generic component-format examples that follow.
     let schema_contract: Option<String> =
-        context.data.get("__output_schema").and_then(|s| {
+        context.data.get(CTX_OUTPUT_SCHEMA).and_then(|s| {
             serde_json::from_str::<serde_json::Value>(s).ok().and_then(|v| {
                 v.as_object().map(|obj| {
                     let keys: String = obj

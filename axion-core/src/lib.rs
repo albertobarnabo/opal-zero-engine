@@ -108,14 +108,14 @@ async fn run_mission_inner(
     tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
 ) -> Result<Option<protocol::HandshakeRequest>, String> {
     // Preserve caller-injected schema before wiping context, then restore after.
-    let preserved_schema = plan.context.data.remove("__output_schema");
+    let preserved_schema = plan.context.data.remove(protocol::CTX_OUTPUT_SCHEMA);
 
     // Wipe any context from a previous run on this plan object.
     plan.context.clear();
 
     // Restore the schema so Analyst and State Finalizer can read it.
     if let Some(schema) = preserved_schema {
-        plan.context.data.insert("__output_schema".into(), schema);
+        plan.context.data.insert(protocol::CTX_OUTPUT_SCHEMA.into(), schema);
     }
 
     // ── Inject cross-mission persistent memory into the context bus ───────────
@@ -129,7 +129,7 @@ async fn run_mission_inner(
             .join("\n");
         plan.context
             .data
-            .insert("__global_memory".into(), summary);
+            .insert(protocol::CTX_GLOBAL_MEMORY.into(), summary);
     }
 
     let original_task_count = plan.tasks.len();
@@ -200,7 +200,7 @@ async fn resume_mission_inner(
             .join("\n");
         plan.context
             .data
-            .insert("__global_memory".into(), summary);
+            .insert(protocol::CTX_GLOBAL_MEMORY.into(), summary);
     }
 
     // ── 1. Strip the awaiting-feedback marker from any task that set it ───────
@@ -221,11 +221,11 @@ async fn resume_mission_inner(
     // ── 2. Inject the user's response into the ContextBus ────────────────────
     plan.context
         .data
-        .insert("user_feedback".to_string(), user_feedback.to_string());
+        .insert(protocol::CTX_USER_FEEDBACK.to_string(), user_feedback.to_string());
     if !question.is_empty() {
         plan.context
             .data
-            .insert("awaiting_feedback_question".to_string(), question.clone());
+            .insert(protocol::CTX_FEEDBACK_QUESTION.to_string(), question.clone());
     }
 
     // ── 3. Append a feedback-driven refinement task ───────────────────────────
@@ -364,7 +364,7 @@ async fn refine_mission_inner(
         if let Ok(json) = serde_json::to_string(&ms.data_payload) {
             plan.context
                 .data
-                .insert("prior_mission_state".to_string(), json);
+                .insert(protocol::CTX_PRIOR_MISSION_STATE.to_string(), json);
         }
     }
 
