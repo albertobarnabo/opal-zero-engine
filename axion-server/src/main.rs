@@ -2,7 +2,8 @@ use axion_core::persistence::MissionSnapshot;
 use axion_core::prelude::*;
 use axion_kernel::prelude::{AxionGovernor, OpenAIProvider};
 use axum::{
-    extract::{Multipart, Path as AxumPath, Query, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State},
     http::{header, HeaderMap, Method, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -18,7 +19,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 // ── UI presentation types (server layer only) ─────────────────────────────────
 
@@ -1004,17 +1005,38 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
 
         let filename = format!("{}.{}", uuid::Uuid::new_v4(), ext);
 
-        // ── Read bytes (consumes field) ────────────────────────────────────────
-        let bytes = match field.bytes().await {
-            Ok(b) => b,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    ApiError::new("UPLOAD_READ_FAILED", format!("Failed to read upload: {}", e)),
-                )
-                    .into_response();
+        // ── Stream bytes with a running size counter ──────────────────────────
+        // DefaultBodyLimit on the route caps the raw HTTP body, but we also
+        // enforce the limit here mid-stream so the error response is clearly
+        // HTTP 413 rather than an opaque axum body-limit rejection.
+        const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024; // 10 MB
+        let mut chunks: Vec<Bytes> = Vec::new();
+        let mut total_bytes: usize = 0;
+        let mut field = field;
+        loop {
+            match field.chunk().await {
+                Ok(Some(chunk)) => {
+                    total_bytes += chunk.len();
+                    if total_bytes > MAX_UPLOAD_BYTES {
+                        return (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            ApiError::new("UPLOAD_TOO_LARGE", "Upload exceeds the 10 MB size limit"),
+                        )
+                            .into_response();
+                    }
+                    chunks.push(chunk);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ApiError::new("UPLOAD_READ_FAILED", format!("Failed to read upload: {}", e)),
+                    )
+                        .into_response();
+                }
             }
-        };
+        }
+        let bytes: Bytes = chunks.into_iter().flatten().collect();
 
         // ── Write to uploads/ ─────────────────────────────────────────────────
         if let Err(e) = tokio::fs::create_dir_all("uploads").await {
@@ -1054,8 +1076,29 @@ async fn main() {
     dotenvy::dotenv().ok();
     axion_core::registry::Registry::init_default();
 
+    // ── CORS origin allow-list ────────────────────────────────────────────────
+    // Read from AXION_ALLOWED_ORIGINS (comma-separated).  The special value "*"
+    // opts in to allow-any (escape hatch for power users who know what they're
+    // doing).  Defaults to localhost dev origins when the variable is absent.
+    let cors_allow_origin: AllowOrigin = match std::env::var("AXION_ALLOWED_ORIGINS") {
+        Ok(val) if val.trim() == "*" => AllowOrigin::any(),
+        Ok(val) => {
+            let origins: Vec<axum::http::HeaderValue> = val
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            AllowOrigin::list(origins)
+        }
+        Err(_) => AllowOrigin::list([
+            "http://localhost:5173".parse::<axum::http::HeaderValue>().unwrap(),
+            "http://localhost:3000".parse::<axum::http::HeaderValue>().unwrap(),
+        ]),
+    };
+
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
+        .allow_origin(cors_allow_origin)
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
@@ -1079,7 +1122,9 @@ async fn main() {
         .route("/missions/:id", get(get_mission).delete(delete_mission))
         .route("/missions/:id/export", get(export_mission))
         .route("/missions/:id/refine", post(refine_mission_handler))
-        .route("/upload", post(upload_handler))
+        // Apply a 10 MB body limit only to /upload; SSE and other routes are
+        // unaffected because DefaultBodyLimit is applied per-route, not globally.
+        .route("/upload", post(upload_handler).layer(DefaultBodyLimit::max(10 * 1024 * 1024)))
         .route("/config/status", get(config_status_handler))
         .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(in_flight);
