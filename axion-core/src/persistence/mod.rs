@@ -105,7 +105,7 @@ pub fn save_snapshot_with_id(
     std::fs::rename(&tmp_path, &final_path)
         .map_err(|e| format!("Failed to rename snapshot into place for '{}': {}", id, e))?;
 
-    println!("📁 Snapshot updated: missions/{}.json", id);
+    tracing::info!(mission_id = id, "snapshot updated");
     Ok(())
 }
 
@@ -161,7 +161,7 @@ pub fn save_snapshot(
     std::fs::write(dir.join(format!("{}.json", id)), &json)
         .map_err(|e| format!("Failed to write snapshot: {}", e))?;
 
-    println!("📁 Snapshot saved: missions/{}.json", id);
+    tracing::info!(mission_id = %id, "snapshot saved");
     Ok(id)
 }
 

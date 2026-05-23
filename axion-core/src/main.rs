@@ -22,7 +22,7 @@ async fn main() {
     let provider = match SimpleProvider::openai("gpt-4o-mini") {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("❌ Error: {}", e);
+            tracing::error!(error = %e, "failed to create provider");
             std::process::exit(1);
         }
     };
@@ -54,17 +54,15 @@ async fn main() {
         AgentRole::Analyst,
     );
 
-    println!("🚀 Axion Core Heartbeat Started");
+    tracing::info!("Axion Core Heartbeat Started");
 
     match run_mission(&mut plan, &provider, &governor, 3, None).await {
-        Ok(None) => println!("\n🎯 Mission Accomplished: Graph fully resolved."),
+        Ok(None) => tracing::info!("mission accomplished: graph fully resolved"),
         Ok(Some(hs)) => {
-            println!("\n⏸️  Mission paused — awaiting human feedback.");
-            println!("   Question: {}", hs.question);
-            println!("   Resume with: resume_mission(&mut plan, \"<your answer>\", ...)");
+            tracing::info!(question = %hs.question, "mission paused — awaiting human feedback");
         }
         Err(msg) => {
-            eprintln!("❌ Mission failed: {}", msg);
+            tracing::error!(error = %msg, "mission failed");
             std::process::exit(1);
         }
     }

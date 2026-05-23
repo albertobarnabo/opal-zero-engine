@@ -378,7 +378,7 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         let result = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;
         if let Err(ref e) = result {
             if e.contains("time limit") {
-                eprintln!("[timeout] mission hit wall-clock limit");
+                tracing::warn!("mission hit wall-clock limit");
             }
         }
     });
@@ -832,7 +832,7 @@ async fn refine_mission_handler(
 
         if let Err(ref e) = result {
             if e.contains("time limit") {
-                eprintln!("[timeout] mission {} hit wall-clock limit", id_cleanup);
+                tracing::warn!(mission_id = %id_cleanup, "mission hit wall-clock limit");
             }
         }
 
@@ -1056,7 +1056,7 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
         }
 
         let file_type = if is_image { "image" } else { "data" };
-        println!("📎 Upload saved: uploads/{} ({})", filename, file_type);
+        tracing::info!(filename, file_type, "upload saved");
         return (StatusCode::OK, Json(json!({
             "filename": filename,
             "file_type": file_type,
@@ -1074,6 +1074,9 @@ async fn upload_handler(mut multipart: Multipart) -> Response {
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
     axion_core::registry::Registry::init_default();
 
     // ── CORS origin allow-list ────────────────────────────────────────────────
@@ -1134,12 +1137,12 @@ async fn main() {
         .nest("/api/v1", api_routes)
         .layer(cors);
 
-    println!(
-        "🚀 Axion Server v{} starting — max_tokens={}, temperature={}, AV-key={}",
-        env!("CARGO_PKG_VERSION"),
-        std::env::var("AXION_MAX_TOKENS").unwrap_or_else(|_| "4096".into()),
-        std::env::var("AXION_TEMPERATURE").unwrap_or_else(|_| "0.1".into()),
-        if std::env::var("ALPHA_VANTAGE_API_KEY").is_ok() { "set ✓" } else { "not set" },
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        max_tokens = std::env::var("AXION_MAX_TOKENS").unwrap_or_else(|_| "4096".into()),
+        temperature = std::env::var("AXION_TEMPERATURE").unwrap_or_else(|_| "0.1".into()),
+        av_key = if std::env::var("ALPHA_VANTAGE_API_KEY").is_ok() { "set" } else { "not set" },
+        "Axion Server starting",
     );
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
@@ -1148,6 +1151,6 @@ async fn main() {
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to {}", addr));
 
-    println!("🌐 Axion Server listening on http://{}", addr);
+    tracing::info!(addr, "Axion Server listening");
     axum::serve(listener, app).await.unwrap();
 }

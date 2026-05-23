@@ -66,10 +66,7 @@ impl WasmExecutor {
             if !host_path.exists() {
                 // Directory absent (e.g. `missions/` before the first save).
                 // Skip silently — the guest handles the missing path itself.
-                println!(
-                    "  ⚠️  WasmExecutor: preopen host path {:?} not found — skipping.",
-                    host_path
-                );
+                tracing::warn!(host_path = ?host_path, "WasmExecutor: preopen host path not found — skipping");
                 continue;
             }
 

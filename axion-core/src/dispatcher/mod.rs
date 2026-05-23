@@ -72,11 +72,11 @@ pub async fn dispatch_tasks(
     tx: Option<&tokio::sync::mpsc::Sender<MissionUpdate>>,
     keys: &RequestKeys,
 ) {
-    println!("⚙️  Dispatcher: Checking dependencies and routing to agents...");
+    tracing::info!("Dispatcher: checking dependencies and routing to agents");
 
     // ── 0. Cycle guard ────────────────────────────────────────────────────────
     if let Some(cycle) = detect_cycle(tasks) {
-        eprintln!("  ⚠️  Dispatcher: circular dependency detected — {cycle}. Affected tasks will never run.");
+        tracing::warn!(cycle, "Dispatcher: circular dependency detected — affected tasks will never run");
         // Mark every task involved in a cycle as Failed so the Governor can
         // react (retry/repair) rather than hanging forever.
         for task in tasks.iter_mut() {
@@ -125,7 +125,7 @@ pub async fn dispatch_tasks(
                 .unwrap_or_default();
             let slug = tasks[idx].slug.clone();
             let role = tasks[idx].role.as_str().to_string();
-            println!("  ⛔ Cascade-fail: '{}' skipped (dependency '{}' failed)", slug, failing_dep);
+            tracing::info!(slug, failing_dep, "cascade-fail: task skipped due to failed dependency");
             tasks[idx].status = TaskStatus::Failed;
             tasks[idx].result = Some(format!("Skipped — dependency '{}' failed", failing_dep));
             if let Some(tx) = tx {
@@ -146,7 +146,7 @@ pub async fn dispatch_tasks(
             .map(|(i, _)| i)
             .collect();
 
-        println!("  📋 Found {} tasks ready to execute", ready_indices.len());
+        tracing::debug!(count = ready_indices.len(), "tasks ready to execute");
 
         if ready_indices.is_empty() {
             let still_pending = tasks.iter().any(|t| matches!(t.status, TaskStatus::Pending));
@@ -162,7 +162,7 @@ pub async fn dispatch_tasks(
             if still_pending {
                 // Deadlock: pending tasks exist but none can ever become ready.
                 // Fail them all so the mission terminates cleanly.
-                eprintln!("[dispatcher] deadlock detected — failing all stuck pending tasks");
+                tracing::error!("deadlock detected — failing all stuck pending tasks");
                 for task in tasks.iter_mut().filter(|t| matches!(t.status, TaskStatus::Pending)) {
                     task.status = TaskStatus::Failed;
                     task.result = Some("Deadlock: dependency cannot be satisfied (missing or circular)".into());
@@ -188,7 +188,7 @@ pub async fn dispatch_tasks(
         // fanning out, so the stream reflects the correct state immediately.
         for &idx in &ready_indices {
             let task = &mut tasks[idx];
-            println!("  🔄 Executing task: {}", task.intent);
+            tracing::info!(intent = %task.intent, "executing task");
             task.status = TaskStatus::Running;
             if let Some(tx) = tx {
                 let _ = tx
@@ -225,14 +225,14 @@ pub async fn dispatch_tasks(
 
         let batch_results = futures::future::join_all(futs).await;
 
-        println!("  ✅ Batch of {} tasks completed", batch_results.len());
+        tracing::info!(count = batch_results.len(), "batch of tasks completed");
 
         // Write results back, emit outcome events, and update the context bus.
         for (idx, finished_task) in batch_results {
             tasks[idx].status = finished_task.status.clone();
             tasks[idx].result = finished_task.result.clone();
 
-            println!("  ✅ Task '{}' completed with status: {:?}", finished_task.slug, finished_task.status);
+            tracing::info!(slug = %finished_task.slug, status = ?finished_task.status, "task completed");
 
             if let Some(tx) = tx {
                 if matches!(finished_task.status, TaskStatus::Completed) {
@@ -255,7 +255,7 @@ pub async fn dispatch_tasks(
 
             // Store agent findings in the context bus (keyed by slug).
             if let Some(ref res) = finished_task.result {
-                println!("  💾 Storing result in context as key: {}", finished_task.slug);
+                tracing::debug!(slug = %finished_task.slug, "storing result in context");
                 context.data.insert(finished_task.slug.clone(), res.clone());
             }
         }
@@ -288,9 +288,13 @@ where
                 }
                 if attempt < max_retries {
                     let delay = base_delay_ms * (1u64 << (attempt - 1));
-                    eprintln!(
-                        "[retry] {label} attempt {attempt}/{max_retries} failed: {e}. \
-                         Retrying in {delay}ms"
+                    tracing::warn!(
+                        label,
+                        attempt,
+                        max_retries,
+                        delay_ms = delay,
+                        error = %e,
+                        "LLM call failed, retrying"
                     );
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 } else {
@@ -309,7 +313,7 @@ async fn execute_with_role(
     governor: &dyn Governor,
     keys: &RequestKeys,
 ) {
-    println!("    DEBUG: Agent starting task: {}", task.intent);
+    tracing::debug!(intent = %task.intent, "agent starting task");
 
     // ── Per-role model override ───────────────────────────────────────────────
     // Ask the Governor which model this role should use.  If it returns Some(m)
@@ -324,7 +328,7 @@ async fn execute_with_role(
         .unwrap_or(provider);
 
     if let Some(ref m) = role_model {
-        println!("    🤖 Role: {} → model: {}", task.role.as_str(), m);
+        tracing::info!(role = task.role.as_str(), model = m.as_str(), "role model override");
     }
 
     // ── Schema contract extracted before prompt assembly ─────────────────────
@@ -370,11 +374,11 @@ async fn execute_with_role(
         if schema_contract.is_some()
             && matches!(task.role, crate::protocol::AgentRole::Analyst)
         {
-            println!("    🔒 Analyst: schema_contract=Some → using schema_analyst_prompt");
+            tracing::debug!("Analyst: schema_contract=Some — using schema_analyst_prompt");
             governor.schema_analyst_prompt()
         } else {
             if matches!(task.role, crate::protocol::AgentRole::Analyst) {
-                println!("    ⚠️  Analyst: schema_contract=None → using full system_prompt_for_role");
+                tracing::warn!("Analyst: schema_contract=None — using full system_prompt_for_role");
             }
             governor.system_prompt_for_role(&task.role)
         };
@@ -427,10 +431,10 @@ async fn execute_with_role(
     let role_label = task.role.as_str().to_string();
 
     // Diagnostic: log the exact tool list offered so failures are easy to trace.
-    println!(
-        "    🔧 Tools offered to {}: [{}]",
-        role_label,
-        tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")
+    tracing::debug!(
+        role = role_label,
+        tools = tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "),
+        "tools offered to agent",
     );
 
     // ── First LLM turn — wrapped in retry loop ────────────────────────────────
@@ -443,15 +447,15 @@ async fn execute_with_role(
     .await
     {
         Ok(ToolResponse::Text(text)) => {
-            println!("    DEBUG: Provider returned text: {}", text);
+            tracing::debug!(text, "provider returned text");
             task.result = Some(text);
             task.status = TaskStatus::Completed;
         }
         Ok(ToolResponse::ToolCall { id, name, arguments }) => {
-            println!("    🛠️ Executing {} with args: {}", name, arguments);
+            tracing::info!(tool = name, args = arguments, "executing tool call");
             match crate::tools::execute_tool(&name, &arguments, &task.id.to_string(), keys).await {
                 Ok(tool_result) => {
-                    println!("    🔧 Tool Result: {}", tool_result);
+                    tracing::debug!(tool = name, result = tool_result, "tool result");
 
                     // Terminal tools (e.g. build_dynamic_ui, feedback) produce the final task
                     // result directly — skip the second LLM turn to prevent the model
@@ -477,33 +481,30 @@ async fn execute_with_role(
                         .await
                         {
                             Ok(ToolResponse::Text(final_answer)) => {
-                                println!("    DEBUG: Final answer: {}", final_answer);
+                                tracing::debug!(final_answer, "final answer from provider");
                                 task.result = Some(final_answer);
                                 task.status = TaskStatus::Completed;
                             }
                             Ok(ToolResponse::ToolCall { name: n, .. }) => {
-                                println!(
-                                    "    DEBUG: Model requested another tool call ({}) — using raw result",
-                                    n
-                                );
+                                tracing::debug!(tool = n, "model requested another tool call — using raw result");
                                 task.result = Some(tool_result);
                                 task.status = TaskStatus::Completed;
                             }
                             Err(err) => {
-                                println!("    DEBUG: submit_tool_result failed: {}", err);
+                                tracing::debug!(error = %err, "submit_tool_result failed");
                                 task.status = TaskStatus::Failed;
                             }
                         }
                     }
                 }
                 Err(err) => {
-                    println!("    DEBUG: Tool {} failed: {}", name, err);
+                    tracing::debug!(tool = name, error = %err, "tool execution failed");
                     task.status = TaskStatus::Failed;
                 }
             }
         }
         Err(err) => {
-            println!("    DEBUG: Provider returned Err: {}", err);
+            tracing::debug!(error = %err, "provider returned error");
             task.status = TaskStatus::Failed;
         }
     }

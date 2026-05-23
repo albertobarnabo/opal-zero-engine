@@ -253,11 +253,7 @@ async fn resume_mission_inner(
         protocol::AgentRole::Analyst,
     );
 
-    println!(
-        "\n💬 Human feedback received — resuming mission with refinement task.\
-         \n   Feedback: {}",
-        user_feedback
-    );
+    tracing::info!(user_feedback, "human feedback received — resuming mission with refinement task");
 
     // ── 4. Continue the loop WITHOUT clearing context ─────────────────────────
     run_loop(plan, provider, governor, original_task_count, max_attempts, tx.as_ref()).await
@@ -335,11 +331,11 @@ async fn refine_mission_inner(
             .join("\n"),
     };
 
-    println!(
-        "\n🔄 Refine '{}' — request: {}\n   Prior summary ({} chars)",
-        original_id,
+    tracing::info!(
+        mission_id = %original_id,
         refinement_intent,
-        prior_summary.len()
+        prior_summary_chars = prior_summary.len(),
+        "refining mission",
     );
 
     // ── 2. Build a refinement-aware plan (incremental tasks only) ─────────────
@@ -452,7 +448,7 @@ async fn refine_mission_inner(
             "completed",
             &original_id,
         ) {
-            println!("  ⚠️  Could not overwrite snapshot '{}': {}", original_id, e);
+            tracing::warn!(mission_id = %original_id, error = %e, "could not overwrite snapshot");
         }
     }
 
@@ -565,15 +561,11 @@ async fn run_loop(
                     match persistence::save_snapshot(plan, original_task_count, "awaiting_feedback") {
                         Ok(id) => id,
                         Err(e) => {
-                            println!("  ⚠️  Could not save awaiting-feedback snapshot: {}", e);
+                            tracing::warn!(error = %e, "could not save awaiting-feedback snapshot");
                             String::new()
                         }
                     };
-                println!(
-                    "\n⏸️  Mission paused — waiting for human input.\
-                     \n   Question: {}",
-                    question
-                );
+                tracing::info!(question, "mission paused — waiting for human input");
                 if let Some(tx) = tx {
                     let _ = tx
                         .send(protocol::MissionUpdate::MissionPaused {
@@ -598,10 +590,7 @@ async fn run_loop(
                         .collect();
 
                     if !failed.is_empty() {
-                        println!(
-                            "\n🔧 Re-planner: {} task(s) failed twice — consulting LLM for alternatives…",
-                            failed.len()
-                        );
+                        tracing::info!(failed_count = failed.len(), "Re-planner: tasks failed twice — consulting LLM for alternatives");
                         let repair = planner::repair_failed_tasks(
                             &failed,
                             &plan.original_intent,
@@ -672,29 +661,23 @@ async fn run_loop(
                 }
 
                 governor::reset_failed_tasks(&mut plan.tasks);
-                println!(
-                    "🚨 Failure detected. Attempting self-healing ({}/{})...",
-                    retry_attempts, max_attempts
-                );
+                tracing::warn!(retry_attempts, max_attempts, "failure detected — attempting self-healing");
             }
 
             governor::ValidationResult::Expand(new_tasks) => {
                 if expansion_rounds >= MAX_EXPANSIONS {
-                    println!(
-                        "  ⚠️  Governor: Max expansions ({}) reached — treating as SUCCESS.",
-                        MAX_EXPANSIONS
-                    );
+                    tracing::warn!(MAX_EXPANSIONS, "Governor: max expansions reached — treating as SUCCESS");
                     finish_success(plan, original_task_count, tx).await;
                     return Ok(None);
                 }
 
                 let all_slugs: Vec<String> = plan.tasks.iter().map(|t| t.slug.clone()).collect();
 
-                println!(
-                    "\n🔭 Governor: Expanding mission with {} new task(s) (round {}/{}).",
-                    new_tasks.len(),
-                    expansion_rounds + 1,
-                    MAX_EXPANSIONS
+                tracing::info!(
+                    new_task_count = new_tasks.len(),
+                    round = expansion_rounds + 1,
+                    max_rounds = MAX_EXPANSIONS,
+                    "Governor: expanding mission",
                 );
 
                 if let Some(tx) = tx {
@@ -715,20 +698,17 @@ async fn run_loop(
 
             governor::ValidationResult::Refine(new_tasks) => {
                 if refinement_rounds >= MAX_REFINEMENTS {
-                    println!(
-                        "  ⚠️  Governor: Max refinements ({}) reached — treating as SUCCESS.",
-                        MAX_REFINEMENTS
-                    );
+                    tracing::warn!(MAX_REFINEMENTS, "Governor: max refinements reached — treating as SUCCESS");
                     finish_success(plan, original_task_count, tx).await;
                     return Ok(None);
                 }
 
                 let all_slugs: Vec<String> = plan.tasks.iter().map(|t| t.slug.clone()).collect();
 
-                println!(
-                    "\n🔧 Governor: Requesting quality refinement (round {}/{}).",
-                    refinement_rounds + 1,
-                    MAX_REFINEMENTS
+                tracing::info!(
+                    round = refinement_rounds + 1,
+                    max_rounds = MAX_REFINEMENTS,
+                    "Governor: requesting quality refinement",
                 );
 
                 if let Some(tx) = tx {
@@ -758,11 +738,7 @@ async fn run_loop(
     // treat as partial success — show real data with missing fields rather
     // than a blank error screen.
     if extract_mission_state(&plan.tasks).is_some() {
-        println!(
-            "  ⚠️  {} task(s) failed but Analyst produced a result — \
-             emitting partial success.",
-            unfinished.len()
-        );
+        tracing::warn!(failed_count = unfinished.len(), "task(s) failed but Analyst produced a result — emitting partial success");
         finish_success(plan, original_task_count, tx).await;
         return Ok(None);
     }
@@ -774,10 +750,10 @@ async fn run_loop(
         .collect::<Vec<_>>()
         .join("\n");
 
-    println!("  ❌ Mission failed. Failed tasks:\n{}", failed_summary);
+    tracing::error!(failed_tasks = %failed_summary, "mission failed");
 
     if let Err(e) = persistence::save_snapshot(plan, original_task_count, "failed") {
-        println!("  ⚠️  Could not save mission snapshot: {}", e);
+        tracing::warn!(error = %e, "could not save mission snapshot");
     }
 
     let error = format!(
@@ -835,7 +811,7 @@ async fn finish_success(
     let mission_id = match persistence::save_snapshot(plan, original_task_count, "completed") {
         Ok(id) => id,
         Err(e) => {
-            println!("  ⚠️  Could not save mission snapshot: {}", e);
+            tracing::warn!(error = %e, "could not save mission snapshot");
             String::new()
         }
     };

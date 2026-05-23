@@ -62,11 +62,10 @@ pub async fn execute_tool(
     // we forward the image to a vision-capable LLM and return its description.
     if let Some(reg) = crate::registry::Registry::get() {
         if !reg.contains(name) {
-            eprintln!(
-                "[WARN] execute_tool: LLM called unregistered tool '{}' — \
-                 check the tool name matches the registry exactly. \
-                 Arguments were: {}",
-                name, arguments
+            tracing::warn!(
+                tool = name,
+                arguments,
+                "LLM called unregistered tool — check the tool name matches the registry exactly",
             );
             return Err(format!("Unknown tool: '{}'", name));
         }
@@ -80,7 +79,7 @@ pub async fn execute_tool(
                     .map(|t| t.preopens.clone())
                     .unwrap_or_default();
 
-                println!("  🦀 Dispatching '{}' via Wasm sandbox ({:?}).", name, wasm_path);
+                tracing::info!(tool = name, wasm_path = ?wasm_path, "dispatching via Wasm sandbox");
 
                 // `WasmExecutor::run` is synchronous and wasmtime-wasi internally
                 // needs a thread that hasn't already entered a tokio runtime.
@@ -172,11 +171,10 @@ pub async fn execute_tool(
         "feedback"                => execute_feedback_native(arguments),
         "memory_persist"          => execute_memory_persist(arguments, mission_id),
         _ => {
-            eprintln!(
-                "[WARN] execute_tool: LLM called unregistered tool '{}' — \
-                 check the tool name matches the registry exactly. \
-                 Arguments were: {}",
-                name, arguments
+            tracing::warn!(
+                tool = name,
+                arguments,
+                "LLM called unregistered tool — check the tool name matches the registry exactly",
             );
             Err(format!("Unknown tool: '{}'", name))
         }
@@ -206,10 +204,7 @@ pub fn execute_memory_persist(arguments: &str, mission_id: &str) -> Result<Strin
     let store = crate::memory::MemoryStore::new(std::path::Path::new("memory"));
     store.write(&args.key, &args.value, mission_id)?;
 
-    println!(
-        "  🧠 memory_persist: stored '{}' for future missions.",
-        args.key
-    );
+    tracing::info!(key = args.key, "memory_persist: stored key for future missions");
     Ok(format!("Remembered '{}' for future missions.", args.key))
 }
 
@@ -251,10 +246,7 @@ fn execute_feedback_native(arguments: &str) -> Result<String, String> {
         )
     };
 
-    println!(
-        "  ⏸️  Feedback tool: mission pausing with question: {}",
-        args.question.trim()
-    );
+    tracing::info!(question = args.question.trim(), "feedback tool: mission pausing");
     Ok(marker)
 }
 
@@ -407,7 +399,7 @@ fn execute_generate_document(arguments: &str) -> Result<String, String> {
     std::fs::write(&path, &content)
         .map_err(|e| format!("Failed to write '{}': {}", filename, e))?;
 
-    println!("  📄 generate_document: wrote '{}'", filename);
+    tracing::info!(filename, "generate_document: wrote file");
     Ok(format!("Document '{}' saved ({} bytes). Ready to download.", filename, content.len()))
 }
 
@@ -559,7 +551,7 @@ fn execute_read_file(arguments: &str) -> Result<String, String> {
     const MAX_BYTES: usize = 32_768;
     if content.len() > MAX_BYTES {
         let truncated = &content[..MAX_BYTES];
-        println!("  📂 read_file: '{}' ({} bytes, truncated to {})", name, content.len(), MAX_BYTES);
+        tracing::debug!(filename = name, size = content.len(), truncated_to = MAX_BYTES, "read_file: truncated");
         return Ok(format!(
             "File: {}\nSize: {} bytes (showing first {} bytes)\n\n{}",
             name,
@@ -569,7 +561,7 @@ fn execute_read_file(arguments: &str) -> Result<String, String> {
         ));
     }
 
-    println!("  📂 read_file: '{}' ({} bytes)", name, content.len());
+    tracing::debug!(filename = name, size = content.len(), "read_file");
     Ok(format!("File: {}\nSize: {} bytes\n\n{}", name, content.len(), content))
 }
 

@@ -119,8 +119,7 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
         for task in tasks.iter().filter(|t| matches!(t.status, TaskStatus::Completed)) {
             if let Some(ref result) = task.result {
                 if let Some(question) = result.strip_prefix(prefix) {
-                    println!("  ⏸️  Governor: Mission paused — awaiting human feedback.");
-                    println!("     Question: {}", question);
+                    tracing::info!(question, "Governor: mission paused — awaiting human feedback");
                     return Some(ValidationResult::AwaitingFeedback {
                         question: question.to_string(),
                     });
@@ -141,15 +140,12 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
     let total = tasks.len();
 
     if failed_count > 0 {
-        println!("  ⚠️  {} task(s) failed. Marking for retry.", failed_count);
+        tracing::warn!(failed_count, "task(s) failed — marking for retry");
         return Some(ValidationResult::Retry);
     }
 
     if completed_count < total {
-        println!(
-            "  ⏳ {}/{} tasks complete — waiting for remaining.",
-            completed_count, total
-        );
+        tracing::info!(completed_count, total, "tasks complete — waiting for remaining");
         return Some(ValidationResult::Retry);
     }
 
@@ -180,10 +176,7 @@ pub fn check_code_gates(tasks: &[Task], context: &ContextBus) -> Option<Validati
     });
 
     if !has_final_state && !has_finalize_task && total_result_bytes >= UI_TRIGGER_BYTES && completed_count >= 2 {
-        println!(
-            "  🧠 Governor: State Finalizer triggered — {} bytes across {} task(s).",
-            total_result_bytes, completed_count
-        );
+        tracing::info!(total_result_bytes, completed_count, "Governor: State Finalizer triggered");
 
         // When the caller supplied an output schema, replace the generic Rome
         // travel example with one that uses the actual required keys so the LLM
@@ -317,10 +310,7 @@ Now extract ALL findings from the PREVIOUS TASK RESULTS in your context and call
                     })
                     .collect();
 
-                println!(
-                    "  🔍 Governor: Conflict Verifier triggered — {} conflict(s) found. Injecting resolution task.",
-                    conflicts.len()
-                );
+                tracing::info!(conflict_count = conflicts.len(), "Governor: Conflict Verifier triggered — injecting resolution task");
 
                 let query = format!(
                     "CONFLICT_RESOLVE — Verify these conflicting data points with an authoritative \
@@ -338,9 +328,11 @@ Now extract ALL findings from the PREVIOUS TASK RESULTS in your context and call
         }
     }
 
-    println!(
-        "  ⏭️  Governor: Skipping State Finalizer — {} bytes (threshold: {} bytes, {} task(s) completed).",
-        total_result_bytes, UI_TRIGGER_BYTES, completed_count
+    tracing::debug!(
+        total_result_bytes,
+        threshold = UI_TRIGGER_BYTES,
+        completed_count,
+        "Governor: skipping State Finalizer",
     );
 
     None
@@ -368,14 +360,14 @@ pub fn parse_verdict(response: &str) -> ValidationResult {
                     let pass   = result["pass"].as_bool().unwrap_or(true);
                     let reason = result["reason"].as_str().unwrap_or("");
                     if !pass {
-                        eprintln!("[Governor] FAIL {criterion}: {reason}");
+                        tracing::warn!(criterion, reason, "Governor: rubric criterion failed");
                     }
                 }
             }
 
             return match verdict.as_str() {
                 "SUCCESS" => {
-                    println!("  ✅ Governor: Rubric passed — SUCCESS.");
+                    tracing::info!("Governor: rubric passed — SUCCESS");
                     ValidationResult::Success
                 }
                 "REVISE" => {
@@ -404,21 +396,15 @@ pub fn parse_verdict(response: &str) -> ValidationResult {
                         .unwrap_or_default();
 
                     if new_tasks.is_empty() {
-                        eprintln!("[Governor] REVISE — {reason}");
+                        tracing::warn!(reason, "Governor: REVISE — retrying");
                         ValidationResult::Retry
                     } else {
-                        eprintln!(
-                            "[Governor] EXPAND with {} new task(s) — {reason}",
-                            new_tasks.len()
-                        );
+                        tracing::info!(new_task_count = new_tasks.len(), reason, "Governor: EXPAND");
                         ValidationResult::Expand(new_tasks)
                     }
                 }
                 _ => {
-                    eprintln!(
-                        "[Governor] Unrecognised verdict '{}', defaulting to Success.",
-                        verdict
-                    );
+                    tracing::warn!(verdict, "Governor: unrecognised verdict — defaulting to Success");
                     ValidationResult::Success
                 }
             };
@@ -517,10 +503,7 @@ impl Governor for BuiltinGovernor {
         }
 
         // Generic LLM quality check.
-        println!(
-            "\n⚖️  BuiltinGovernor: All {} task(s) completed. Consulting Quality Controller…",
-            tasks.len()
-        );
+        tracing::info!(task_count = tasks.len(), "BuiltinGovernor: all tasks completed — consulting Quality Controller");
 
         let mut summary = String::from("COMPLETED TASKS:\n");
         for (i, task) in tasks.iter().enumerate() {
@@ -578,7 +561,7 @@ Respond ONLY with valid JSON (no markdown, no prose):\n\
         match provider.generate_response(&prompt, None).await {
             Ok(ToolResponse::Text(text)) => parse_verdict(&text),
             _ => {
-                println!("  ✅ BuiltinGovernor: Quality Controller unavailable — approving mission.");
+                tracing::warn!("BuiltinGovernor: Quality Controller unavailable — approving mission");
                 ValidationResult::Success
             }
         }

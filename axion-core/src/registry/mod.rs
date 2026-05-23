@@ -32,7 +32,7 @@ impl Registry {
     /// never takes down the whole registry.
     pub fn init(dir: &Path) {
         let registry = Self::load(dir).unwrap_or_else(|e| {
-            eprintln!("[WARN] Registry::init: could not load manifests from {:?}: {}", dir, e);
+            tracing::warn!(dir = ?dir, error = %e, "Registry::init: could not load manifests");
             Registry { tools: HashMap::new(), professionals_dir: None }
         });
         // `set` is a no-op if already initialised — safe to call multiple times.
@@ -88,11 +88,11 @@ impl Registry {
             }
             match Tool::from_manifest(&path) {
                 Ok(tool) => {
-                    println!("  📦 Registry: loaded manifest '{}'", tool.name);
+                    tracing::debug!(tool_name = %tool.name, "Registry: loaded manifest");
                     tools.insert(tool.name.clone(), tool);
                 }
                 Err(e) => {
-                    eprintln!("[WARN] Registry: skipping {:?} — {}", path, e);
+                    tracing::warn!(path = ?path, error = %e, "Registry: skipping manifest");
                 }
             }
         }
@@ -100,7 +100,7 @@ impl Registry {
         // The professionals/ directory is the parent of manifests/.
         let professionals_dir = dir.parent().map(PathBuf::from);
 
-        println!("  ✅ Registry: {} tool(s) loaded.", tools.len());
+        tracing::info!(tool_count = tools.len(), "Registry: tools loaded");
         Ok(Registry { tools, professionals_dir })
     }
 

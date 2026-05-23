@@ -186,7 +186,7 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
     }
 
     // Fallback: single open-ended Analyst task.
-    println!("  ⚠️  Planner: LLM did not return a valid task list — using single-task fallback.");
+    tracing::warn!("Planner: LLM did not return a valid task list — using single-task fallback");
     plan.add_task(intent, vec![], AgentRole::Analyst);
     plan
 }
@@ -267,7 +267,7 @@ pub async fn build_refinement_plan(
     }
 
     // Fallback: single Analyst task that merges prior + refinement.
-    println!("  ⚠️  Planner: refinement plan failed — using single-task fallback.");
+    tracing::warn!("Planner: refinement plan failed — using single-task fallback");
     plan.add_task(
         &format!(
             "Extend the existing mission findings with this refinement: '{}'. \
@@ -307,7 +307,7 @@ pub async fn repair_failed_tasks(
     let analyst_failed = failed.iter().find(|t| matches!(t.role, AgentRole::Analyst));
     if let Some(failed_analyst) = analyst_failed {
         if failed_analyst.intent.contains("finalize_mission_state") {
-            println!("  🧠 Re-planner: finalize_mission_state failed — injecting targeted retry.");
+            tracing::info!("Re-planner: finalize_mission_state failed — injecting targeted retry");
             return vec![crate::governor::NewTask {
                 description: "Call finalize_mission_state with a SIMPLIFIED payload. \
 Use a flat structured_data_payload with 3-5 scalar keys only (strings or numbers). \
@@ -319,7 +319,7 @@ Call finalize_mission_state EXACTLY ONCE."
                 excluded_tools: vec![],
             }];
         } else {
-            println!("  🧠 Re-planner: Analyst failed — retrying original Analyst intent directly.");
+            tracing::info!("Re-planner: Analyst failed — retrying original Analyst intent directly");
             return vec![crate::governor::NewTask {
                 description: failed_analyst.intent.clone(),
                 role: AgentRole::Analyst,

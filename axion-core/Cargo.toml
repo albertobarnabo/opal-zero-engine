@@ -38,3 +38,6 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 
 # Load environment variables from .env file
 dotenvy = "0.15"
+
+# Structured logging
+tracing = "0.1"
