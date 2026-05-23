@@ -653,12 +653,12 @@ async fn mission_with_quality_correction() {
                 // Task execution — return short flat text (stays below 80-byte UI threshold).
                 Ok(ToolResponse::Text("flat result".to_string()))
             } else if n == 1 {
-                // First Governor call → REVISE: results lack synthesis.
+                // First Governor call → REVISE: inject a synthesis task.
                 Ok(ToolResponse::Text(
                     r#"{"verdict":"REVISE","reasoning":"result lacks synthesis",
                        "issues":"no total was calculated",
                        "refinement_instructions":"calculate total and present clearly",
-                       "new_tasks":[]}"#
+                       "suggested_tasks":[{"description":"Synthesise findings and calculate total trip cost","role":"Analyst"}]}"#
                         .to_string(),
                 ))
             } else {
@@ -709,9 +709,10 @@ async fn mission_with_quality_correction() {
 
     // The refinement task description must mention the identified issues.
     let refinement_intent = &plan.tasks[1].intent;
+    let intent_lower = refinement_intent.to_lowercase();
     assert!(
-        refinement_intent.contains("Synthesize") || refinement_intent.contains("synthesize")
-            || refinement_intent.contains("fix"),
+        intent_lower.contains("synthes") || intent_lower.contains("fix")
+            || intent_lower.contains("calculat") || intent_lower.contains("total"),
         "refinement task intent should reference the quality issues; got: {}",
         refinement_intent
     );
