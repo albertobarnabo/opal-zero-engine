@@ -200,6 +200,25 @@ impl SimpleProvider {
     pub fn ollama(model: impl Into<String>) -> Self {
         Self::new("http://localhost:11434/v1", model, "")
     }
+
+    /// Target any OpenAI-compatible endpoint (Groq, Together, Mistral, …).
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use axion_core::engine::SimpleProvider;
+    /// let p = SimpleProvider::with_base_url(
+    ///     "llama-3.3-70b-versatile",
+    ///     "https://api.groq.com/openai/v1",
+    ///     "gsk_...",
+    /// );
+    /// ```
+    pub fn with_base_url(
+        model: impl Into<String>,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
+        Self::new(base_url, model, api_key)
+    }
 }
 
 // ── Private HTTP structs for SimpleProvider ───────────────────────────────────
@@ -317,7 +336,7 @@ fn sp_build_tools(tools: Option<Vec<Tool>>) -> Option<Vec<SpTool>> {
     })
 }
 
-fn sp_parse(body: SpResponse) -> Result<ToolResponse, String> {
+fn sp_parse(body: SpResponse, offered_tools: bool) -> Result<ToolResponse, String> {
     let msg = body
         .choices
         .into_iter()
@@ -338,7 +357,18 @@ fn sp_parse(body: SpResponse) -> Result<ToolResponse, String> {
     }
 
     match msg.content {
-        Some(text) if !text.is_empty() => Ok(ToolResponse::Text(text)),
+        Some(text) if !text.is_empty() => {
+            if offered_tools {
+                // Model returned plain text despite tool schema being offered.
+                // This is expected for models that don't support tool calling
+                // (e.g. some Ollama models). The caller will handle ToolResponse::Text.
+                eprintln!(
+                    "[axion-core] debug: provider returned plain text despite tools being \
+                     offered — model may not support tool calling"
+                );
+            }
+            Ok(ToolResponse::Text(text))
+        }
         _ => Err("Empty response from provider".to_string()),
     }
 }
@@ -380,6 +410,7 @@ impl AiProvider for SimpleProvider {
         tools: Option<Vec<Tool>>,
     ) -> Result<ToolResponse, String> {
         let sp_tools = sp_build_tools(tools);
+        let offered = sp_tools.is_some();
         let body = SpRequest {
             model: self.model.clone(),
             messages: vec![SpMessage {
@@ -393,7 +424,7 @@ impl AiProvider for SimpleProvider {
             tool_choice: sp_tools.as_ref().map(|_| "auto".to_string()),
             tools: sp_tools,
         };
-        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?)
+        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?, offered)
     }
 
     async fn submit_tool_result(
@@ -406,6 +437,7 @@ impl AiProvider for SimpleProvider {
         tool_result: &str,
     ) -> Result<ToolResponse, String> {
         let sp_tools = sp_build_tools(tools);
+        let offered = sp_tools.is_some();
         let body = SpRequest {
             model: self.model.clone(),
             messages: vec![
@@ -440,7 +472,7 @@ impl AiProvider for SimpleProvider {
             tool_choice: sp_tools.as_ref().map(|_| "auto".to_string()),
             tools: sp_tools,
         };
-        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?)
+        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?, offered)
     }
 
     /// Vision request using the multimodal chat completions format.
@@ -474,6 +506,6 @@ impl AiProvider for SimpleProvider {
             tools: None,
             tool_choice: None,
         };
-        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?)
+        sp_parse(sp_post(&self.client, &self.base_url, &self.api_key, &body).await?, false)
     }
 }

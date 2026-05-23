@@ -1,6 +1,7 @@
 use axion_core::persistence::MissionSnapshot;
 use axion_core::prelude::*;
 use axion_kernel::prelude::{AxionGovernor, OpenAIProvider};
+use axion_core::engine::SimpleProvider;
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State},
@@ -157,6 +158,60 @@ impl ApiError {
 /// Used to return HTTP 409 when a concurrent refinement is attempted.
 type InFlight = Arc<Mutex<HashSet<String>>>;
 
+// ── Shared application state ──────────────────────────────────────────────────
+
+/// State shared across all Axion handlers.
+///
+/// `provider` is built once at server startup from env vars (`AXION_PROVIDER`,
+/// `AXION_MODEL`, `AXION_BASE_URL`, `AXION_API_KEY`) and reused for every
+/// request.  This avoids the per-request construction cost and the data race
+/// that occurs when multiple handlers call `std::env::set_var` concurrently.
+#[derive(Clone)]
+struct AppState {
+    provider:  Arc<dyn AiProvider>,
+    in_flight: InFlight,
+}
+
+/// Build the global provider from environment variables.
+///
+/// | `AXION_PROVIDER` | Behaviour |
+/// |---|---|
+/// | `openai` (default) | OpenAI API — reads `OPENAI_API_KEY` |
+/// | `ollama` | Local Ollama at `http://localhost:11434/v1` |
+/// | `compatible` | Any OpenAI-compatible endpoint — reads `AXION_BASE_URL` and `AXION_API_KEY` |
+fn build_startup_provider() -> Result<Arc<dyn AiProvider>, String> {
+    let provider_name = std::env::var("AXION_PROVIDER")
+        .unwrap_or_else(|_| "openai".to_string());
+
+    let arc: Arc<dyn AiProvider> = match provider_name.to_lowercase().as_str() {
+        "ollama" => {
+            let model = std::env::var("AXION_MODEL")
+                .unwrap_or_else(|_| "llama3.2".to_string());
+            tracing::info!(model, "Provider: Ollama");
+            Arc::new(SimpleProvider::ollama(model))
+        }
+        "compatible" => {
+            let base_url = std::env::var("AXION_BASE_URL")
+                .map_err(|_| "AXION_BASE_URL is required when AXION_PROVIDER=compatible".to_string())?;
+            let model = std::env::var("AXION_MODEL")
+                .map_err(|_| "AXION_MODEL is required when AXION_PROVIDER=compatible".to_string())?;
+            let api_key = std::env::var("AXION_API_KEY").unwrap_or_default();
+            tracing::info!(model, base_url, "Provider: compatible");
+            Arc::new(SimpleProvider::with_base_url(model, base_url, api_key))
+        }
+        _ => {
+            // "openai" or any unrecognised value defaults to OpenAI.
+            let model = std::env::var("AXION_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+            let provider = OpenAIProvider::new_with_model(Some(model.clone()))?;
+            tracing::info!(model, "Provider: OpenAI");
+            Arc::new(provider)
+        }
+    };
+
+    Ok(arc)
+}
+
 #[derive(Deserialize)]
 struct TaskRequest {
     intent: String,
@@ -268,7 +323,11 @@ fn to_sse(update: MissionUpdate) -> Result<Event, Infallible> {
     Ok(Event::default().event(name).data(data))
 }
 
-async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
+async fn execute(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<TaskRequest>,
+) -> Response {
     // Capture per-request API keys from custom headers.
     // These are stored in RequestKeys and threaded through the call chain, so
     // concurrent handlers never race on global environment variables.
@@ -304,17 +363,19 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         }
     }
 
-    let provider = match OpenAIProvider::new_with_explicit_key(
-        model.clone(),
-        openai_key.filter(|k| !k.is_empty()),
-    ) {
-        Ok(p) => p,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ApiError::new("PROVIDER_ERROR", format!("Provider init failed: {}", e)),
-            )
-                .into_response();
+    // Use the startup provider shared at server init.
+    // If the caller supplied a per-request x-openai-key and the startup provider
+    // is OpenAI, build a fresh OpenAIProvider scoped to that key so the key is
+    // never mutated on the global environment.
+    let provider: Arc<dyn AiProvider> = {
+        let per_req_key = openai_key.clone().filter(|k| !k.is_empty());
+        if per_req_key.is_some() || model.is_some() {
+            match OpenAIProvider::new_with_explicit_key(model.clone(), per_req_key) {
+                Ok(p) => Arc::new(p),
+                Err(_) => Arc::clone(&state.provider),
+            }
+        } else {
+            Arc::clone(&state.provider)
         }
     };
 
@@ -360,7 +421,7 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         // Build a dynamic plan from the user's intent via the LLM planner.
         // run_mission clears context defensively, so no state from a previous
         // mission can leak.
-        let mut plan = build_plan_from_intent(&intent, &provider).await;
+        let mut plan = build_plan_from_intent(&intent, provider.as_ref()).await;
 
         // Inject the per-request API keys so tools can use them without
         // mutating global environment variables.
@@ -375,7 +436,7 @@ async fn execute(headers: HeaderMap, Json(req): Json<TaskRequest>) -> Response {
         }
 
         // tx is dropped when run_mission returns, which closes the SSE stream.
-        let result = run_mission(&mut plan, &provider, &governor, 3, Some(tx)).await;
+        let result = run_mission(&mut plan, provider.as_ref(), &governor, 3, Some(tx)).await;
         if let Err(ref e) = result {
             if e.contains("time limit") {
                 tracing::warn!("mission hit wall-clock limit");
@@ -718,11 +779,12 @@ async fn get_mission(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
 /// Returns HTTP 409 Conflict immediately if a refinement stream is already
 /// open for the same mission ID (concurrent refinement guard).
 async fn refine_mission_handler(
-    State(in_flight): State<InFlight>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<RefineRequest>,
 ) -> Response {
+    let in_flight = state.in_flight.clone();
     // Capture per-request API keys — same pattern as the execute handler.
     let openai_key = headers.get("x-openai-key").and_then(|v| v.to_str().ok()).map(String::from);
     let request_keys = RequestKeys {
@@ -795,18 +857,24 @@ async fn refine_mission_handler(
         }
     }
 
-    let provider = match OpenAIProvider::new_with_explicit_key(
-        model.clone(),
-        openai_key.filter(|k| !k.is_empty()),
-    ) {
-        Ok(p)  => p,
-        Err(e) => {
-            in_flight.lock().await.remove(&id);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ApiError::new("PROVIDER_ERROR", format!("Provider init failed: {}", e)),
-            )
-                .into_response();
+    // Use per-request OpenAI key / model if provided; otherwise fall back to
+    // the startup provider built from env vars.
+    let provider: Arc<dyn AiProvider> = {
+        let per_req_key = openai_key.filter(|k| !k.is_empty());
+        if per_req_key.is_some() || model.is_some() {
+            match OpenAIProvider::new_with_explicit_key(model.clone(), per_req_key) {
+                Ok(p) => Arc::new(p),
+                Err(e) => {
+                    in_flight.lock().await.remove(&id);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ApiError::new("PROVIDER_ERROR", format!("Provider init failed: {}", e)),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            Arc::clone(&state.provider)
         }
     };
 
@@ -822,7 +890,7 @@ async fn refine_mission_handler(
         let result = axion_core::refine_mission_with_keys(
             &snapshot,
             &refinement_intent,
-            &provider,
+            provider.as_ref(),
             &governor,
             3,
             Some(tx),
@@ -875,6 +943,7 @@ struct ClarifyResponse {
 /// unavailable, parse error) returns `{ "complete": true, "questions": [] }` so
 /// the caller can proceed to /execute without blocking the user.
 async fn clarify_handler(
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<ClarifyRequest>,
 ) -> impl IntoResponse {
@@ -891,13 +960,15 @@ async fn clarify_handler(
         .map(String::from)
         .filter(|k| !k.is_empty());
 
-    // Always use gpt-4o-mini — this call is cheap and speed matters.
-    let provider = match OpenAIProvider::new_with_explicit_key(
-        Some("gpt-4o-mini".to_string()),
-        openai_key,
-    ) {
-        Ok(p)  => p,
-        Err(_) => return fail_open,
+    // If a per-request OpenAI key is provided, construct a fresh OpenAI provider
+    // scoped to that key.  Otherwise fall back to the shared startup provider.
+    let provider: Arc<dyn AiProvider> = if let Some(key) = openai_key {
+        match OpenAIProvider::new_with_explicit_key(Some("gpt-4o-mini".to_string()), Some(key)) {
+            Ok(p)  => Arc::new(p),
+            Err(_) => return fail_open,
+        }
+    } else {
+        Arc::clone(&state.provider)
     };
 
     let prompt = format!(
@@ -923,7 +994,7 @@ User intent: {}",
         req.intent
     );
 
-    let text = match provider.generate_response(&prompt, None).await {
+    let text = match provider.as_ref().generate_response(&prompt, None).await {
         Ok(axion_core::engine::ToolResponse::Text(t)) => t,
         _ => return fail_open,
     };
@@ -1112,9 +1183,25 @@ async fn main() {
             axum::http::header::HeaderName::from_static("x-axion-model"),
         ]);
 
+    // ── Build the shared AI provider once at startup ──────────────────────────
+    // AXION_PROVIDER selects the backend; AXION_MODEL / AXION_BASE_URL /
+    // AXION_API_KEY configure it.  See build_startup_provider() for details.
+    let startup_provider = match build_startup_provider() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to build AI provider — check env vars");
+            std::process::exit(1);
+        }
+    };
+
     // Shared set tracking mission IDs that currently have an open refinement
     // SSE stream.  Prevents concurrent refinements for the same mission.
     let in_flight: InFlight = Arc::new(Mutex::new(HashSet::new()));
+
+    let app_state = AppState {
+        provider:  startup_provider,
+        in_flight,
+    };
 
     // All routes except /health are versioned under /api/v1 and protected by
     // the auth middleware (auth is disabled when AXION_API_KEY is not set in env).
@@ -1130,7 +1217,7 @@ async fn main() {
         .route("/upload", post(upload_handler).layer(DefaultBodyLimit::max(10 * 1024 * 1024)))
         .route("/config/status", get(config_status_handler))
         .layer(axum::middleware::from_fn(auth_middleware))
-        .with_state(in_flight);
+        .with_state(app_state);
 
     let app = Router::new()
         .route("/health", get(health))
