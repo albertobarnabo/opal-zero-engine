@@ -1,5 +1,13 @@
+mod diff;
+mod extract_pdf;
+mod fetch_page;
 mod financial;
+mod http_request;
 mod python;
+mod read_csv;
+mod rss_reader;
+pub mod send_email;
+mod sqlite;
 mod ui_builder;
 
 // ── Vision proxy type (shared between Wasm post-processing and native path) ───
@@ -158,6 +166,20 @@ pub async fn execute_tool(
         return financial::get_news_sentiment(&args.symbol, &av_key).await;
     }
 
+    // Async new tools — dispatched before the synchronous match.
+    if name == "http_request" {
+        return http_request::execute_http_request(arguments).await;
+    }
+    if name == "fetch_page" {
+        return fetch_page::execute_fetch_page(arguments).await;
+    }
+    if name == "rss_reader" {
+        return rss_reader::execute_rss_reader(arguments).await;
+    }
+    if name == "send_email" {
+        return send_email::execute_send_email(arguments).await;
+    }
+
     // ── 3. Synchronous native fallback ────────────────────────────────────────
     // Used when no `.wasm` binary is present for the tool — ensures full
     // backward compatibility during the Wasm migration.
@@ -170,6 +192,10 @@ pub async fn execute_tool(
         "finalize_mission_state"  => ui_builder::finalize_mission_state(arguments),
         "feedback"                => execute_feedback_native(arguments),
         "memory_persist"          => execute_memory_persist(arguments, mission_id),
+        "sqlite_query"            => sqlite::execute_sqlite_query(arguments, mission_id),
+        "read_csv"                => read_csv::execute_read_csv(arguments),
+        "extract_pdf_text"        => extract_pdf::execute_extract_pdf_text(arguments),
+        "diff"                    => diff::execute_diff(arguments),
         _ => {
             tracing::warn!(
                 tool = name,

@@ -502,6 +502,273 @@ impl Tool {
         }
     }
 
+    pub fn http_request() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("url".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Full URL including scheme (https://...).".to_string()),
+            items: None,
+        });
+        properties.insert("method".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("HTTP method: GET, POST, PUT, PATCH, DELETE. Default: GET.".to_string()),
+            items: None,
+        });
+        properties.insert("headers".to_string(), ParameterProperty {
+            prop_type: "object".to_string(),
+            description: Some("Optional request headers as key/value pairs (e.g. Authorization).".to_string()),
+            items: None,
+        });
+        properties.insert("body".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Optional request body. Serialize JSON to a string before passing.".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "http_request".to_string(),
+            description:
+                "Make an HTTP GET or POST request to any URL and return the response status, \
+                 headers, and body. Use this to call REST APIs, webhooks, or read JSON/text \
+                 endpoints that are not covered by other tools. Response body is capped at 512 KB."
+                    .to_string(),
+            is_async: true,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["url".to_string()],
+            },
+        }
+    }
+
+    pub fn fetch_page() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("url".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Full URL of the webpage to fetch (https://...).".to_string()),
+            items: None,
+        });
+        properties.insert("prompt".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Optional hint about what you are looking for on the page.".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "fetch_page".to_string(),
+            description:
+                "Fetch a webpage and return its readable text content with HTML stripped. \
+                 Use this to read a specific URL you already know — a pricing page, docs page, \
+                 job listing, product page, or any web resource web_search does not fully index. \
+                 Output is capped at 8 000 characters."
+                    .to_string(),
+            is_async: true,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["url".to_string()],
+            },
+        }
+    }
+
+    pub fn sqlite_query() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("query".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some(
+                "SQL statement to execute (SELECT, CREATE TABLE, INSERT, UPDATE, DELETE). \
+                 Use ? placeholders for bound parameters."
+                    .to_string(),
+            ),
+            items: None,
+        });
+        properties.insert("params".to_string(), ParameterProperty {
+            prop_type: "array".to_string(),
+            description: Some(
+                "Optional positional parameters to bind to ? placeholders in the query."
+                    .to_string(),
+            ),
+            items: Some(Box::new(ParameterProperty {
+                prop_type: "string".to_string(),
+                description: None,
+                items: None,
+            })),
+        });
+        Tool {
+            name: "sqlite_query".to_string(),
+            description:
+                "Run a SQL query against an embedded SQLite database scoped to this mission. \
+                 Use CREATE TABLE + INSERT to store structured findings, then SELECT to analyse \
+                 them. The database persists across tasks within the same mission. \
+                 SELECT results are returned as a JSON array of row objects (max 500 rows)."
+                    .to_string(),
+            is_async: false,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["query".to_string()],
+            },
+        }
+    }
+
+    pub fn read_csv() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("filename".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Filename in the uploads/ directory (e.g. \"sales.csv\").".to_string()),
+            items: None,
+        });
+        properties.insert("delimiter".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Field delimiter — use \",\" for CSV (default) or \"\\t\" for TSV.".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "read_csv".to_string(),
+            description:
+                "Parse a CSV or TSV file into a structured JSON array of row objects keyed by \
+                 column header. Use this instead of read_file when you need to reason about \
+                 specific columns, filter rows, or load data into sqlite_query."
+                    .to_string(),
+            is_async: false,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["filename".to_string()],
+            },
+        }
+    }
+
+    pub fn rss_reader() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("url".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Full URL of the RSS or Atom feed.".to_string()),
+            items: None,
+        });
+        properties.insert("limit".to_string(), ParameterProperty {
+            prop_type: "integer".to_string(),
+            description: Some("Max items to return (1–20, default 20).".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "rss_reader".to_string(),
+            description:
+                "Fetch and parse an RSS or Atom feed. Returns the feed title, description, and \
+                 up to 20 recent items with title, link, summary, and published date. Use for \
+                 news monitoring, release tracking, and blog aggregation missions."
+                    .to_string(),
+            is_async: true,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["url".to_string()],
+            },
+        }
+    }
+
+    pub fn diff() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("original".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("The original (before) text.".to_string()),
+            items: None,
+        });
+        properties.insert("modified".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("The modified (after) text.".to_string()),
+            items: None,
+        });
+        properties.insert("context_lines".to_string(), ParameterProperty {
+            prop_type: "integer".to_string(),
+            description: Some("Lines of context around each change (default 3).".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "diff".to_string(),
+            description:
+                "Compute a unified text diff between two strings. Returns lines added, removed, \
+                 unchanged, and a standard unified diff. Use in comparison missions: price changes, \
+                 document revisions, before/after content changes."
+                    .to_string(),
+            is_async: false,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["original".to_string(), "modified".to_string()],
+            },
+        }
+    }
+
+    pub fn extract_pdf_text() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("filename".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("PDF filename in the uploads/ directory (e.g. \"report.pdf\").".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "extract_pdf_text".to_string(),
+            description:
+                "Extract readable text from a PDF file in the uploads/ directory. Returns the \
+                 text content, page count, and character count. Output is capped at 32 KB. \
+                 Use this for research missions that involve uploaded documents, contracts, \
+                 reports, or papers."
+                    .to_string(),
+            is_async: false,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["filename".to_string()],
+            },
+        }
+    }
+
+    pub fn send_email() -> Self {
+        let mut properties = HashMap::new();
+        properties.insert("to".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Recipient email address.".to_string()),
+            items: None,
+        });
+        properties.insert("subject".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Email subject line.".to_string()),
+            items: None,
+        });
+        properties.insert("body".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Plain-text email body with the mission findings.".to_string()),
+            items: None,
+        });
+        properties.insert("reply_to".to_string(), ParameterProperty {
+            prop_type: "string".to_string(),
+            description: Some("Optional reply-to email address.".to_string()),
+            items: None,
+        });
+        Tool {
+            name: "send_email".to_string(),
+            description:
+                "Send an email with mission findings to a specified address. Use this to deliver \
+                 results asynchronously — summaries, reports, alerts, or notifications. \
+                 SMTP credentials are read from server environment variables; never ask the \
+                 user for passwords."
+                    .to_string(),
+            is_async: true,
+            preopens: vec![],
+            parameters: ToolParameters {
+                param_type: "object".to_string(),
+                properties,
+                required: vec!["to".to_string(), "subject".to_string(), "body".to_string()],
+            },
+        }
+    }
+
     /// Hydrate a `Tool` from a JSON manifest file on disk.
     ///
     /// The manifest must be valid JSON matching the `Tool` serde shape:

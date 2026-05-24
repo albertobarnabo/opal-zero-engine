@@ -879,21 +879,23 @@ mod tests {
 
 fn get_tools_for_role(role: &crate::protocol::AgentRole, keys: &RequestKeys) -> Vec<Tool> {
     use crate::protocol::AgentRole;
+    use crate::tools::send_email::smtp_configured;
 
     // Alpha Vantage tools require an API key to be set — offering them without a
     // key causes the LLM to eagerly call them, the tool fails immediately, and the
     // whole Analyst task is marked Failed.  Only include them when the key exists.
-    let has_av_key = keys.alpha_vantage().is_some();
+    let has_av_key   = keys.alpha_vantage().is_some();
+    let has_smtp     = smtp_configured();
 
-    // Role → canonical tool names (built dynamically so we can gate AV tools).
-    //
-    // Analyst: web_search + finalize_mission_state + persistence helpers.
-    // Alpha Vantage tools are added only when the env key is present.
+    // Role → canonical tool names (built dynamically so we can gate optional tools).
     let names: Vec<&str> = match role {
         AgentRole::Analyst => {
             let mut v = vec![
-                "web_search", "finalize_mission_state", "vision",
-                "feedback", "memory_persist", "generate_document", "read_file",
+                "web_search", "fetch_page", "http_request", "rss_reader",
+                "finalize_mission_state", "vision",
+                "feedback", "memory_persist", "generate_document",
+                "read_file", "read_csv", "extract_pdf_text",
+                "sqlite_query", "diff",
             ];
             if has_av_key {
                 v.extend_from_slice(&[
@@ -901,11 +903,12 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole, keys: &RequestKeys) -> 
                     "get_income_statement", "get_news_sentiment",
                 ]);
             }
+            if has_smtp { v.push("send_email"); }
             v
         }
-        AgentRole::WebSearcher => vec!["web_search"],
+        AgentRole::WebSearcher => vec!["web_search", "fetch_page", "rss_reader"],
         AgentRole::Planner     => vec!["calculator", "web_search", "write_file", "memory", "feedback", "memory_persist"],
-        AgentRole::Coder       => vec!["python_interpreter", "write_file"],
+        AgentRole::Coder       => vec!["python_interpreter", "write_file", "sqlite_query", "http_request", "diff"],
     };
 
     // Use the live registry when available; fall back to hard-coded constructors
@@ -918,12 +921,19 @@ fn get_tools_for_role(role: &crate::protocol::AgentRole, keys: &RequestKeys) -> 
     }
 
     // Hard-coded fallback (used in tests and when manifests directory is absent).
-    // WASM-only tools (memory, generate_document, read_file) are omitted here
-    // because they have no native implementation.
+    let mut analyst_tools = vec![
+        Tool::web_search(), Tool::fetch_page(), Tool::http_request(), Tool::rss_reader(),
+        Tool::finalize_mission_state(), Tool::vision(),
+        Tool::feedback(), Tool::memory_persist(),
+        Tool::read_csv(), Tool::extract_pdf_text(),
+        Tool::sqlite_query(), Tool::diff(),
+    ];
+    if has_smtp { analyst_tools.push(Tool::send_email()); }
+
     match role {
-        AgentRole::Analyst     => vec![Tool::web_search(), Tool::finalize_mission_state(), Tool::vision(), Tool::feedback(), Tool::memory_persist()],
-        AgentRole::WebSearcher => vec![Tool::web_search()],
+        AgentRole::Analyst     => analyst_tools,
+        AgentRole::WebSearcher => vec![Tool::web_search(), Tool::fetch_page(), Tool::rss_reader()],
         AgentRole::Planner     => vec![Tool::calculator(), Tool::web_search(), Tool::write_file(), Tool::feedback(), Tool::memory_persist()],
-        AgentRole::Coder       => vec![Tool::python_interpreter(), Tool::write_file()],
+        AgentRole::Coder       => vec![Tool::python_interpreter(), Tool::write_file(), Tool::sqlite_query(), Tool::http_request(), Tool::diff()],
     }
 }

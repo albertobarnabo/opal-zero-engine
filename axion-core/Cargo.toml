@@ -41,3 +41,21 @@ dotenvy = "0.15"
 
 # Structured logging
 tracing = "0.1"
+
+# Embedded SQLite for the sqlite_query tool
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# CSV parsing for the read_csv tool
+csv = "1.3"
+
+# RSS/Atom feed parsing for the rss_reader tool
+feed-rs = "2"
+
+# Text diffing for the diff tool
+similar = "2"
+
+# PDF text extraction for the extract_pdf_text tool
+pdf-extract = "0.7"
+
+# Email sending for the send_email tool
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
