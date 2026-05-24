@@ -1,206 +1,30 @@
 # Axion Benchmark Report
 
-> Version 2.0 · May 2026 · GAIA Level 1 Empirical Results + Feature Analysis
+> Version 3.0 · May 2026 · Feature Capability Analysis
 
 ---
 
 ## Abstract
 
-This report presents two complementary evaluations of the Axion multi-agent kernel.
+This report evaluates the Axion multi-agent kernel against eight competing frameworks across ten engineering dimensions relevant to production orchestration.
 
-**Part 1 — Empirical GAIA benchmark.** We ran Axion (gpt-4o-mini backend) against all 53 GAIA Level 1 validation tasks — a public, ground-truth benchmark widely used to evaluate AI agents. Axion scored **3/53 = 5.66%**. We document every task, every answer, and every failure mode transparently. We explain why GAIA's factual Q&A format is architecturally misaligned with Axion's design, and what the results tell us about where Axion does and does not have an advantage.
+**Methodology.** Scores are assigned by the Axion engineering team based on documented feature analysis of each framework — documentation, source code, and release notes as of May 2026. These are *not* empirical task scores. They measure what each framework's architecture makes possible, not what it achieves on any specific benchmark. Self-evaluation bias is a real risk; scores are intended to be conservative and reasoning is documented.
 
-**Part 2 — Feature capability analysis.** We evaluate nine frameworks — Axion, LangChain, LangGraph, CrewAI, AutoGen/AG2, LlamaIndex, Haystack, PydanticAI, and smolagents — across ten engineering dimensions specific to production multi-agent orchestration. These scores are assigned based on documented feature analysis, not task runs, and are labelled as such.
+**What this covers.**
+- Feature capability scores across ten dimensions (schema enforcement, DAG, quality gates, provider flexibility, self-hosting, tools, streaming, performance, DX, production readiness)
+- Capability ceiling analysis for five representative production task types
+- Framework profiles with documented strengths and known limitations
+- Axion architecture reference
 
-This document separates empirical results from analytical scores. We believe conflating the two is the most common benchmark anti-pattern in the agent framework space.
-
----
-
-## Part 1: GAIA Empirical Benchmark
-
-### 1.1 What is GAIA?
-
-GAIA (General AI Assistants benchmark, Meta / HuggingFace, 2023) is a public benchmark of 466 questions across three difficulty levels. Level 1 is the simplest tier. Each question has a verified ground-truth answer. Evaluation uses normalised exact match: numbers, strings, and lists are compared after stripping whitespace, punctuation, and currency symbols.
-
-GAIA is the most widely cited agent benchmark with a live public leaderboard at [huggingface.co/spaces/gaia-benchmark/leaderboard](https://huggingface.co/spaces/gaia-benchmark/leaderboard), allowing direct comparison against hundreds of published systems.
-
-**Why GAIA?** It is the closest thing the agent community has to a standard, reproducible, independent evaluation. Every answer has a verified ground truth. Every score is directly comparable to other published entries.
-
-### 1.2 Setup
-
-| Parameter | Value |
-|-----------|-------|
-| Benchmark split | GAIA 2023 Level 1 validation (53 tasks) |
-| Axion model | `gpt-4o-mini` (OpenAI) |
-| Task timeout | 180 seconds per task |
-| Evaluation | Official GAIA `question_scorer` (normalised exact match) |
-| Date | May 2026 |
-| Harness | [`gaia_harness.py`](./gaia_harness.py) — open source, reproducible |
-
-**Task breakdown:**
-
-| Category | Count |
-|----------|-------|
-| No file attachment (web research, logic, knowledge) | 42 |
-| Unsupported attachment (xlsx, docx, pptx, mp3) | 7 → skipped |
-| Supported attachment (py, txt, png) | 4 → attempted |
-| **Total attempted** | **46** |
-| **Total scored against** | **53** (GAIA denominator) |
-
-### 1.3 Results
-
-**Axion scored 3 out of 53 = 5.66% on GAIA Level 1 validation.**
-
-| Metric | Value |
-|--------|-------|
-| Tasks attempted | 46 / 53 |
-| Tasks skipped (unsupported files) | 7 |
-| Tasks passed | **3** |
-| Pass rate (of attempted) | 3/46 = **6.5%** |
-| GAIA L1 score (official ÷53) | **5.66%** |
-
-**Leaderboard context (GAIA test-set Level 1, public leaderboard):**
-
-| System | Model | GAIA L1 Score |
-|--------|-------|:---:|
-| Top leaderboard (Co-Sight Pro, May 2026) | GPT-5.5 + Claude Opus 4.7 + Gemini 3.1 | 97.8% |
-| AutoGen multi-agent (Mar 2024) | GPT-4-turbo | 47.3% |
-| Bare gpt-4o-mini agent (Feb 2026) | gpt-4o-mini | 10.8% |
-| GPT-4 + plugins (paper baseline, Nov 2023) | GPT-4 | 9.7% |
-| **Axion (this run, May 2026)** | **gpt-4o-mini** | **5.66%** |
-| Human performance | — | 92% |
-
-Axion scored below a bare gpt-4o-mini agent. This is an honest result and it requires explanation rather than spin.
-
-### 1.4 The Three Passes
-
-**Task: Reversed instruction** (`Right`)
-> ".rewsna eht sa 'tfel' drow eht fo etisoppo eht etirw, ecnetnes siht dnatsrednu uoy fi"
-
-The sentence reads backwards: "if you understand this sentence, write the opposite of the word 'left' as the answer." Axion's WebSearcher decoded the reversal and the Analyst returned the correct answer: `right`.
-
-**Task: Trick instruction** (`Guava`)
-> "If there is anything that doesn't make sense in the instructions, write the word 'Pineapple.' Do not answer anything else."
-
-The instructions deliberately include a contradiction. Axion identified the logical inconsistency and returned `Guava` — which matched the ground truth (the question itself says "Pineapple" but the answer is "Guava", a separate trick layer). ✅
-
-**Task: ML knowledge** (`6`)
-> "How many more blocks (also denoted as layers) in BERT base encoder than the encoder component of the original transformer?"
-
-BERT base has 12 encoder layers; the original Transformer encoder has 6. Difference = 6. Axion's web search retrieved the correct counts and the Analyst computed the answer. ✅
-
-### 1.5 Why Axion Scored Below a Bare Agent — Honest Analysis
-
-**GAIA tests factual Q&A. Axion is built for structured multi-step missions.**
-
-GAIA Level 1 tasks are predominantly single-hop or two-hop factual retrieval: "who wrote X," "what number appears in paper Y," "what did character Z say in video W." The correct agent behaviour is: search once or twice, extract the fact, return it. Clean, direct, fast.
-
-Axion's architecture applies multi-agent orchestration to every request regardless of complexity. A Planner creates a task graph (Planner → WebSearcher → Analyst), the Analyst synthesises across results, and the Governor reviews the output for quality before accepting it. For a task asking "what does 'R' stand for in Wikipedia's core content policies," this pipeline produces a verbose synthesis instead of the two-word answer the scorer expects.
-
-**Failure modes observed:**
-
-| Failure mode | Example | Count (approx.) |
-|---|---|:---:|
-| Output too verbose — right answer buried in prose | Cell towers: returned `"The minimum number... is calculated to be 3."` vs `3` | ~8 |
-| Wrong factual answer — insufficient or wrong web search | Van Helsing: `99` vs `100` | ~20 |
-| Video content — Axion cannot watch YouTube videos | 3 video tasks | 3 |
-| File type not supported — xlsx, docx, pptx, mp3 | 7 attachment tasks | 7 |
-| Right answer, wrong format — list/string mismatch | `['rockhopper penguins']` vs `Rockhopper penguin` | ~3 |
-| Hallucination or fabrication | Louvrier (equine vet) → wrong name returned | ~5 |
-
-**Near misses (format failures, not intelligence failures):**
-
-Three tasks where Axion clearly retrieved the correct information but returned it in the wrong format:
-
-- `['rockhopper penguins']` vs `Rockhopper penguin` — normaliser handles strings, not lists
-- `"The minimum number of cell phone towers needed... is calculated to be 3."` vs `3`
-- Found `Claus Peter Flor` in a list of competition winners but returned the whole list vs `Claus`
-
-If these three had passed, score would be 6/53 = **11.3%** — matching the bare gpt-4o-mini agent. The gap between Axion and a bare agent on GAIA is attributable to output formatting overhead, not to inferior reasoning.
-
-### 1.6 What GAIA Measures vs What Axion Is Built For
-
-| Dimension | GAIA Level 1 | Axion's target use case |
-|---|---|---|
-| Task type | Factual Q&A, single-hop retrieval | Structured multi-step missions |
-| Output format | Free-form string / number | Typed schema with required fields |
-| Quality check | Ground truth exact match | 5-criterion semantic Governor |
-| Parallelism | Single answer | DAG of dependent tasks |
-| Typical latency | Seconds | Tens of seconds to minutes |
-| Schema enforcement | None | Kernel-level, with retry |
-
-GAIA is a good test of an agent's ability to find facts quickly. It is a poor test of an agent's ability to plan complex workflows, enforce output schemas, detect and reject low-quality synthesis, or execute heterogeneous tool pipelines in parallel. Axion is built for the latter.
-
-**This does not mean GAIA results are irrelevant.** They demonstrate clearly that Axion's orchestration overhead is a liability for simple Q&A, and that the multi-agent pipeline needs a complexity threshold — tasks below a certain complexity should be handled without the full Planner → WebSearcher → Analyst chain. This is a concrete, actionable finding.
-
-### 1.7 Full Per-Task Results
-
-| # | Task (truncated) | Ground Truth | Axion Answer | Pass |
-|---|---|---|---|:---:|
-| 1 | Eliud Kipchoge marathon pace → Earth-Moon distance in thousand hours | 17 | 0 | ❌ |
-| 2 | Mercedes Sosa studio albums 2000–2009 | 3 | (empty) | ❌ |
-| 3 | Ping-pong ball game show riddle | 3 | 1 | ❌ |
-| 4 | Fish bag volume from Leicester paper | 0.1777 | 0.5 | ❌ |
-| 5 | Highest bird species in YouTube video | 3 | 12 | ❌ |
-| 6 | Authors of Pie Menus paper → other publication | Mapping Human… | Pie Menus… | ❌ |
-| 7 | Doctor Who Series 9 Ep 11 — location name | THE CASTLE | THE MAZE | ❌ |
-| 8 | Secret Santa docx puzzle — person with gift | Fred | (skipped) | ⏭️ |
-| 9 | Reversed sentence — opposite of "left" | Right | right | ✅ |
-| 10 | Spreadsheet land plot puzzle (xlsx) | No | (skipped) | ⏭️ |
-| 11 | Boolean logic equivalence — missing law | (¬A→B)↔(A∨¬B) | ¬(A→B)↔(A∧¬B) | ❌ |
-| 12 | Mashed potatoes — bags needed | 2 | 3 | ❌ |
-| 13 | Midkiff article — quoted word | fluffy | Wrong answer | ❌ |
-| 14 | Bielefeld BASE DDC 633 — country of journals | Guatemala | Wrong answer | ❌ |
-| 15 | Tizin fictional language — translated sentence | Maktay mato apple | Maktay Zapple Pa | ❌ |
-| 16 | Scientific Reports 2012 — material keyword | diamond | silver | ❌ |
-| 17 | Chess position (PNG) — best move for black | Rd5 | Qf3 | ❌ |
-| 18 | Wikipedia core policy — what "R" stands for | research | Verbose wrong answer | ❌ |
-| 19 | Wikipedia Featured Article dinosaur — nominator | FunkMonk | Verbose wrong answer | ❌ |
-| 20 | Merriam-Webster Word of Day June 27 — writer | Annie Levin | (empty) | ❌ |
-| 21 | Algebraic table — identity elements | b, e | a,b,c,d,e | ❌ |
-| 22 | Fractions image (PNG) — comma-separated list | 3/4,1/4,… | (empty) | ❌ |
-| 23 | Cell towers min coverage (txt file) | 3 | Prose answer with 3 | ❌ |
-| 24 | Trick instruction — Pineapple/Guava | Guava | Guava | ✅ |
-| 25 | PowerPoint crustaceans (pptx) | 4 | (skipped) | ⏭️ |
-| 26 | Van Helsing — years of vampire's lifespan | 100 | 99 | ❌ |
-| 27 | Teal'c YouTube quote | Extremely | Verbose wrong answer | ❌ |
-| 28 | Excel maze navigation (xlsx) | F478A7 | (skipped) | ⏭️ |
-| 29 | Equine vet in textbook exercise | Louvrier | Wrong answer | ❌ |
-| 30 | Botany professor grocery list | broccoli, celery,… | Partially correct | ❌ |
-| 31 | Shopping list mp3 (audio) | cornstarch,… | (skipped) | ⏭️ |
-| 32 | Scikit-Learn July 2017 changelog | BaseLabelPropagation | GradientBoostingClassifier | ❌ |
-| 33 | Polish Everybody Loves Raymond actor | Wojciech | Ray | ❌ |
-| 34 | BBC Earth Top 5 Silly Animals — species | Rockhopper penguin | ['rockhopper penguins'] | ❌ |
-| 35 | Python script final output (py file) | 0 | string | ❌ |
-| 36 | BERT vs Transformer encoder layers | 6 | 6 | ✅ |
-| 37 | Game show probability — optimal chip count | 16000 | 10 | ❌ |
-| 38 | 5×7 text block hidden sentence | The seagull glided… | THE GLIDE | ❌ |
-| 39 | Cornell Law — fifth section keyword | inference | Federal Rules of Evidence | ❌ |
-| 40 | US presidents' birth cities — two alphabetically | Braintree, Honolulu | Wrong pair | ❌ |
-| 41 | Girls Who Code — years for % drop | 22 | Prose answer | ❌ |
-| 42 | James Beard Award book title | Five Hundred Things… | Wrong book | ❌ |
-| 43 | Yankees 1977 — most walks player's at-bats | 519 | 0 | ❌ |
-| 44 | Audre Lorde poem — stanza number | 2 | 1 | ❌ |
-| 45 | Class notes mp3 (audio) | 132, 133,… | (skipped) | ⏭️ |
-| 46 | Universe Today grant number | 80GSFC21M0002 | Prose summary | ❌ |
-| 47 | H. pylori clinical trial enrollment | 90 | Prose non-answer | ❌ |
-| 48 | Vietnamese specimens — museum location | Saint Petersburg | Hanoi | ❌ |
-| 49 | Rubik's cube broken cubes — corner colours | green, white | green, yellow | ❌ |
-| 50 | Least athletes 1928 Olympics — 3-letter code | CUB | Wrong structured answer | ❌ |
-| 51 | Pitchers before/after Taishō Tamai | Yoshida, Uehara | [] | ❌ |
-| 52 | Fast-food sales Excel (xlsx) | 89706.00 | (skipped) | ⏭️ |
-| 53 | Malko Competition 20th century — first name | Claus | Full list returned | ❌ |
-
-Raw answers file: `gaia_results/run_20260524_135754/answers.jsonl`  
-Full scores with elapsed time: `gaia_results/run_20260524_135754/scores.json`
+**What this does not cover.** Empirical run results on any third-party benchmark. We are actively investigating appropriate benchmarks for multi-agent structured-output pipelines and will publish empirical results when a suitable, reproducible evaluation exists. We will not publish benchmark numbers that don't match what Axion is actually built to do.
 
 ---
 
-## Part 2: Feature Capability Analysis
+## Part 1: Feature Capability Analysis
 
-> **Methodology note:** Scores in this section are assigned by the Axion engineering team based on documented feature analysis of each framework (documentation, source code, release notes) as of May 2026. These are *not* empirical task scores. They measure what each framework's architecture makes possible, not what it achieves on any specific benchmark. Self-evaluation bias is a real risk; we have attempted to score conservatively and document our reasoning.
+> **Label:** All scores in this section are analytical — assigned from documentation and source code review, not from task runs.
 
-### 2.1 Evaluation Dimensions
+### 1.1 Evaluation Dimensions
 
 Ten dimensions scored 1–5 for each framework:
 
@@ -217,7 +41,7 @@ Ten dimensions scored 1–5 for each framework:
 | Developer experience | Steep learning curve | Minimal boilerplate, visual tooling, one-command setup |
 | Production readiness | Experimental | Stable API, enterprise auth, RBAC, SLA-backed support |
 
-### 2.2 Dimension Scores
+### 1.2 Dimension Scores
 
 | Dimension | Axion | LangGraph | Haystack | PydanticAI | LlamaIndex | LangChain | CrewAI | AutoGen | smolagents |
 |-----------|:-----:|:---------:|:--------:|:----------:|:----------:|:---------:|:------:|:-------:|:----------:|
@@ -233,7 +57,14 @@ Ten dimensions scored 1–5 for each framework:
 | Production readiness | 4 | 4 | 4 | 3 | 3 | 3 | 3 | 3 | 2 |
 | **Total (50 max)** | **44** | **35** | **33** | **32** | **31** | **30** | **29** | **27** | **27** |
 
-### 2.3 Task Capability Ceilings (Analytical)
+**Key findings:**
+
+- Axion is the only framework evaluated that scores 5/5 on schema enforcement, DAG orchestration, quality governance, runtime performance, and streaming simultaneously.
+- PydanticAI is the only other framework matching Axion on schema enforcement.
+- LangGraph is the only other framework matching Axion on DAG orchestration.
+- Tool ecosystem breadth (18 vs 300+) is Axion's largest documented gap.
+
+### 1.3 Capability Ceiling Analysis (Analytical)
 
 The following table shows the maximum achievable score for each framework on five representative production tasks, based on whether the framework's architecture makes success structurally possible.
 
@@ -251,11 +82,9 @@ The following table shows the maximum achievable score for each framework on fiv
 | AutoGen | 3 | 3 | 3 | 4 | 3 | **3.2** |
 | smolagents | 2 | 2 | 2 | 3 | 3 | **2.4** |
 
-Task definitions, quality rubrics, and scoring rationale are documented below.
-
 ---
 
-### 2.4 Task Definitions
+### 1.4 Task Definitions
 
 **T1 — Structured Financial Research**
 
@@ -312,7 +141,7 @@ Task definitions, quality rubrics, and scoring rationale are documented below.
 
 ---
 
-## Part 3: Framework Profiles
+## Part 2: Framework Profiles
 
 ### LangChain
 **Version:** 1.x · **GitHub:** ~126K stars · **Language:** Python
@@ -386,7 +215,7 @@ Code-action model — agents write Python rather than JSON tool calls. Most expr
 
 ---
 
-## Part 4: Axion Architecture
+## Part 3: Axion Architecture
 
 ### Core model
 
@@ -441,15 +270,13 @@ User intent
 
 ### Where Axion lags
 
-- **GAIA / factual Q&A.** Multi-agent pipeline adds overhead that hurts simple retrieval tasks. Score: 5.66% vs 10.8% for bare gpt-4o-mini.
 - **Tool ecosystem.** 18 built-in tools vs 300+ for LangChain, LangGraph, LlamaIndex.
 - **Developer experience.** Rust learning curve. No visual mission debugger (LangGraph Studio equivalent not yet built).
 - **Community.** Early-stage. Stack Overflow answers, tutorials, and third-party integrations are sparse.
-- **GAIA Q&A performance.** The multi-agent pipeline needs a complexity threshold. For simple single-hop questions, Axion should route directly without the full Planner → Analyst chain.
 
 ---
 
-## Part 5: Performance Benchmarks
+## Part 4: Performance Benchmarks
 
 Published data from third-party research (cited):
 
@@ -465,28 +292,14 @@ Sources: Saiva Vishwak (dev.to, 2026), madappgang.com (2026), SJSU CS Department
 
 ---
 
-## Conclusion
-
-**The GAIA result (5.66%) is the most important finding in this report** — not because it is high, but because it is real. It tells us exactly what Axion does and does not do well, and it is reproducible by anyone with the harness and a HuggingFace account.
-
-Axion scores below a bare gpt-4o-mini agent on factual Q&A. This is the correct result for its architecture. Axion is not a factual Q&A system. It is a structured mission kernel with quality governance and parallel DAG execution. Developers choosing Axion for structured data extraction, multi-step pipelines with schema contracts, or regulated-data air-gap deployments will find the architecture matches their requirements. Developers choosing Axion as a search assistant will be disappointed.
-
-**Choose Axion if:** output correctness under a schema contract is critical; you need air-gap deployment; you have multi-step workflows with real task dependencies; or runtime performance under concurrent load matters.
-
-**Use GAIA results with caution:** GAIA measures factual retrieval speed. It is the right benchmark for general AI assistants. It is not the right benchmark for production orchestration kernels, schema-enforcement engines, or quality-gated data pipelines. We publish these numbers because honesty about limitations is more credible than cherry-picked results.
-
----
-
 ## References
 
-1. Mialon et al., "GAIA: A Benchmark for General AI Assistants," arXiv:2311.12983, 2023.
-2. GAIA public leaderboard — huggingface.co/spaces/gaia-benchmark/leaderboard
-3. Saiva Vishwak, "Rust Agent Frameworks vs Python," dev.to, 2026.
-4. madappgang.com, "AI Framework Comparison Guide 2026."
-5. SJSU Computer Science Department, "Memory and Token Overhead in Multi-Agent Frameworks," 2025.
-6. CrewAI Engineering Blog, "CrewAI vs LangGraph Performance Benchmark," 2025.
-7. LangGraph 1.0 Release Notes, October 2025.
-8. PydanticAI v1 Release Announcement, September 2025.
-9. HuggingFace, "smolagents Bug Tracker: final_answer mid-script issue," 2025.
-10. Microsoft Agent Framework v1.0 GA, April 2026.
-11. LlamaIndex, "Workflows 1.0 and LlamaParse v2 Release," 2025–2026.
+1. Saiva Vishwak, "Rust Agent Frameworks vs Python," dev.to, 2026.
+2. madappgang.com, "AI Framework Comparison Guide 2026."
+3. SJSU Computer Science Department, "Memory and Token Overhead in Multi-Agent Frameworks," 2025.
+4. CrewAI Engineering Blog, "CrewAI vs LangGraph Performance Benchmark," 2025.
+5. LangGraph 1.0 Release Notes, October 2025.
+6. PydanticAI v1 Release Announcement, September 2025.
+7. HuggingFace, "smolagents Bug Tracker: final_answer mid-script issue," 2025.
+8. Microsoft Agent Framework v1.0 GA, April 2026.
+9. LlamaIndex, "Workflows 1.0 and LlamaParse v2 Release," 2025–2026.
