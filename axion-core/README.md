@@ -103,7 +103,10 @@ Set `OPENAI_API_KEY` in your environment and run.
 
 | Env var | Default | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | required | LLM provider key |
+| `AXION_PROVIDER` | `openai` | Backend: `openai`, `claude`, `ollama`, or `compatible` |
+| `OPENAI_API_KEY` | — | Required when `AXION_PROVIDER=openai` |
+| `ANTHROPIC_API_KEY` | — | Required when `AXION_PROVIDER=claude` |
+| `AXION_MODEL` | provider default | Model name (e.g. `claude-sonnet-4-5`, `gpt-4o-mini`) |
 | `AXION_MAX_TOKENS` | 4096 | Max tokens per LLM response |
 | `AXION_TEMPERATURE` | 0.1 | Sampling temperature |
 | `AXION_MISSION_TIMEOUT_SECS` | 300 | Wall-clock deadline per mission |

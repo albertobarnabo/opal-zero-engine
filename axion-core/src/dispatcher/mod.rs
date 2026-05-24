@@ -447,9 +447,38 @@ async fn execute_with_role(
     .await
     {
         Ok(ToolResponse::Text(text)) => {
-            tracing::debug!(text, "provider returned text");
-            task.result = Some(text);
-            task.status = TaskStatus::Completed;
+            // Text-mode fallback: open-source models often return the tool
+            // invocation as prose rather than a structured ToolCall.  Attempt
+            // to extract and execute a tool call from the text before falling
+            // back to treating the response as a plain result.
+            if let Some((tool_name, arguments)) = try_extract_tool_call(&text, &tools) {
+                tracing::info!(
+                    tool = tool_name,
+                    "[text-mode] extracted tool call from prose — executing"
+                );
+                match crate::tools::execute_tool(
+                    &tool_name, &arguments, &task.id.to_string(), keys,
+                )
+                .await
+                {
+                    Ok(tool_result) => {
+                        task.result = Some(tool_result);
+                        task.status = TaskStatus::Completed;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err, tool = tool_name,
+                            "[text-mode] tool execution failed — using prose as result"
+                        );
+                        task.result = Some(text);
+                        task.status = TaskStatus::Completed;
+                    }
+                }
+            } else {
+                tracing::debug!("[text-mode] no tool call found — using prose as result");
+                task.result = Some(text);
+                task.status = TaskStatus::Completed;
+            }
         }
         Ok(ToolResponse::ToolCall { id, name, arguments }) => {
             tracing::info!(tool = name, args = arguments, "executing tool call");
@@ -508,6 +537,122 @@ async fn execute_with_role(
             task.status = TaskStatus::Failed;
         }
     }
+}
+
+// ── Text-mode tool-call extraction (open-source model fallback) ──────────────
+//
+// Many Ollama / small open-source models understand tool calling conceptually
+// but return the invocation as prose or markdown rather than a structured
+// ToolCall API response.  The three functions below scan the raw text for
+// recognisable patterns and recover the tool name + arguments so the kernel
+// can execute the tool as normal.
+
+/// Walk `s` from the first `{` and extract the complete, balanced JSON object.
+/// Handles nested objects and string literals (including escaped quotes).
+/// Returns the raw object string (braces included) or `None`.
+fn extract_balanced_braces(s: &str) -> Option<String> {
+    let start = s.find('{')?;
+    let s = &s[start..];
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+    let mut end = 0;
+
+    for (i, ch) in s.char_indices() {
+        if escape_next { escape_next = false; continue; }
+        match ch {
+            '\\' if in_string => { escape_next = true; }
+            '"'               => { in_string = !in_string; }
+            '{' if !in_string => { depth += 1; }
+            '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 { end = i + 1; break; }
+            }
+            _ => {}
+        }
+    }
+
+    if end > 0 { Some(s[..end].to_string()) } else { None }
+}
+
+/// Heuristically match a parsed JSON value to a known tool by its top-level keys.
+fn match_tool_by_keys(val: &serde_json::Value, tools: &[Tool]) -> Option<String> {
+    let obj = val.as_object()?;
+
+    // finalize_mission_state — must contain `structured_data_payload`
+    if obj.contains_key("structured_data_payload")
+        && tools.iter().any(|t| t.name == "finalize_mission_state")
+    {
+        return Some("finalize_mission_state".to_string());
+    }
+
+    // web_search — must contain `query`
+    if obj.contains_key("query") && tools.iter().any(|t| t.name == "web_search") {
+        return Some("web_search".to_string());
+    }
+
+    None
+}
+
+/// Try to extract a `(tool_name, arguments_json)` pair from a prose response.
+///
+/// Strategies (attempted in order):
+///  1. Explicit `tool_name({...})` invocation syntax.
+///  2. ` ```json ... ``` ` code block whose keys suggest a particular tool.
+///  3. Any bare JSON object in the text whose keys suggest a tool (last resort).
+///
+/// Returns `None` when no confident match is found, leaving the caller free to
+/// treat the response as a plain-text result.
+fn try_extract_tool_call(text: &str, tools: &[Tool]) -> Option<(String, String)> {
+    if tools.is_empty() {
+        return None;
+    }
+
+    // ── Strategy 1: explicit tool_name({...}) ────────────────────────────────
+    for tool in tools {
+        let pattern = format!("{}(", tool.name);
+        if let Some(pos) = text.find(&pattern) {
+            let after_paren = &text[pos + pattern.len()..];
+            if let Some(json) = extract_balanced_braces(after_paren) {
+                if serde_json::from_str::<serde_json::Value>(&json).is_ok() {
+                    return Some((tool.name.clone(), json));
+                }
+            }
+        }
+    }
+
+    // ── Strategy 2: ```json code block ───────────────────────────────────────
+    let mut remaining = text;
+    while let Some(cb_start) = remaining.find("```json") {
+        let after_tag = &remaining[cb_start + 7..];
+        if let Some(cb_end) = after_tag.find("```") {
+            let candidate = after_tag[..cb_end].trim();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(candidate) {
+                if let Some(name) = match_tool_by_keys(&val, tools) {
+                    return Some((name, candidate.to_string()));
+                }
+            }
+            remaining = &after_tag[cb_end + 3..];
+        } else {
+            break;
+        }
+    }
+
+    // ── Strategy 3: bare JSON object ─────────────────────────────────────────
+    let mut search = text;
+    while let Some(brace_pos) = search.find('{') {
+        if let Some(json) = extract_balanced_braces(&search[brace_pos..]) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
+                if let Some(name) = match_tool_by_keys(&val, tools) {
+                    return Some((name, json));
+                }
+            }
+        }
+        // Advance past this `{` to avoid re-processing.
+        search = &search[brace_pos + 1..];
+    }
+
+    None
 }
 
 // ── Cycle detection ──────────────────────────────────────────────────────────

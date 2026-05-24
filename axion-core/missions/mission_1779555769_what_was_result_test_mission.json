@@ -1,0 +1,14 @@
+{
+  "id": "mission_1779555769_what_was_result_test_mission",
+  "timestamp": 1779555769,
+  "intent": "What was the result of the test mission?",
+  "task_count": 1,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "recall_past_mission_mission_0000000000_test": "Recalled from memory: Mission: mission_0000000000_test_memory_tool\nStatus:  completed\nIntent:  What is the capital of France?\nTasks:   1\nLayout:  Itinerary\n\nContext keys and values:\n  capital_france: The capital of France is Paris.\n"
+    }
+  }
+}

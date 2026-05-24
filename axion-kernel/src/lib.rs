@@ -11,11 +11,13 @@
 //! crate.  The open-source `axion-core` library does NOT depend on it, keeping
 //! the public API clean of any proprietary implementation detail.
 
+pub mod claude;
 pub mod engine;
 pub mod governor;
 
 /// Convenience re-exports for binary entry-points.
 pub mod prelude {
+    pub use crate::claude::ClaudeProvider;
     pub use crate::engine::OpenAIProvider;
     pub use crate::governor::AxionGovernor;
 }

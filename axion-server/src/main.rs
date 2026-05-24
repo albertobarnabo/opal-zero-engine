@@ -1,6 +1,6 @@
 use axion_core::persistence::MissionSnapshot;
 use axion_core::prelude::*;
-use axion_kernel::prelude::{AxionGovernor, OpenAIProvider};
+use axion_kernel::prelude::{AxionGovernor, ClaudeProvider, OpenAIProvider};
 use axion_core::engine::SimpleProvider;
 use axum::{
     body::Bytes,
@@ -177,6 +177,7 @@ struct AppState {
 /// | `AXION_PROVIDER` | Behaviour |
 /// |---|---|
 /// | `openai` (default) | OpenAI API — reads `OPENAI_API_KEY` |
+/// | `claude` | Anthropic API — reads `ANTHROPIC_API_KEY` |
 /// | `ollama` | Local Ollama at `http://localhost:11434/v1` |
 /// | `compatible` | Any OpenAI-compatible endpoint — reads `AXION_BASE_URL` and `AXION_API_KEY` |
 fn build_startup_provider() -> Result<Arc<dyn AiProvider>, String> {
@@ -186,8 +187,38 @@ fn build_startup_provider() -> Result<Arc<dyn AiProvider>, String> {
     let arc: Arc<dyn AiProvider> = match provider_name.to_lowercase().as_str() {
         "ollama" => {
             let model = std::env::var("AXION_MODEL")
-                .unwrap_or_else(|_| "llama3.2".to_string());
+                .unwrap_or_else(|_| "llama3.1:8b".to_string());
             tracing::info!(model, "Provider: Ollama");
+
+            // Tool-calling is required for Axion missions.  Many small Ollama
+            // models (e.g. llama3.2:3b, phi3:mini) return plain text instead
+            // of structured tool calls, which causes every task to fail.
+            //
+            // Verified working: llama3.1:8b, mistral-nemo, qwen2.5:7b
+            // NOT recommended: llama3.2:3b, phi3:mini (no tool-call support)
+            let known_bad: &[&str] = &[
+                "llama3.2:3b", "llama3.2",
+                "phi3:mini", "phi3",
+                "tinyllama", "gemma:2b",
+            ];
+            if known_bad.iter().any(|bad| model.starts_with(bad)) {
+                tracing::warn!(
+                    model,
+                    "⚠️  This Ollama model is known to lack tool-calling support. \
+                     Missions will likely fail. Recommended alternatives: \
+                     llama3.1:8b, mistral-nemo, qwen2.5:7b"
+                );
+                eprintln!(
+                    "\n[axion] WARNING: '{}' does not support tool calling — \
+                     missions will fail.\n\
+                     \x1b[32mRecommended Ollama models:\x1b[0m\n  \
+                     ollama pull llama3.1:8b    (4.7 GB, best balance)\n  \
+                     ollama pull mistral-nemo   (7.1 GB, strong reasoning)\n  \
+                     ollama pull qwen2.5:7b     (4.7 GB, fast)\n",
+                    model
+                );
+            }
+
             Arc::new(SimpleProvider::ollama(model))
         }
         "compatible" => {
@@ -198,6 +229,13 @@ fn build_startup_provider() -> Result<Arc<dyn AiProvider>, String> {
             let api_key = std::env::var("AXION_API_KEY").unwrap_or_default();
             tracing::info!(model, base_url, "Provider: compatible");
             Arc::new(SimpleProvider::with_base_url(model, base_url, api_key))
+        }
+        "claude" => {
+            let model = std::env::var("AXION_MODEL")
+                .unwrap_or_else(|_| "claude-sonnet-4-5".to_string());
+            let provider = ClaudeProvider::new_with_model(Some(model.clone()))?;
+            tracing::info!(model, "Provider: Claude (Anthropic)");
+            Arc::new(provider)
         }
         _ => {
             // "openai" or any unrecognised value defaults to OpenAI.
