@@ -38,5 +38,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/albertobarnabo/axion-server:latest
-            ghcr.io/albertobarnabo/axion-server:${{ steps.version.outputs.version }}
+            ghcr.io/albertobarnabo/opalzero-server:latest
+            ghcr.io/albertobarnabo/opalzero-server:${{ steps.version.outputs.version }}

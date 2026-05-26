@@ -1,0 +1,17 @@
+# Declaring an explicit [workspace] keeps this crate isolated from the root
+# OpalZero workspace.  It must be compiled separately for the wasm32-wasip1 target:
+#
+#   cd opalzero-professionals/vision
+#   cargo build --target wasm32-wasip1 --release
+#   cp target/wasm32-wasip1/release/opalzero-vision.wasm \
+#      ../../opalzero-core/professionals/vision.wasm
+[workspace]
+
+[package]
+name = "opalzero-vision"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

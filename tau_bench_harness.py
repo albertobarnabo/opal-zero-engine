@@ -4,14 +4,14 @@ tau_bench_harness.py
 Runs two agents side-by-side on τ-bench (airline + retail + telecom):
 
   1. baseline       – the stock LLMAgent (gpt-4o-mini, single-pass tool calling)
-  2. axion_style    – same model, but with explicit upfront planning and
+  2. opalzero_style    – same model, but with explicit upfront planning and
                       a policy-compliance validation pass before finalising.
 
-Goal: understand whether Axion's planning + validation methodology
+Goal: understand whether OpalZero's planning + validation methodology
 adds value on real multi-step service tasks, or whether it adds noise.
 
 Run:
-    cd /Users/albi/Projects/axion-lab/tau2-bench
+    cd /Users/albi/Projects/opalzero-lab/tau2-bench
     uv run python ../tau_bench_harness.py [--domains airline retail] [--max-tasks N]
 """
 
@@ -160,7 +160,7 @@ def create_baseline_agent(tools, domain_policy, **kwargs):
 
 
 # =============================================================================
-# AGENT 2: Axion-style (plan → execute → validate)
+# AGENT 2: OpalZero-style (plan → execute → validate)
 # =============================================================================
 
 AXION_SYSTEM = """\
@@ -218,7 +218,7 @@ Check: Does this response fully comply with the policy? Are there any additional
 Reply with JSON: {{"compliant": true/false, "missing_actions": [], "corrected_response": "..."}}""".strip()
 
 
-class AxionState(BaseModel):
+class OpalZeroState(BaseModel):
     system_messages: list[SystemMessage]
     messages: list[APICompatibleMessage]
     plan: Optional[dict] = None          # populated on first user turn
@@ -226,9 +226,9 @@ class AxionState(BaseModel):
     recent_tool_calls: list[str] = []   # for loop detection (last N call signatures)
 
 
-class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
+class OpalZeroStyleAgent(LLMConfigMixin, HalfDuplexAgent[OpalZeroState]):
     """
-    Axion-inspired agent: explicit planning + policy validation gate.
+    OpalZero-inspired agent: explicit planning + policy validation gate.
     Same model as baseline — tests whether the methodology helps.
     """
 
@@ -237,17 +237,17 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
         super().__init__(tools=tools, domain_policy=domain_policy,
                          llm=llm, llm_args=llm_args)
 
-    def get_init_state(self, message_history: Optional[list[Message]] = None) -> AxionState:
+    def get_init_state(self, message_history: Optional[list[Message]] = None) -> OpalZeroState:
         if message_history is None:
             message_history = []
         assert all(is_valid_agent_history_message(m) for m in message_history)
         system = AXION_SYSTEM.format(domain_policy=self.domain_policy)
-        return AxionState(
+        return OpalZeroState(
             system_messages=[SystemMessage(role="system", content=system)],
             messages=list(message_history),
         )
 
-    def _make_plan(self, user_text: str, state: AxionState) -> dict:
+    def _make_plan(self, user_text: str, state: OpalZeroState) -> dict:
         """Call the LLM to produce a structured plan for this request."""
         # Build compact tool schema: name + description + parameter names
         tool_schema_lines = []
@@ -279,7 +279,7 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
                 model=self.llm,
                 tools=[],               # no tools during planning phase
                 messages=plan_messages,
-                call_name="axion_plan",
+                call_name="opalzero_plan",
                 **(self.llm_args or {}),
             )
             text = plan_resp.content or ""
@@ -312,7 +312,7 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
                 trimmed.append(m)
         return trimmed
 
-    def _extract_actions_summary(self, state: AxionState) -> str:
+    def _extract_actions_summary(self, state: OpalZeroState) -> str:
         """Summarise tool calls + results from message history."""
         lines = []
         msgs = state.messages
@@ -324,7 +324,7 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
                 lines.append(f"  → Result: {str(msg.content)[:200]}")
         return "\n".join(lines) if lines else "(no tool calls yet)"
 
-    def _is_looping(self, reply: AssistantMessage, state: AxionState) -> bool:
+    def _is_looping(self, reply: AssistantMessage, state: OpalZeroState) -> bool:
         """Return True if the agent is repeating the same tool call 3 times."""
         if not reply.is_tool_call():
             return False
@@ -338,7 +338,7 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
         return state.recent_tool_calls.count(sig) >= 3
 
     def generate_next_message(self, message: ValidAgentInputMessage,
-                              state: AxionState) -> tuple[AssistantMessage, AxionState]:
+                              state: OpalZeroState) -> tuple[AssistantMessage, OpalZeroState]:
         state.turn_count += 1
 
         # Append incoming message(s) to history
@@ -358,7 +358,7 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
             model=self.llm,
             tools=self.tools,
             messages=state.system_messages + trimmed_messages,
-            call_name="axion_execute",
+            call_name="opalzero_execute",
             **(self.llm_args or {}),
         )
 
@@ -391,7 +391,7 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
                     model=self.llm,
                     tools=[],
                     messages=val_messages,
-                    call_name="axion_validate",
+                    call_name="opalzero_validate",
                     **(self.llm_args or {}),
                 )
                 val_text = val_resp.content or ""
@@ -410,8 +410,8 @@ class AxionStyleAgent(LLMConfigMixin, HalfDuplexAgent[AxionState]):
         return reply, state
 
 
-def create_axion_agent(tools, domain_policy, **kwargs):
-    return AxionStyleAgent(tools=tools, domain_policy=domain_policy,
+def create_opalzero_agent(tools, domain_policy, **kwargs):
+    return OpalZeroStyleAgent(tools=tools, domain_policy=domain_policy,
                            llm=kwargs.get("llm", MODEL_AGENT),
                            llm_args=kwargs.get("llm_args"))
 
@@ -420,8 +420,8 @@ def create_axion_agent(tools, domain_policy, **kwargs):
 # Register agents
 # =============================================================================
 
-registry.register_agent_factory(create_baseline_agent, "axion_baseline")
-registry.register_agent_factory(create_axion_agent, "axion_style")
+registry.register_agent_factory(create_baseline_agent, "opalzero_baseline")
+registry.register_agent_factory(create_opalzero_agent, "opalzero_style")
 
 
 # =============================================================================
@@ -526,21 +526,21 @@ def print_comparison_table(summaries: list[dict]):
         print(f"{s['agent']:<20} {s['domain']:<12} {pct:>8} {s['avg_reward']:>12.3f}")
     print("="*70)
 
-    # Delta: axion_style vs axion_baseline per domain
-    baseline = {s["domain"]: s for s in summaries if s["agent"] == "axion_baseline"}
-    axion = {s["domain"]: s for s in summaries if s["agent"] == "axion_style"}
-    print("\nDELTA (axion_style vs baseline):")
-    for domain in sorted(set(baseline) | set(axion)):
-        if domain in baseline and domain in axion:
-            delta_pass = axion[domain]["pass_rate"] - baseline[domain]["pass_rate"]
-            delta_rew = axion[domain]["avg_reward"] - baseline[domain]["avg_reward"]
+    # Delta: opalzero_style vs opalzero_baseline per domain
+    baseline = {s["domain"]: s for s in summaries if s["agent"] == "opalzero_baseline"}
+    opalzero = {s["domain"]: s for s in summaries if s["agent"] == "opalzero_style"}
+    print("\nDELTA (opalzero_style vs baseline):")
+    for domain in sorted(set(baseline) | set(opalzero)):
+        if domain in baseline and domain in opalzero:
+            delta_pass = opalzero[domain]["pass_rate"] - baseline[domain]["pass_rate"]
+            delta_rew = opalzero[domain]["avg_reward"] - baseline[domain]["avg_reward"]
             sign = "+" if delta_pass >= 0 else ""
             print(f"  {domain:<12}  pass_rate {sign}{100*delta_pass:.1f}pp  "
                   f"avg_reward {'+' if delta_rew >= 0 else ''}{delta_rew:.3f}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="τ-bench: Axion vs Baseline")
+    parser = argparse.ArgumentParser(description="τ-bench: OpalZero vs Baseline")
     parser.add_argument("--domains", nargs="+",
                         default=["airline", "retail"],
                         choices=["airline", "retail", "telecom", "mock"],
@@ -548,8 +548,8 @@ def main():
     parser.add_argument("--max-tasks", type=int, default=None, dest="max_tasks",
                         help="Max tasks per domain per agent (None = all)")
     parser.add_argument("--agents", nargs="+",
-                        default=["axion_baseline", "axion_style"],
-                        choices=["axion_baseline", "axion_style", "llm_agent"],
+                        default=["opalzero_baseline", "opalzero_style"],
+                        choices=["opalzero_baseline", "opalzero_style", "llm_agent"],
                         help="Agents to run")
     args = parser.parse_args()
 

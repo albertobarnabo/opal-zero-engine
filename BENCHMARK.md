@@ -1,4 +1,4 @@
-# Axion Benchmark Report
+# OpalZero Benchmark Report
 
 > Version 3.0 · May 2026 · Feature Capability Analysis
 
@@ -6,17 +6,17 @@
 
 ## Abstract
 
-This report evaluates the Axion multi-agent kernel against eight competing frameworks across ten engineering dimensions relevant to production orchestration.
+This report evaluates the OpalZero multi-agent kernel against eight competing frameworks across ten engineering dimensions relevant to production orchestration.
 
-**Methodology.** Scores are assigned by the Axion engineering team based on documented feature analysis of each framework — documentation, source code, and release notes as of May 2026. These are *not* empirical task scores. They measure what each framework's architecture makes possible, not what it achieves on any specific benchmark. Self-evaluation bias is a real risk; scores are intended to be conservative and reasoning is documented.
+**Methodology.** Scores are assigned by the OpalZero engineering team based on documented feature analysis of each framework — documentation, source code, and release notes as of May 2026. These are *not* empirical task scores. They measure what each framework's architecture makes possible, not what it achieves on any specific benchmark. Self-evaluation bias is a real risk; scores are intended to be conservative and reasoning is documented.
 
 **What this covers.**
 - Feature capability scores across ten dimensions (schema enforcement, DAG, quality gates, provider flexibility, self-hosting, tools, streaming, performance, DX, production readiness)
 - Capability ceiling analysis for five representative production task types
 - Framework profiles with documented strengths and known limitations
-- Axion architecture reference
+- OpalZero architecture reference
 
-**What this does not cover.** Empirical run results on any third-party benchmark. We are actively investigating appropriate benchmarks for multi-agent structured-output pipelines and will publish empirical results when a suitable, reproducible evaluation exists. We will not publish benchmark numbers that don't match what Axion is actually built to do.
+**What this does not cover.** Empirical run results on any third-party benchmark. We are actively investigating appropriate benchmarks for multi-agent structured-output pipelines and will publish empirical results when a suitable, reproducible evaluation exists. We will not publish benchmark numbers that don't match what OpalZero is actually built to do.
 
 ---
 
@@ -43,7 +43,7 @@ Ten dimensions scored 1–5 for each framework:
 
 ### 1.2 Dimension Scores
 
-| Dimension | Axion | LangGraph | Haystack | PydanticAI | LlamaIndex | LangChain | CrewAI | AutoGen | smolagents |
+| Dimension | OpalZero | LangGraph | Haystack | PydanticAI | LlamaIndex | LangChain | CrewAI | AutoGen | smolagents |
 |-----------|:-----:|:---------:|:--------:|:----------:|:----------:|:---------:|:------:|:-------:|:----------:|
 | Output reliability / schema enforcement | **5** | 3 | 3 | **5** | 3 | 3 | 2 | 2 | 1 |
 | DAG orchestration / parallel execution | **5** | **5** | 3 | 2 | 4 | 2 | 3 | 3 | 2 |
@@ -59,10 +59,10 @@ Ten dimensions scored 1–5 for each framework:
 
 **Key findings:**
 
-- Axion is the only framework evaluated that scores 5/5 on schema enforcement, DAG orchestration, quality governance, runtime performance, and streaming simultaneously.
-- PydanticAI is the only other framework matching Axion on schema enforcement.
-- LangGraph is the only other framework matching Axion on DAG orchestration.
-- Tool ecosystem breadth (18 vs 300+) is Axion's largest documented gap.
+- OpalZero is the only framework evaluated that scores 5/5 on schema enforcement, DAG orchestration, quality governance, runtime performance, and streaming simultaneously.
+- PydanticAI is the only other framework matching OpalZero on schema enforcement.
+- LangGraph is the only other framework matching OpalZero on DAG orchestration.
+- Tool ecosystem breadth (18 vs 300+) is OpalZero's largest documented gap.
 
 ### 1.3 Capability Ceiling Analysis (Analytical)
 
@@ -72,7 +72,7 @@ The following table shows the maximum achievable score for each framework on fiv
 
 | Framework | T1 Financial Research | T2 Pricing Analysis | T3 Document Intel | T4 API Integration | T5 Data Pipeline | Avg |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Axion** | 5 | 5 | 5 | 5 | 5 | **5.0** |
+| **OpalZero** | 5 | 5 | 5 | 5 | 5 | **5.0** |
 | LangGraph | 4 | 4 | 4 | 4 | 3 | **3.8** |
 | LangChain | 4 | 4 | 4 | 4 | 3 | **3.8** |
 | LlamaIndex | 4 | 3 | 5 | 3 | 4 | **3.8** |
@@ -101,7 +101,7 @@ The following table shows the maximum achievable score for each framework on fiv
 }
 ```
 
-*Why Axion scores 5:* Schema is enforced at kernel level. The Governor rejects outputs where fields are null, vague, or missing citations. The WebSearcher fetches live data; the Analyst synthesises across sources with schema contract binding.
+*Why OpalZero scores 5:* Schema is enforced at kernel level. The Governor rejects outputs where fields are null, vague, or missing citations. The WebSearcher fetches live data; the Analyst synthesises across sources with schema contract binding.
 
 ---
 
@@ -111,7 +111,7 @@ The following table shows the maximum achievable score for each framework on fiv
 
 *Required schema:* nested products → plans → price + features array.
 
-*Why Axion scores 5:* Multi-product research is parallelised across WebSearcher tasks (one per product), merged by the Analyst, and validated by the Governor against the schema. Any missing product triggers a targeted fix task.
+*Why OpalZero scores 5:* Multi-product research is parallelised across WebSearcher tasks (one per product), merged by the Analyst, and validated by the Governor against the schema. Any missing product triggers a targeted fix task.
 
 ---
 
@@ -119,7 +119,7 @@ The following table shows the maximum achievable score for each framework on fiv
 
 *Intent:* "Extract all clauses related to termination, liability, and governing law from the uploaded contract PDF."
 
-*Why Axion scores 5:* `extract_pdf_text` tool ships built-in. Schema enforcement ensures all three clause categories are non-empty. Governor checks claim specificity — paraphrase without source reference is rejected.
+*Why OpalZero scores 5:* `extract_pdf_text` tool ships built-in. Schema enforcement ensures all three clause categories are non-empty. Governor checks claim specificity — paraphrase without source reference is rejected.
 
 *Why LlamaIndex also scores 5:* LlamaParse v2 provides superior PDF OCR for complex layouts.
 
@@ -129,7 +129,7 @@ The following table shows the maximum achievable score for each framework on fiv
 
 *Intent:* "Fetch the latest 5 Hacker News posts and summarise trending topics."
 
-*Why Axion scores 5:* `http_request` tool fetches the HN API directly. Schema enforces exactly 5 posts with required fields. Governor validates that `trending_topics` is derived from actual post content, not hallucinated.
+*Why OpalZero scores 5:* `http_request` tool fetches the HN API directly. Schema enforces exactly 5 posts with required fields. Governor validates that `trending_topics` is derived from actual post content, not hallucinated.
 
 ---
 
@@ -137,7 +137,7 @@ The following table shows the maximum achievable score for each framework on fiv
 
 *Intent:* "Given the uploaded sales CSV, calculate total revenue by region and identify the top-performing product."
 
-*Why Axion scores 5:* `read_csv` + `sqlite_query` + `python_interpreter` tools compose natively in a DAG. Each computation step is a separate task with declared dependencies. Governor validates arithmetic correctness by re-checking totals.
+*Why OpalZero scores 5:* `read_csv` + `sqlite_query` + `python_interpreter` tools compose natively in a DAG. Each computation step is a separate task with declared dependencies. Governor validates arithmetic correctness by re-checking totals.
 
 ---
 
@@ -215,7 +215,7 @@ Code-action model — agents write Python rather than JSON tool calls. Most expr
 
 ---
 
-## Part 3: Axion Architecture
+## Part 3: OpalZero Architecture
 
 ### Core model
 
@@ -261,14 +261,14 @@ User intent
 | Control flow | `finalize_mission_state` · `feedback` (HITL gate) |
 | Persistence | `memory_persist` · `write_file` · `read_file` |
 
-### Where Axion leads
+### Where OpalZero leads
 
 - **Output reliability in production.** Kernel-level schema enforcement + Governor semantic review + automatic fix-task generation. For workflows where a wrong answer is costly (financial data, legal documents, customer-facing content), this is the dominant selection criterion.
 - **Air-gap deployment.** Single binary + Ollama = zero data egress. No equivalent in the evaluated Python frameworks without significant application-layer engineering.
-- **DAG orchestration with quality gates.** LangGraph matches Axion on DAG capability. No other framework combines both.
+- **DAG orchestration with quality gates.** LangGraph matches OpalZero on DAG capability. No other framework combines both.
 - **Runtime performance.** Rust async runtime: ~36% higher throughput, ~44% lower p95 latency vs Python-based frameworks at equivalent concurrency (dev.to/saivishwak, 2026).
 
-### Where Axion lags
+### Where OpalZero lags
 
 - **Tool ecosystem.** 18 built-in tools vs 300+ for LangChain, LangGraph, LlamaIndex.
 - **Developer experience.** Rust learning curve. No visual mission debugger (LangGraph Studio equivalent not yet built).
@@ -280,7 +280,7 @@ User intent
 
 Published data from third-party research (cited):
 
-| Metric | Axion vs Python frameworks |
+| Metric | OpalZero vs Python frameworks |
 |--------|---------------------------|
 | Throughput under concurrent load | ~36% higher (Rust async vs CPython) |
 | p95 latency under concurrent load | ~44% lower |

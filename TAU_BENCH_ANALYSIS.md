@@ -1,4 +1,4 @@
-# τ-bench Analysis: Axion-Style vs Baseline
+# τ-bench Analysis: OpalZero-Style vs Baseline
 **Date:** May 24 2026 · **Model:** gpt-4o-mini · **Tasks:** 25 per domain · **Domains:** airline, retail
 
 ---
@@ -7,12 +7,12 @@
 
 | Agent | Domain | Pass^1 | Avg Reward | Avg Cost/Conv |
 |-------|--------|--------|------------|---------------|
-| axion_baseline | airline | **28.0%** (7/25) | 0.280 | $0.0056 |
-| axion_style | airline | **32.0%** (8/25) | 0.320 | $0.0019 |
-| axion_baseline | retail | **36.0%** (9/25) | 0.360 | $0.0059 |
-| axion_style | retail | **32.0%** (8/25) | 0.320 | $0.0039 |
+| opalzero_baseline | airline | **28.0%** (7/25) | 0.280 | $0.0056 |
+| opalzero_style | airline | **32.0%** (8/25) | 0.320 | $0.0019 |
+| opalzero_baseline | retail | **36.0%** (9/25) | 0.360 | $0.0059 |
+| opalzero_style | retail | **32.0%** (8/25) | 0.320 | $0.0039 |
 
-### Delta (axion_style vs baseline)
+### Delta (opalzero_style vs baseline)
 | Domain | Pass^1 delta | Avg reward delta |
 |--------|-------------|-----------------|
 | airline | **+4.0pp** | +0.040 |
@@ -20,7 +20,7 @@
 | **combined** | **+0.0pp** | ±0.000 |
 
 ### vs Published Baselines (from τ-bench paper, Claude 3.5 Sonnet)
-| Domain | Our baseline | Our axion | Published best |
+| Domain | Our baseline | Our opalzero | Published best |
 |--------|-------------|-----------|----------------|
 | airline | 28.0% | 32.0% | ~46% (Claude 3.5S) |
 | retail | 36.0% | 32.0% | ~69% (Claude 3.5S) |
@@ -33,10 +33,10 @@
 
 | Agent | Domain | Read accuracy | Write accuracy | DB match | Max Steps |
 |-------|--------|--------------|----------------|----------|-----------|
-| axion_baseline | airline | 75.0% (18/24) | 33.3% (10/30) | 36.0% (9/25) | 0 |
-| axion_style | airline | 87.5% (21/24) | 35.7% (10/28) | 41.7% (10/25) | 0 |
-| axion_baseline | retail | 86.6% (123/142) | 45.2% (14/31) | 44.0% (11/25) | 0 |
-| axion_style | retail | 83.9% (115/137) | 53.3% (16/30) | 43.5% (10/25) | 2 |
+| opalzero_baseline | airline | 75.0% (18/24) | 33.3% (10/30) | 36.0% (9/25) | 0 |
+| opalzero_style | airline | 87.5% (21/24) | 35.7% (10/28) | 41.7% (10/25) | 0 |
+| opalzero_baseline | retail | 86.6% (123/142) | 45.2% (14/31) | 44.0% (11/25) | 0 |
+| opalzero_style | retail | 83.9% (115/137) | 53.3% (16/30) | 43.5% (10/25) | 2 |
 
 **Critical pattern:** Read accuracy is high across the board (75–87%) — agents know *what* to look up. Write accuracy is consistently low (33–53%) — agents fail on the *execution* step. This is the primary failure mode on both domains for both agents.
 
@@ -46,15 +46,15 @@
 
 ### Airline (25 tasks)
 ```
-axion_style BETTER:  tasks 2, 11, 16  (+3 wins)
-axion_style WORSE:   tasks 6, 10      (−2 losses)
+opalzero_style BETTER:  tasks 2, 11, 16  (+3 wins)
+opalzero_style WORSE:   tasks 6, 10      (−2 losses)
 Tied at pass/fail:   20 tasks
 ```
 
 ### Retail (25 tasks)
 ```
-axion_style BETTER:  tasks 8, 11, 13, 14  (+4 wins)
-axion_style WORSE:   tasks 9, 15, 17, 18, 23  (−5 losses)
+opalzero_style BETTER:  tasks 8, 11, 13, 14  (+4 wins)
+opalzero_style WORSE:   tasks 9, 15, 17, 18, 23  (−5 losses)
 Tied at pass/fail:   16 tasks
 ```
 
@@ -71,15 +71,15 @@ The agents correctly identify what action to take (high read accuracy) but get t
 
 **Root cause:** The agents rely on the model's arithmetic and parameter construction without verification. A single wrong number in a `modify_pending_order_items` call fails the whole task.
 
-### B. Context window overflow (axion_style specific)
-- 1 confirmed `ContextWindowExceededError` on airline axion_style task 11: **243,207 tokens** vs 128K limit
+### B. Context window overflow (opalzero_style specific)
+- 1 confirmed `ContextWindowExceededError` on airline opalzero_style task 11: **243,207 tokens** vs 128K limit
   - τ-bench retried and eventually succeeded (task 11 passed), but at extra cost/latency
-- Retail axion_style: 2 tasks hit **MAX_STEPS** (tasks 17 and 24, running 517s and 469s)
+- Retail opalzero_style: 2 tasks hit **MAX_STEPS** (tasks 17 and 24, running 517s and 469s)
   - These appear to be infinite-loop scenarios where the agent keeps calling tools without terminating
 
 The planning + validation extra LLM calls expand the message history faster than baseline. On long multi-turn conversations (>15 turns), the cumulative history can easily exceed 128K tokens.
 
-### C. Planning phase too shallow (axion_style specific)
+### C. Planning phase too shallow (opalzero_style specific)
 The `_make_plan()` function is called on turn 1 only, and only receives tool *names* — not tool signatures. A plan like `"tool_calls_needed": ["modify_pending_order_items(args)"]` is useless without knowing what `args` looks like. By the time the execution phase runs, the plan is ignored and the model falls back to its default behavior.
 
 ### D. Validator truncation
@@ -90,11 +90,11 @@ domain_policy=self.domain_policy[:800]   # truncate long policies
 Airline and retail policies are thousands of words. The validator evaluates compliance against a fragment, missing the conditions most likely to be violated.
 
 ### E. No loop detection
-The retail MAX_STEPS tasks ran for 500+ seconds. The agent was probably stuck in a cycle (get_order → wrong modify → get_order again) without breaking out. Neither baseline nor axion_style has any cycle detection.
+The retail MAX_STEPS tasks ran for 500+ seconds. The agent was probably stuck in a cycle (get_order → wrong modify → get_order again) without breaking out. Neither baseline nor opalzero_style has any cycle detection.
 
 ---
 
-## 5. Why Axion Helps on Airline but Hurts on Retail
+## 5. Why OpalZero Helps on Airline but Hurts on Retail
 
 **Airline (+4pp):**
 - Tasks tend to be 3–8 turns: check policy → look up booking → apply one action
@@ -109,7 +109,7 @@ The retail MAX_STEPS tasks ran for 500+ seconds. The agent was probably stuck in
 
 ---
 
-## 6. What the Axion Methodology Is Missing (Specifically)
+## 6. What the OpalZero Methodology Is Missing (Specifically)
 
 | Issue | Current behavior | What it should do |
 |-------|-----------------|-------------------|
@@ -180,7 +180,7 @@ Force the model to show calculations step-by-step before using the result in a w
 ### P3 — Model upgrade
 
 **8. Upgrade to a stronger model**
-gpt-4o-mini achieves 28–36% on tasks where Claude 3.5 Sonnet achieves 46–69%. The Axion methodology's overhead (plan + validate) adds marginal benefit on a weak model. On a stronger model the delta would likely be larger.
+gpt-4o-mini achieves 28–36% on tasks where Claude 3.5 Sonnet achieves 46–69%. The OpalZero methodology's overhead (plan + validate) adds marginal benefit on a weak model. On a stronger model the delta would likely be larger.
 
 Recommended next run: `gpt-4o` or `claude-3-5-sonnet` with the same harness to establish the model baseline before attributing delta to methodology.
 
@@ -193,7 +193,7 @@ These numbers sit significantly below published baselines for a clear reason: mo
 - Claude 3.5 Sonnet: ~46%
 - GPT-4o-mini: likely ~25–30% (not published, but consistent with our 28%)
 
-Our baseline at 28% airline / 36% retail is **consistent with what gpt-4o-mini is expected to do** on these tasks. The Axion methodology adds +4pp on airline (statistically meaningful for n=25) but the net effect is zero when retail's regression is included.
+Our baseline at 28% airline / 36% retail is **consistent with what gpt-4o-mini is expected to do** on these tasks. The OpalZero methodology adds +4pp on airline (statistically meaningful for n=25) but the net effect is zero when retail's regression is included.
 
 ---
 
@@ -215,6 +215,6 @@ Hold off until after at least one more run post-fixes. Publishing 28–32% on ai
 
 ---
 
-*Run config: `uv run python tau_bench_harness.py --domains airline retail --max-tasks 25 --agents axion_baseline axion_style`*  
+*Run config: `uv run python tau_bench_harness.py --domains airline retail --max-tasks 25 --agents opalzero_baseline opalzero_style`*  
 *Results: `/tau_results/run_20260524_191227/summary.json`*  
 *Log: `/tmp/tau_bench_run.log`*

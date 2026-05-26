@@ -163,62 +163,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "axion-core"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "clap",
- "csv",
- "dotenvy",
- "feed-rs",
- "futures",
- "lettre",
- "pdf-extract",
- "rand",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "similar",
- "tokio",
- "tracing",
- "uuid",
- "wasmtime",
- "wasmtime-wasi",
-]
-
-[[package]]
-name = "axion-kernel"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axion-core",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "axion-server"
-version = "0.1.0"
-dependencies = [
- "axion-core",
- "axion-kernel",
- "axum",
- "dotenvy",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "axum"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1890,6 +1834,62 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "opalzero-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "clap",
+ "csv",
+ "dotenvy",
+ "feed-rs",
+ "futures",
+ "lettre",
+ "pdf-extract",
+ "rand",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "similar",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "opalzero-kernel"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "opalzero-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "opalzero-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "dotenvy",
+ "opalzero-core",
+ "opalzero-kernel",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "openssl"

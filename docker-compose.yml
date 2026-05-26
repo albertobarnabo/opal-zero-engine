@@ -1,21 +1,21 @@
 version: "3.9"
 
 services:
-  axion-server:
+  opalzero-server:
     build:
       context: .
       dockerfile: Dockerfile
-    image: axion-server:latest
+    image: opalzero-server:latest
     ports:
       - "8000:8000"
     environment:
       - PORT=8000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
-      - AXION_API_KEY=${AXION_API_KEY:-}
+      - OPALZERO_API_KEY=${OPALZERO_API_KEY:-}
     volumes:
-      - axion-missions:/app/missions
-      - axion-uploads:/app/uploads
+      - opalzero-missions:/app/missions
+      - opalzero-uploads:/app/uploads
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -25,5 +25,5 @@ services:
       start_period: 10s
 
 volumes:
-  axion-missions:
-  axion-uploads:
+  opalzero-missions:
+  opalzero-uploads:
