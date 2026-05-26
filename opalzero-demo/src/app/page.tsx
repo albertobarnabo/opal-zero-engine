@@ -12,8 +12,8 @@ import { MODEL_CATALOG, type ModelId } from "@/data/models";
 import { ClarifyModal } from "@/components/ClarifyModal";
 import { ModeSelector } from "@/components/ModeSelector";
 import { OrchestrationGraph } from "@/components/OrchestrationGraph";
-import { AxionClient } from "@axion/sdk";
-import { useMission } from "@axion/sdk/react";
+import { OpalZeroClient } from "@opalzero/sdk";
+import { useMission } from "@opalzero/sdk/react";
 import type {
   MissionEvent,
   TaskStartedEvent,
@@ -23,7 +23,7 @@ import type {
   MissionCompleteEvent,
   MissionFailedEvent,
   AwaitingFeedbackEvent,
-} from "@axion/sdk";
+} from "@opalzero/sdk";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -176,24 +176,24 @@ function applyDesignTokens(tokens: DesignTokens) {
   const lum = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
   const accentFg = lum > 0.35 ? "#07090c" : "#f0f4f8";
 
-  root.style.setProperty("--axion-accent",       tokens.primary_accent);
-  root.style.setProperty("--axion-accent-rgb",   `${r},${g},${b}`);
-  root.style.setProperty("--axion-accent-fg",    accentFg);
-  root.style.setProperty("--axion-blur",         `${blur}px`);
-  root.style.setProperty("--axion-glass-bg",     `rgba(255,255,255,${bgAlpha})`);
-  root.style.setProperty("--axion-glass-border", `rgba(255,255,255,${borderAlpha})`);
-  root.style.setProperty("--axion-glass-inset",  `0 1px 0 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.05), 0 40px 80px -30px rgba(0,0,0,0.70)`);
-  root.style.setProperty("--axion-glow",         `rgba(${r},${g},${b},0.35)`);
-  root.style.setProperty("--axion-pad",          compact ? "16px" : "24px");
-  root.style.setProperty("--axion-gap",          compact ? "20px" : "36px");
-  root.style.setProperty("--axion-radius",       `${radius}px`);
+  root.style.setProperty("--opalzero-accent",       tokens.primary_accent);
+  root.style.setProperty("--opalzero-accent-rgb",   `${r},${g},${b}`);
+  root.style.setProperty("--opalzero-accent-fg",    accentFg);
+  root.style.setProperty("--opalzero-blur",         `${blur}px`);
+  root.style.setProperty("--opalzero-glass-bg",     `rgba(255,255,255,${bgAlpha})`);
+  root.style.setProperty("--opalzero-glass-border", `rgba(255,255,255,${borderAlpha})`);
+  root.style.setProperty("--opalzero-glass-inset",  `0 1px 0 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.05), 0 40px 80px -30px rgba(0,0,0,0.70)`);
+  root.style.setProperty("--opalzero-glow",         `rgba(${r},${g},${b},0.35)`);
+  root.style.setProperty("--opalzero-pad",          compact ? "16px" : "24px");
+  root.style.setProperty("--opalzero-gap",          compact ? "20px" : "36px");
+  root.style.setProperty("--opalzero-radius",       `${radius}px`);
 }
 
 function resetDesignTokens() {
   const props = [
-    "--axion-accent", "--axion-accent-rgb", "--axion-accent-fg", "--axion-blur",
-    "--axion-glass-bg", "--axion-glass-border", "--axion-glass-inset", "--axion-glow",
-    "--axion-pad", "--axion-gap", "--axion-radius",
+    "--opalzero-accent", "--opalzero-accent-rgb", "--opalzero-accent-fg", "--opalzero-blur",
+    "--opalzero-glass-bg", "--opalzero-glass-border", "--opalzero-glass-inset", "--opalzero-glow",
+    "--opalzero-pad", "--opalzero-gap", "--opalzero-radius",
   ];
   props.forEach((p) => document.documentElement.style.removeProperty(p));
 }
@@ -582,7 +582,7 @@ export default function Home() {
   const hookClient = useMemo(
     () => typeof window !== "undefined"
       ? buildClient()
-      : new AxionClient({ baseUrl: "http://localhost:8080" }),
+      : new OpalZeroClient({ baseUrl: "http://localhost:8080" }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [settingsOpen]
   );
@@ -594,7 +594,7 @@ export default function Home() {
   const fetchError = missionHook.error ?? localFetchError;
 
   const [configStatus, setConfigStatus] = useState<{ openai: boolean; tavily: boolean; alpha_vantage?: boolean } | null>(null);
-  const [draftAxionKey, setDraftAxionKey] = useState("");
+  const [draftOpalzeroKey, setDraftOpalzeroKey] = useState("");
   const [draftOpenAI, setDraftOpenAI] = useState("");
   const [draftTavily, setDraftTavily] = useState("");
   const [draftAlphaVantage, setDraftAlphaVantage] = useState("");
@@ -771,11 +771,11 @@ export default function Home() {
   // auto-open the settings drawer when no OpenAI key is configured anywhere.
   useEffect(() => {
     function hydrate(openai: boolean) {
-      const storedAxionKey = localStorage.getItem("axion_api_key") ?? "";
-      const storedOpenAI = localStorage.getItem("axion_openai_key") ?? "";
-      const storedTavily       = localStorage.getItem("axion_tavily_key")        ?? "";
-      const storedAlphaVantage = localStorage.getItem("axion_alpha_vantage_key") ?? "";
-      if (storedAxionKey)    setDraftAxionKey(storedAxionKey);
+      const storedOpalzeroKey = localStorage.getItem("opalzero_api_key") ?? "";
+      const storedOpenAI = localStorage.getItem("opalzero_openai_key") ?? "";
+      const storedTavily       = localStorage.getItem("opalzero_tavily_key")        ?? "";
+      const storedAlphaVantage = localStorage.getItem("opalzero_alpha_vantage_key") ?? "";
+      if (storedOpalzeroKey)    setDraftOpalzeroKey(storedOpalzeroKey);
       if (storedOpenAI)      setDraftOpenAI(storedOpenAI);
       if (storedTavily)      setDraftTavily(storedTavily);
       if (storedAlphaVantage) setDraftAlphaVantage(storedAlphaVantage);
@@ -892,7 +892,7 @@ export default function Home() {
 
     const title = status === "complete" ? "Mission complete" : "Mission failed";
     const body  = intentText.length > 80 ? intentText.slice(0, 77) + "…" : intentText;
-    const icon  = "/axion-logo.png";
+    const icon  = "/opalzero-logo.png";
 
     try {
       const n = new Notification(title, { body, icon });
@@ -903,14 +903,14 @@ export default function Home() {
     }
   }
 
-  /** Builds a fully-configured AxionClient from current localStorage keys. */
-  function buildClient(): AxionClient {
-    return new AxionClient({
+  /** Builds a fully-configured OpalZeroClient from current localStorage keys. */
+  function buildClient(): OpalZeroClient {
+    return new OpalZeroClient({
       baseUrl:   "http://localhost:8080",
-      apiKey:    localStorage.getItem("axion_api_key")    ?? undefined,
-      openAiKey: localStorage.getItem("axion_openai_key") ?? undefined,
-      tavilyKey:       localStorage.getItem("axion_tavily_key")        ?? undefined,
-      alphaVantageKey: localStorage.getItem("axion_alpha_vantage_key") ?? undefined,
+      apiKey:    localStorage.getItem("opalzero_api_key")    ?? undefined,
+      openAiKey: localStorage.getItem("opalzero_openai_key") ?? undefined,
+      tavilyKey:       localStorage.getItem("opalzero_tavily_key")        ?? undefined,
+      alphaVantageKey: localStorage.getItem("opalzero_alpha_vantage_key") ?? undefined,
     });
   }
 
@@ -923,8 +923,8 @@ export default function Home() {
       setIsClarifying(true);
       try {
         const clarifyHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        const storedKey     = localStorage.getItem("axion_api_key");
-        const storedOpenAI  = localStorage.getItem("axion_openai_key");
+        const storedKey     = localStorage.getItem("opalzero_api_key");
+        const storedOpenAI  = localStorage.getItem("opalzero_openai_key");
         if (storedKey)    clarifyHeaders["X-Axion-Key"]  = storedKey;
         if (storedOpenAI) clarifyHeaders["X-OpenAI-Key"] = storedOpenAI;
 
@@ -1229,7 +1229,7 @@ export default function Home() {
   function dotColorForType(type: string): string {
     if (type === "task_completed")   return "rgba(74,222,128,0.7)";
     if (type === "task_failed")      return "rgba(248,113,113,0.7)";
-    if (type === "mission_complete") return "var(--axion-accent, #a7cadc)";
+    if (type === "mission_complete") return "var(--opalzero-accent, #a7cadc)";
     if (type === "task_started")     return "rgba(255,255,255,0.25)";
     return "rgba(255,255,255,0.15)";
   }
@@ -1244,11 +1244,11 @@ export default function Home() {
   // ── Slash commands ────────────────────────────────────────────────────────────
   const SLASH_COMMANDS = [
     { cmd: "/export md",   icon: "↓", desc: "Download mission results as Markdown",  accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "md").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "md").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`opalzero-${id}.md`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/export csv",  icon: "↓", desc: "Download mission results as CSV",        accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "csv").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "csv").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`opalzero-${id}.csv`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/export html", icon: "↓", desc: "Download mission results as HTML page",  accent: "#6ee7b7", category: "export"   as const,
-      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "html").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`axion-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
+      run: () => { const id = activeMissionId ?? missionMeta?.mission_id; if (id) { buildClient().missions.export(id, "html").then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=`opalzero-${id}.html`;a.click();URL.revokeObjectURL(u);}); } } },
     { cmd: "/clear",       icon: "✕", desc: "Clear the current mission and start fresh", accent: "#f87171", category: "mission" as const,
       run: () => { newMission(); } },
     { cmd: "/memo",        icon: "◈", desc: "Save a note about this mission",         accent: "#a7cadc", category: "memo"    as const,
@@ -1349,9 +1349,9 @@ export default function Home() {
                 fontSize: 12,
                 fontWeight: 600,
                 color: i === slashPopoverIndex
-                  ? "var(--axion-accent, #a7cadc)"
+                  ? "var(--opalzero-accent, #a7cadc)"
                   : "rgba(255,255,255,0.75)",
-                fontFamily: "var(--axion-font-mono, monospace)",
+                fontFamily: "var(--opalzero-font-mono, monospace)",
                 minWidth: 110,
                 flexShrink: 0,
               }}>
@@ -1403,8 +1403,8 @@ export default function Home() {
     <div
       className={`relative p-[1.5px] rounded-2xl ${
         isStreaming
-          ? "axion-light-trace-active axion-breathe-glow"
-          : "axion-light-trace"
+          ? "opalzero-light-trace-active opalzero-breathe-glow"
+          : "opalzero-light-trace"
       }`}
       style={{
         boxShadow: "0 8px 50px rgba(0,0,0,0.70), 0 0 0 1px rgba(255,255,255,0.06)",
@@ -1447,7 +1447,7 @@ export default function Home() {
             color: isUploading || isStreaming
               ? "rgba(255,255,255,0.22)"
               : uploadedFile
-              ? "var(--axion-accent, #a7cadc)"
+              ? "var(--opalzero-accent, #a7cadc)"
               : "rgba(255,255,255,0.45)",
             padding: 0,
           }}
@@ -1458,7 +1458,7 @@ export default function Home() {
           onMouseLeave={(e) => {
             if (!isUploading && !isStreaming)
               (e.currentTarget as HTMLButtonElement).style.color = uploadedFile
-                ? "var(--axion-accent, #a7cadc)"
+                ? "var(--opalzero-accent, #a7cadc)"
                 : "rgba(255,255,255,0.45)";
           }}
         >
@@ -1680,11 +1680,11 @@ export default function Home() {
           style={{
             background: isStreaming || isClarifying
               ? "rgba(255,255,255,0.06)"
-              : "var(--axion-accent, #a7cadc)",
-            color: isStreaming || isClarifying ? "rgba(255,255,255,0.4)" : "var(--axion-accent-fg, #07090c)",
+              : "var(--opalzero-accent, #a7cadc)",
+            color: isStreaming || isClarifying ? "rgba(255,255,255,0.4)" : "var(--opalzero-accent-fg, #07090c)",
             boxShadow: isStreaming || isClarifying
               ? "none"
-              : "0 0 20px rgba(var(--axion-accent-rgb, 167,202,220), 0.30)",
+              : "0 0 20px rgba(var(--opalzero-accent-rgb, 167,202,220), 0.30)",
           }}
         >
           {isStreaming ? "Running…" : isClarifying ? "Checking…" : "Execute"}
@@ -1697,29 +1697,29 @@ export default function Home() {
   // ── Settings helpers ─────────────────────────────────────────────────────────
 
   function saveSettings() {
-    const axionKeyTrimmed      = draftAxionKey.trim();
+    const opalzeroKeyTrimmed      = draftOpalzeroKey.trim();
     const openAITrimmed        = draftOpenAI.trim();
     const tavilyTrimmed        = draftTavily.trim();
     const alphaVantageTrimmed  = draftAlphaVantage.trim();
-    if (axionKeyTrimmed) {
-      localStorage.setItem("axion_api_key", axionKeyTrimmed);
+    if (opalzeroKeyTrimmed) {
+      localStorage.setItem("opalzero_api_key", opalzeroKeyTrimmed);
     } else {
-      localStorage.removeItem("axion_api_key");
+      localStorage.removeItem("opalzero_api_key");
     }
     if (openAITrimmed) {
-      localStorage.setItem("axion_openai_key", openAITrimmed);
+      localStorage.setItem("opalzero_openai_key", openAITrimmed);
     } else {
-      localStorage.removeItem("axion_openai_key");
+      localStorage.removeItem("opalzero_openai_key");
     }
     if (tavilyTrimmed) {
-      localStorage.setItem("axion_tavily_key", tavilyTrimmed);
+      localStorage.setItem("opalzero_tavily_key", tavilyTrimmed);
     } else {
-      localStorage.removeItem("axion_tavily_key");
+      localStorage.removeItem("opalzero_tavily_key");
     }
     if (alphaVantageTrimmed) {
-      localStorage.setItem("axion_alpha_vantage_key", alphaVantageTrimmed);
+      localStorage.setItem("opalzero_alpha_vantage_key", alphaVantageTrimmed);
     } else {
-      localStorage.removeItem("axion_alpha_vantage_key");
+      localStorage.removeItem("opalzero_alpha_vantage_key");
     }
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 2000);
@@ -1737,7 +1737,7 @@ export default function Home() {
       buildClient().missions.export(id, "md").then(b => {
         const u = URL.createObjectURL(b);
         const a = document.createElement("a");
-        a.href = u; a.download = `axion-${id}.md`; a.click(); URL.revokeObjectURL(u);
+        a.href = u; a.download = `opalzero-${id}.md`; a.click(); URL.revokeObjectURL(u);
       }).catch(() => missionState && (downloadMarkdownFallback()));
     }
   }
@@ -1750,7 +1750,7 @@ export default function Home() {
     }
     const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `axion-report.md`; a.click(); URL.revokeObjectURL(url);
+    const a = document.createElement("a"); a.href = url; a.download = `opalzero-report.md`; a.click(); URL.revokeObjectURL(url);
   }
 
 
@@ -1773,7 +1773,7 @@ export default function Home() {
         }}
       >
         <div
-          className="axion-glass"
+          className="opalzero-glass"
           style={{
             borderRadius: 999,
             height: 54,
@@ -1793,7 +1793,7 @@ export default function Home() {
               gap: 8,
               color: "rgba(255,255,255,0.82)",
               textDecoration: "none",
-              fontFamily: "var(--axion-font-display)",
+              fontFamily: "var(--opalzero-font-display)",
               fontWeight: 600,
               fontSize: 15,
               letterSpacing: "-0.02em",
@@ -1858,13 +1858,13 @@ export default function Home() {
                   padding: "5px 14px",
                   borderRadius: 999,
                   background: refineNavOpen
-                    ? "rgba(var(--axion-accent-rgb,167,202,220),0.15)"
+                    ? "rgba(var(--opalzero-accent-rgb,167,202,220),0.15)"
                     : "rgba(255,255,255,0.07)",
                   border: `0.5px solid ${refineNavOpen
-                    ? "rgba(var(--axion-accent-rgb,167,202,220),0.45)"
+                    ? "rgba(var(--opalzero-accent-rgb,167,202,220),0.45)"
                     : "rgba(255,255,255,0.12)"}`,
                   color: isRefining
-                    ? "var(--axion-accent,#a7cadc)"
+                    ? "var(--opalzero-accent,#a7cadc)"
                     : "rgba(255,255,255,0.72)",
                   fontSize: 12,
                   fontWeight: 500,
@@ -1876,7 +1876,7 @@ export default function Home() {
                 {isRefining ? (
                   <div style={{
                     width: 10, height: 10, borderRadius: "50%",
-                    border: "1.5px solid var(--axion-accent,#a7cadc)",
+                    border: "1.5px solid var(--opalzero-accent,#a7cadc)",
                     borderTopColor: "transparent",
                     animation: "spin 0.8s linear infinite",
                   }} />
@@ -2010,7 +2010,7 @@ export default function Home() {
                   color: "rgba(255,255,255,0.90)", fontSize: 14,
                   lineHeight: "1.55", outline: "none", resize: "none",
                   minHeight: 24, maxHeight: 120, overflow: "hidden",
-                  fontFamily: "var(--axion-font-main)",
+                  fontFamily: "var(--opalzero-font-main)",
                 }}
                 className="placeholder-gray-500"
               />
@@ -2022,8 +2022,8 @@ export default function Home() {
                 disabled={!refineNavText.trim()}
                 style={{
                   alignSelf: "flex-end", padding: "6px 16px", borderRadius: 9,
-                  background: refineNavText.trim() ? "var(--axion-accent,#a7cadc)" : "rgba(255,255,255,0.08)",
-                  color: refineNavText.trim() ? "var(--axion-accent-fg,#07090c)" : "rgba(255,255,255,0.28)",
+                  background: refineNavText.trim() ? "var(--opalzero-accent,#a7cadc)" : "rgba(255,255,255,0.08)",
+                  color: refineNavText.trim() ? "var(--opalzero-accent-fg,#07090c)" : "rgba(255,255,255,0.28)",
                   fontSize: 12, fontWeight: 700,
                   cursor: refineNavText.trim() ? "pointer" : "default",
                   transition: "background 0.15s, color 0.15s",
@@ -2087,7 +2087,7 @@ export default function Home() {
               <div className="grid-faint" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
               {/* Version badge */}
               <motion.span
-                className="axion-mono-badge"
+                className="opalzero-mono-badge"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.06, duration: 0.3 }}
@@ -2102,7 +2102,7 @@ export default function Home() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.12, duration: 0.4 }}
                 style={{
-                  fontFamily: "var(--axion-font-display)",
+                  fontFamily: "var(--opalzero-font-display)",
                   fontSize: "clamp(4rem, 10vw, 7rem)",
                   fontWeight: 400,
                   letterSpacing: "-0.025em",
@@ -2192,7 +2192,7 @@ export default function Home() {
                 maxWidth: 560,
                 lineHeight: 1.45,
                 letterSpacing: "-0.02em",
-                fontFamily: "var(--axion-font-display)",
+                fontFamily: "var(--opalzero-font-display)",
                 marginBottom: 8,
               }}>
                 {intent}
@@ -2272,7 +2272,7 @@ export default function Home() {
                         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "rgba(110,231,183,0.70)" }}>
                           Mission Trace
                         </span>
-                        <span style={{ fontSize: 10, color: "rgba(167,202,220,0.45)", fontFamily: "var(--axion-font-mono, monospace)" }}>
+                        <span style={{ fontSize: 10, color: "rgba(167,202,220,0.45)", fontFamily: "var(--opalzero-font-mono, monospace)" }}>
                           {agentCount} agent{agentCount !== 1 ? "s" : ""}
                           {totalSec ? ` · ${totalSec}s total` : ""}
                         </span>
@@ -2302,7 +2302,7 @@ export default function Home() {
                 );
                 return blueprint.components.length > 0 ? (
                   <div
-                    className={missionStatus === "complete" && !isRefining ? "axion-sheen-wrapper" : ""}
+                    className={missionStatus === "complete" && !isRefining ? "opalzero-sheen-wrapper" : ""}
                     style={{ padding: "0 24px", maxWidth: 1280, margin: "0 auto" }}
                   >
                     {/* Sources pill row */}
@@ -2317,7 +2317,7 @@ export default function Home() {
                               href={s.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="axion-source-pill"
+                              className="opalzero-source-pill"
                             >
                               {s.label} ↗
                             </a>
@@ -2405,7 +2405,7 @@ export default function Home() {
                           onClick={() => setShowRefinementHistory(v => !v)}
                           style={{ width: "100%", padding: "9px 14px", display: "flex", alignItems: "center", gap: 8, background: "transparent", cursor: "pointer", textAlign: "left" }}
                         >
-                          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--axion-accent,rgba(167,202,220,0.70))" }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: "var(--opalzero-accent,rgba(167,202,220,0.70))" }}>
                             Refinement history ({refinementHistory.length})
                           </span>
                           <span style={{ flex: 1 }} />
@@ -2421,8 +2421,8 @@ export default function Home() {
                             >
                               <div style={{ padding: "8px 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
                                 {refinementHistory.map((round, ri) => (
-                                  <div key={ri} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 10px", borderRadius: 8, background: "var(--axion-glass-bg,rgba(255,255,255,0.04))", borderLeft: "2px solid var(--axion-accent,#a7cadc)" }}>
-                                    <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 5, background: "rgba(167,202,220,0.18)", border: "0.5px solid rgba(167,202,220,0.35)", color: "var(--axion-accent,#a7cadc)", lineHeight: 1.5, marginTop: 1 }}>R{ri + 1}</span>
+                                  <div key={ri} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 10px", borderRadius: 8, background: "var(--opalzero-glass-bg,rgba(255,255,255,0.04))", borderLeft: "2px solid var(--opalzero-accent,#a7cadc)" }}>
+                                    <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 5, background: "rgba(167,202,220,0.18)", border: "0.5px solid rgba(167,202,220,0.35)", color: "var(--opalzero-accent,#a7cadc)", lineHeight: 1.5, marginTop: 1 }}>R{ri + 1}</span>
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <p style={{ fontSize: 12, color: "rgba(255,255,255,0.78)", fontWeight: 500, lineHeight: 1.4, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as React.CSSProperties}>{round.intent}</p>
                                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -2430,7 +2430,7 @@ export default function Home() {
                                         {round.newPayloadKeys.length === 0 ? (
                                           <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.28)", fontWeight: 600 }}>no new data</span>
                                         ) : (
-                                          <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(167,202,220,0.12)", border: "0.5px solid rgba(167,202,220,0.25)", color: "var(--axion-accent,#a7cadc)", fontWeight: 600 }}>+{round.newPayloadKeys.length} new key{round.newPayloadKeys.length !== 1 ? "s" : ""}</span>
+                                          <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(167,202,220,0.12)", border: "0.5px solid rgba(167,202,220,0.25)", color: "var(--opalzero-accent,#a7cadc)", fontWeight: 600 }}>+{round.newPayloadKeys.length} new key{round.newPayloadKeys.length !== 1 ? "s" : ""}</span>
                                         )}
                                       </div>
                                     </div>
@@ -2479,7 +2479,7 @@ export default function Home() {
                 return (
                   <div style={{ padding: "0 24px", maxWidth: 960, margin: "0 auto", marginTop: 24 }}>
                     {missionState && (
-                      <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(147,153,160,0.45)", fontFamily: "var(--axion-font-mono)", marginBottom: 12 }}>
+                      <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(147,153,160,0.45)", fontFamily: "var(--opalzero-font-mono)", marginBottom: 12 }}>
                         Agent Reasoning
                       </p>
                     )}
@@ -2495,14 +2495,14 @@ export default function Home() {
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.25 }}
-                            className="rounded-2xl axion-grain"
+                            className="rounded-2xl opalzero-grain"
                             style={{
                               background: "linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.016))",
                               border: `1px solid rgba(255,255,255,0.08)`,
                               borderLeft: `3px solid ${accent.replace("border-","").replace("-700","") || "rgba(255,255,255,0.18)"}`,
                               backdropFilter: "blur(28px) saturate(130%)",
                               WebkitBackdropFilter: "blur(28px) saturate(130%)",
-                              padding: "var(--axion-pad,20px)",
+                              padding: "var(--opalzero-pad,20px)",
                             }}
                           >
                             <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.80)", marginBottom: 10 }}>
@@ -2554,8 +2554,8 @@ export default function Home() {
                 onClick={newMission}
                 style={{
                   marginTop: 8, padding: "9px 22px", borderRadius: 999,
-                  background: "var(--axion-accent,#a7cadc)",
-                  color: "var(--axion-accent-fg,#07090c)",
+                  background: "var(--opalzero-accent,#a7cadc)",
+                  color: "var(--opalzero-accent-fg,#07090c)",
                   fontWeight: 600, fontSize: 13, cursor: "pointer",
                   boxShadow: "0 0 20px rgba(167,202,220,0.25)",
                 }}
@@ -2597,7 +2597,7 @@ export default function Home() {
               justifyContent: "center",
               cursor: "pointer",
               fontSize: 13,
-              fontFamily: "var(--axion-font-mono)",
+              fontFamily: "var(--opalzero-font-mono)",
               letterSpacing: "-0.02em",
               transition: "background 0.15s, border-color 0.15s, color 0.15s",
             }}
@@ -2707,7 +2707,7 @@ export default function Home() {
             </div>
 
             {[
-              { label: "Axion API Key", value: draftAxionKey, setter: setDraftAxionKey, placeholder: "axion_sk_...", hint: "Required when the server has AXION_API_KEY set. Leave blank for local dev.", success: null },
+              { label: "OpalZero API Key", value: draftOpalzeroKey, setter: setDraftOpalzeroKey, placeholder: "opalzero_sk_...", hint: "Required when the server has OPALZERO_API_KEY set. Leave blank for local dev.", success: null },
               { label: "OpenAI API Key", value: draftOpenAI, setter: setDraftOpenAI, placeholder: "sk-...", hint: configStatus?.openai && !draftOpenAI ? "✓ Configured via environment" : "Required for all missions.", success: configStatus?.openai && !draftOpenAI ? true : null },
               { label: "Tavily Search Key", value: draftTavily, setter: setDraftTavily, placeholder: "tvly-...", hint: configStatus?.tavily && !draftTavily ? "✓ Configured via environment" : "Optional — enables live web search.", success: configStatus?.tavily && !draftTavily ? true : null },
               { label: "Alpha Vantage Key", value: draftAlphaVantage, setter: setDraftAlphaVantage, placeholder: "e.g. A1B2C3D4E5F6G7H8", hint: configStatus?.alpha_vantage && !draftAlphaVantage ? "✓ Configured via environment" : "Optional — enables real-time stock data (get_company_overview, get_price_history, etc.).", success: configStatus?.alpha_vantage && !draftAlphaVantage ? true : null },
@@ -2720,14 +2720,14 @@ export default function Home() {
                   onChange={e => field.setter(e.target.value)}
                   placeholder={field.placeholder}
                   style={{ width: "100%", background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: "10px 14px", color: "rgba(255,255,255,0.9)", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
-                  onFocus={e => { e.currentTarget.style.borderColor = "var(--axion-accent,#a7cadc)"; }}
+                  onFocus={e => { e.currentTarget.style.borderColor = "var(--opalzero-accent,#a7cadc)"; }}
                   onBlur={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
                 />
                 <p style={{ fontSize: 11, color: field.success ? "rgba(74,222,128,0.8)" : "rgba(255,255,255,0.28)", marginTop: 6, margin: "6px 0 0" }}>{field.hint}</p>
               </div>
             ))}
 
-            <button onClick={saveSettings} style={{ width: "100%", background: "var(--axion-accent,#a7cadc)", color: "#000", fontWeight: 600, fontSize: 14, borderRadius: 10, padding: "11px 0", marginTop: 8, border: "none", cursor: "pointer", transition: "opacity 0.15s" }}
+            <button onClick={saveSettings} style={{ width: "100%", background: "var(--opalzero-accent,#a7cadc)", color: "#000", fontWeight: 600, fontSize: 14, borderRadius: 10, padding: "11px 0", marginTop: 8, border: "none", cursor: "pointer", transition: "opacity 0.15s" }}
               onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.85"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}>
               Save
@@ -2822,7 +2822,7 @@ export default function Home() {
 
             {/* New Mission button */}
             <div style={{ padding: "12px 12px 6px", flexShrink: 0 }}>
-              <button onClick={newMission} style={{ width: "100%", padding: "12px 16px", borderRadius: 14, background: "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))", color: "rgba(235,239,242,0.92)", fontWeight: 600, fontSize: 14, fontFamily: "var(--axion-font-main)", textAlign: "left", display: "flex", alignItems: "center", gap: 10, border: "1px solid rgba(255,255,255,0.11)", backdropFilter: "blur(28px) saturate(130%)", WebkitBackdropFilter: "blur(28px) saturate(130%)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.04)", transition: "background 0.2s, border-color 0.2s", cursor: "pointer" }}
+              <button onClick={newMission} style={{ width: "100%", padding: "12px 16px", borderRadius: 14, background: "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))", color: "rgba(235,239,242,0.92)", fontWeight: 600, fontSize: 14, fontFamily: "var(--opalzero-font-main)", textAlign: "left", display: "flex", alignItems: "center", gap: 10, border: "1px solid rgba(255,255,255,0.11)", backdropFilter: "blur(28px) saturate(130%)", WebkitBackdropFilter: "blur(28px) saturate(130%)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.04)", transition: "background 0.2s, border-color 0.2s", cursor: "pointer" }}
                 onMouseEnter={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.05))"; el.style.borderColor = "rgba(255,255,255,0.16)"; }}
                 onMouseLeave={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.03))"; el.style.borderColor = "rgba(255,255,255,0.11)"; }}>
                 <span style={{ fontSize: 18, lineHeight: 1, opacity: 0.80 }}>＋</span>
@@ -2838,7 +2838,7 @@ export default function Home() {
                   <input type="text" value={historyQuery} onChange={e => setHistoryQuery(e.target.value)}
                     onFocus={() => setHistoryQueryFocused(true)} onBlur={() => setHistoryQueryFocused(false)}
                     placeholder="Search missions…"
-                    style={{ width: "100%", padding: "7px 28px", borderRadius: 10, background: historyQueryFocused ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)", border: `0.5px solid ${historyQueryFocused ? "rgba(var(--axion-accent-rgb,167,202,220),0.45)" : "rgba(255,255,255,0.10)"}`, color: "rgba(255,255,255,0.82)", fontSize: 12, outline: "none", transition: "background 0.15s, border-color 0.15s", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "7px 28px", borderRadius: 10, background: historyQueryFocused ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)", border: `0.5px solid ${historyQueryFocused ? "rgba(var(--opalzero-accent-rgb,167,202,220),0.45)" : "rgba(255,255,255,0.10)"}`, color: "rgba(255,255,255,0.82)", fontSize: 12, outline: "none", transition: "background 0.15s, border-color 0.15s", boxSizing: "border-box" }}
                   />
                   {historyQuery && (
                     <button onClick={() => setHistoryQuery("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 13, lineHeight: 1, color: "rgba(255,255,255,0.35)", background: "none", border: "none", cursor: "pointer", padding: 2 }}>×</button>

@@ -125,11 +125,11 @@ export function ClarifyModal({
               padding: "8px 20px",
               borderRadius: 8,
               background: canSubmit
-                ? "var(--axion-accent, #a7cadc)"
+                ? "var(--opalzero-accent, #a7cadc)"
                 : "rgba(255,255,255,0.07)",
               border: "none",
               color: canSubmit
-                ? "var(--axion-accent-fg, #07090c)"
+                ? "var(--opalzero-accent-fg, #07090c)"
                 : "rgba(255,255,255,0.25)",
               fontSize: 13,
               fontWeight: 700,

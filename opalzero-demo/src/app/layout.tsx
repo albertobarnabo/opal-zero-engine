@@ -47,8 +47,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             position: "fixed",
             inset: 0,
             zIndex: -2,
-            backgroundColor: "var(--axion-bg)",
-            backgroundImage: "var(--axion-gradient-mesh)",
+            backgroundColor: "var(--opalzero-bg)",
+            backgroundImage: "var(--opalzero-gradient-mesh)",
             pointerEvents: "none",
           }}
         />

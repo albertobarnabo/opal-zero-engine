@@ -87,7 +87,7 @@ export function ModelSelector({ value, onChange, disabled = false }: ModelSelect
                   <span style={{
                     marginLeft: "auto",
                     fontSize: 10,
-                    color: "var(--axion-accent, #a7cadc)",
+                    color: "var(--opalzero-accent, #a7cadc)",
                     fontWeight: 700,
                   }}>
                     ✓

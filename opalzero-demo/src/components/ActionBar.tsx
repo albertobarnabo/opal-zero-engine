@@ -68,7 +68,7 @@ function downloadMarkdown(intent: string, data: Record<string, unknown>) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `axion-report-${Date.now()}.md`;
+  a.download = `opalzero-report-${Date.now()}.md`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -80,7 +80,7 @@ async function exportViaServer(missionId: string, format: "md" | "csv" | "html")
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `axion-report-${missionId}.${format}`;
+  a.download = `opalzero-report-${missionId}.${format}`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -161,7 +161,7 @@ export function ActionBar({
       icon: "⟳",
       label: isRefining ? "Refining…" : (refineOpen ? "Cancel Refine" : "Refine Mission"),
       desc: isRefining ? "Streaming refinement…" : "Add to this mission inline",
-      accent: "var(--axion-accent, #a7cadc)",
+      accent: "var(--opalzero-accent, #a7cadc)",
       onClick: () => {
         if (!isRefining) setRefineOpen(v => !v);
       },
@@ -198,8 +198,8 @@ export function ActionBar({
           <>
             <span style={{
               width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-              background: "var(--axion-accent, #a7cadc)",
-              boxShadow: "0 0 8px var(--axion-accent, #a7cadc)",
+              background: "var(--opalzero-accent, #a7cadc)",
+              boxShadow: "0 0 8px var(--opalzero-accent, #a7cadc)",
               animation: "neural-pulse 1.4s ease-in-out infinite",
             }} />
             <span style={{ fontSize: 9, color: "rgba(167,202,220,0.75)", fontWeight: 500 }}>
@@ -323,7 +323,7 @@ export function ActionBar({
                     minHeight: 24,
                     maxHeight: 120,
                     overflow: "hidden",
-                    fontFamily: "var(--axion-font-main)",
+                    fontFamily: "var(--opalzero-font-main)",
                   }}
                   className="placeholder-gray-500"
                 />
@@ -334,8 +334,8 @@ export function ActionBar({
                     alignSelf: "flex-end",
                     padding: "6px 16px",
                     borderRadius: 9,
-                    background: refineText.trim() ? "var(--axion-accent, #a7cadc)" : "rgba(255,255,255,0.08)",
-                    color: refineText.trim() ? "var(--axion-accent-fg, #07090c)" : "rgba(255,255,255,0.28)",
+                    background: refineText.trim() ? "var(--opalzero-accent, #a7cadc)" : "rgba(255,255,255,0.08)",
+                    color: refineText.trim() ? "var(--opalzero-accent-fg, #07090c)" : "rgba(255,255,255,0.28)",
                     fontSize: 12,
                     fontWeight: 700,
                     cursor: refineText.trim() ? "pointer" : "default",
@@ -402,7 +402,7 @@ export function ActionBar({
               background: "rgba(167,202,220,0.04)",
             }}
           >
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--axion-accent,#a7cadc)", animation: "neural-pulse 1.4s ease-in-out infinite", flexShrink: 0 }} />
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--opalzero-accent,#a7cadc)", animation: "neural-pulse 1.4s ease-in-out infinite", flexShrink: 0 }} />
             <p style={{ fontSize: 11, color: "rgba(255,255,255,0.50)" }}>
               Refinement in progress — new cards will appear in the bento grid above…
             </p>

@@ -80,20 +80,20 @@ export function ModeSelector({ onSelect }: ModeSelectorProps) {
     <>
       {/* Responsive grid — 2 cols on ≥640 px, 1 col below */}
       <style>{`
-        .axion-mode-grid {
+        .opalzero-mode-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
           gap: 16px;
           width: 100%;
         }
         @media (max-width: 639px) {
-          .axion-mode-grid {
+          .opalzero-mode-grid {
             grid-template-columns: 1fr;
           }
         }
       `}</style>
 
-      <div className="axion-mode-grid">
+      <div className="opalzero-mode-grid">
         {MODES.map((mode) => {
           const cardHovered = hoveredCard === mode.id;
 
@@ -129,7 +129,7 @@ export function ModeSelector({ onSelect }: ModeSelectorProps) {
               {/* Mode label */}
               <div
                 style={{
-                  fontFamily: "var(--axion-font-display)",
+                  fontFamily: "var(--opalzero-font-display)",
                   fontSize: 17,
                   fontWeight: 500,
                   color: "rgba(235,239,242,0.95)",

@@ -52,7 +52,7 @@ function detectDataKeys(data: Record<string, string | number>[], xKey: string): 
 }
 
 const SERIES_COLORS = [
-  "var(--axion-accent, #a7cadc)",
+  "var(--opalzero-accent, #a7cadc)",
   "#6ee7b7",
   "#fbbf24",
   "#c084fc",
@@ -65,7 +65,7 @@ function CustomTooltip({ active, payload, label }: any) {
   return (
     <div
       style={{
-        background: "var(--axion-card, rgba(10,14,20,0.97))",
+        background: "var(--opalzero-card, rgba(10,14,20,0.97))",
         border: "1px solid rgba(255,255,255,0.10)",
         borderRadius: "10px",
         padding: "8px 12px",
@@ -79,7 +79,7 @@ function CustomTooltip({ active, payload, label }: any) {
         {label}
       </p>
       {payload.map((entry: { name: string; value: number; color: string }, i: number) => (
-        <p key={i} style={{ fontFamily: "var(--axion-font-mono, monospace)", fontSize: 12, color: entry.color }}>
+        <p key={i} style={{ fontFamily: "var(--opalzero-font-mono, monospace)", fontSize: 12, color: entry.color }}>
           {entry.name}:{" "}
           <span style={{ color: "rgba(255,255,255,0.85)" }}>
             {typeof entry.value === "number" ? entry.value.toLocaleString() : entry.value}
@@ -111,13 +111,13 @@ export function ChartCard({ title, data, xKey, dataKeys, chartType }: ChartCardP
   return (
     <div
       style={{
-        background: "var(--axion-glass-bg)",
-        border: "1px solid var(--axion-glass-border)",
-        borderRadius: "var(--axion-radius)",
-        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        background: "var(--opalzero-glass-bg)",
+        border: "1px solid var(--opalzero-glass-border)",
+        borderRadius: "var(--opalzero-radius)",
+        backdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
         boxShadow: "var(--shadow-glass)",
-        padding: "var(--axion-pad, 20px)",
+        padding: "var(--opalzero-pad, 20px)",
       }}
     >
       {title && (

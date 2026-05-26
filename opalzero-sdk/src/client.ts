@@ -1,5 +1,5 @@
 import type {
-  AxionClientConfig,
+  OpalZeroClientConfig,
   MissionEvent,
   MissionSnapshot,
   MissionSummary,
@@ -8,11 +8,11 @@ import type {
 } from "./types";
 import { parseSSEStream } from "./stream";
 
-export class AxionClient {
+export class OpalZeroClient {
   private readonly base:    string;
   /** @internal */ readonly _headers: Record<string, string>;
 
-  constructor(config: AxionClientConfig) {
+  constructor(config: OpalZeroClientConfig) {
     this.base = config.baseUrl.replace(/\/$/, "");
     this._headers = { "Content-Type": "application/json" };
     if (config.apiKey)          this._headers["X-Axion-Key"]          = config.apiKey;

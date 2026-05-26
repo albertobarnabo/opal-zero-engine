@@ -5,28 +5,28 @@
 /* ── Design tokens ── exact match to landing page src/styles.css ─────────── */
 :root {
   /* Fonts — same as landing page */
-  --axion-font-display: var(--font-display, "Space Grotesk"), ui-sans-serif, system-ui, sans-serif;
-  --axion-font-main:    var(--font-sans, "Inter Tight"), ui-sans-serif, system-ui, sans-serif;
-  --axion-font-mono:    var(--font-mono, "JetBrains Mono"), "Geist Mono", ui-monospace, monospace;
+  --opalzero-font-display: var(--font-display, "Space Grotesk"), ui-sans-serif, system-ui, sans-serif;
+  --opalzero-font-main:    var(--font-sans, "Inter Tight"), ui-sans-serif, system-ui, sans-serif;
+  --opalzero-font-mono:    var(--font-mono, "JetBrains Mono"), "Geist Mono", ui-monospace, monospace;
 
   /* Accent — exact oklch from landing page */
-  --axion-accent:       oklch(0.82 0.045 230);
-  --axion-accent-rgb:   160, 200, 222;          /* approx sRGB for rgba() fallbacks */
-  --axion-accent-fg:    oklch(0.14 0.008 250);  /* landing --accent-foreground */
+  --opalzero-accent:       oklch(0.82 0.045 230);
+  --opalzero-accent-rgb:   160, 200, 222;          /* approx sRGB for rgba() fallbacks */
+  --opalzero-accent-fg:    oklch(0.14 0.008 250);  /* landing --accent-foreground */
 
-  /* Brand — from landing page --axion and --axion-glow */
-  --axion-brand:        oklch(0.84 0.045 225);
-  --axion-brand-glow:   oklch(0.88 0.06 215);
+  /* Brand — from landing page --opalzero and --opalzero-glow */
+  --opalzero-brand:        oklch(0.84 0.045 225);
+  --opalzero-brand-glow:   oklch(0.88 0.06 215);
 
   /* Glass geometry */
-  --axion-blur:         28px;
-  --axion-radius:       0.875rem;               /* landing --radius: 0.875rem = 14px */
+  --opalzero-blur:         28px;
+  --opalzero-radius:       0.875rem;               /* landing --radius: 0.875rem = 14px */
 
   /* Glass surfaces — exact values from landing .glass / .glass-strong */
-  --axion-glass-bg:     linear-gradient(180deg, oklch(1 0 0 / 4%), oklch(1 0 0 / 1.5%));
-  --axion-glass-border: oklch(1 0 0 / 8%);
-  --axion-glass-strong-bg:     linear-gradient(180deg, oklch(1 0 0 / 7%), oklch(1 0 0 / 3%));
-  --axion-glass-strong-border: oklch(1 0 0 / 11%);
+  --opalzero-glass-bg:     linear-gradient(180deg, oklch(1 0 0 / 4%), oklch(1 0 0 / 1.5%));
+  --opalzero-glass-border: oklch(1 0 0 / 8%);
+  --opalzero-glass-strong-bg:     linear-gradient(180deg, oklch(1 0 0 / 7%), oklch(1 0 0 / 3%));
+  --opalzero-glass-strong-border: oklch(1 0 0 / 11%);
 
   /* Shadows — exact from landing --shadow-glass and --shadow-glow */
   --shadow-glass:
@@ -36,28 +36,28 @@
   --shadow-glow: 0 0 90px -25px oklch(0.85 0.05 225 / 30%);
   --shadow-quiet: 0 30px 60px -30px oklch(0 0 0 / 65%);
 
-  /* Kept for legacy rgba() usage sites that reference --axion-glass-inset */
-  --axion-glass-inset:  var(--shadow-glass);
-  --axion-glow:         oklch(0.82 0.045 230 / 30%);
-  --axion-shadow-glow:  var(--shadow-glow);
+  /* Kept for legacy rgba() usage sites that reference --opalzero-glass-inset */
+  --opalzero-glass-inset:  var(--shadow-glass);
+  --opalzero-glow:         oklch(0.82 0.045 230 / 30%);
+  --opalzero-shadow-glow:  var(--shadow-glow);
 
   /* Gradient mesh — exact from landing page --gradient-mesh */
-  --axion-gradient-mesh:
+  --opalzero-gradient-mesh:
     radial-gradient(at 18% 8%,  oklch(0.30 0.025 240 / 55%) 0px, transparent 55%),
     radial-gradient(at 82% 0%,  oklch(0.26 0.020 230 / 45%) 0px, transparent 60%),
     radial-gradient(at 65% 95%, oklch(0.20 0.015 250 / 60%) 0px, transparent 55%);
 
   /* Surface colours — exact from landing :root */
-  --axion-bg:           oklch(0.135 0.008 250);
-  --axion-card:         oklch(0.19 0.010 250 / 60%);
-  --axion-popover:      oklch(0.17 0.010 250);
-  --axion-muted-fg:     oklch(0.68 0.012 250);
-  --axion-primary:      oklch(0.95 0.006 250);
-  --axion-destructive:  oklch(0.62 0.18 28);
+  --opalzero-bg:           oklch(0.135 0.008 250);
+  --opalzero-card:         oklch(0.19 0.010 250 / 60%);
+  --opalzero-popover:      oklch(0.17 0.010 250);
+  --opalzero-muted-fg:     oklch(0.68 0.012 250);
+  --opalzero-primary:      oklch(0.95 0.006 250);
+  --opalzero-destructive:  oklch(0.62 0.18 28);
 
   /* Spacing (overridden by applyDesignTokens) */
-  --axion-pad:          20px;
-  --axion-gap:          28px;
+  --opalzero-pad:          20px;
+  --opalzero-gap:          28px;
 }
 
 /* ── HTML + Body ─────────────────────────────────────────────────────────── */
@@ -65,7 +65,7 @@
    correctly even with overflow:hidden on both html and body. */
 html, body {
   background-color: transparent;
-  color: var(--axion-primary);
+  color: var(--opalzero-primary);
 }
 
 html {
@@ -73,7 +73,7 @@ html {
 }
 
 body {
-  font-family: var(--axion-font-main);
+  font-family: var(--opalzero-font-main);
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -83,11 +83,11 @@ body {
 /* Landing page ::selection */
 ::selection {
   background: oklch(0.82 0.045 230 / 35%);
-  color: var(--axion-primary);
+  color: var(--opalzero-primary);
 }
 
 /* ── Glass utility classes — exact copy of landing page .glass / .glass-strong */
-.axion-glass {
+.opalzero-glass {
   background: linear-gradient(180deg, oklch(1 0 0 / 4%), oklch(1 0 0 / 1.5%));
   backdrop-filter: blur(28px) saturate(130%);
   -webkit-backdrop-filter: blur(28px) saturate(130%);
@@ -95,7 +95,7 @@ body {
   box-shadow: var(--shadow-glass);
 }
 
-.axion-glass-strong {
+.opalzero-glass-strong {
   background: linear-gradient(180deg, oklch(1 0 0 / 7%), oklch(1 0 0 / 3%));
   backdrop-filter: blur(40px) saturate(150%);
   -webkit-backdrop-filter: blur(40px) saturate(150%);
@@ -133,7 +133,7 @@ body {
 }
 
 /* Always-on slow trace — subtle at rest */
-.axion-light-trace {
+.opalzero-light-trace {
   --lt-angle: 0deg;
   animation: lt-idle 9s linear infinite;
   background: conic-gradient(
@@ -147,15 +147,15 @@ body {
 }
 
 /* Streaming: bright, fast trace */
-.axion-light-trace-active {
+.opalzero-light-trace-active {
   --lt-angle: 0deg;
   animation: lt-active 2.4s linear infinite;
   background: conic-gradient(
     from var(--lt-angle),
     transparent 0%,
-    rgba(var(--axion-accent-rgb, 167,202,220), 0.20) 6%,
+    rgba(var(--opalzero-accent-rgb, 167,202,220), 0.20) 6%,
     rgba(255,255,255,0.35) 9%,
-    rgba(var(--axion-accent-rgb, 167,202,220), 0.18) 12%,
+    rgba(var(--opalzero-accent-rgb, 167,202,220), 0.18) 12%,
     transparent 20%
   );
 }
@@ -166,23 +166,23 @@ body {
 /* ── Neural Pulse — active-processing card border ────────────────────────── */
 @keyframes neural-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(var(--axion-accent-rgb, 167,202,220), 0),
+    box-shadow: 0 0 0 0 rgba(var(--opalzero-accent-rgb, 167,202,220), 0),
                 inset 0 1px 0 rgba(255,255,255,0.12);
-    border-color: rgba(var(--axion-accent-rgb, 167,202,220), 0.30);
+    border-color: rgba(var(--opalzero-accent-rgb, 167,202,220), 0.30);
   }
   50% {
-    box-shadow: 0 0 0 3px rgba(var(--axion-accent-rgb, 167,202,220), 0.18),
-                0 0 20px rgba(var(--axion-accent-rgb, 167,202,220), 0.14),
+    box-shadow: 0 0 0 3px rgba(var(--opalzero-accent-rgb, 167,202,220), 0.18),
+                0 0 20px rgba(var(--opalzero-accent-rgb, 167,202,220), 0.14),
                 inset 0 1px 0 rgba(255,255,255,0.16);
-    border-color: rgba(var(--axion-accent-rgb, 167,202,220), 0.65);
+    border-color: rgba(var(--opalzero-accent-rgb, 167,202,220), 0.65);
   }
 }
-.axion-neural-pulse {
+.opalzero-neural-pulse {
   animation: neural-pulse 1.4s ease-in-out infinite;
 }
 
 /* ── Grain texture overlay for cards ─────────────────────────────────────── */
-.axion-grain::after {
+.opalzero-grain::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -200,7 +200,7 @@ body {
   0%, 100% { filter: brightness(1) drop-shadow(0 0 0px rgba(167,202,220,0)); }
   50%       { filter: brightness(1.12) drop-shadow(0 0 18px rgba(167,202,220,0.22)); }
 }
-.axion-logo-pulse {
+.opalzero-logo-pulse {
   animation: logo-shimmer 5s ease-in-out infinite;
 }
 
@@ -211,7 +211,7 @@ body {
   100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-.axion-card-enter {
+.opalzero-card-enter {
   animation: spring-in 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
 }
 
@@ -221,12 +221,12 @@ body {
   100% { transform: translateX(220%)  skewX(-12deg); }
 }
 
-.axion-sheen-wrapper {
+.opalzero-sheen-wrapper {
   position: relative;
   overflow: hidden;
 }
 
-.axion-sheen-wrapper::after {
+.opalzero-sheen-wrapper::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -252,14 +252,14 @@ body {
   66%       { transform: translate(45px, 20px) scale(1.05); }
 }
 
-.axion-mesh {
+.opalzero-mesh {
   position: absolute;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
 }
 
-.axion-mesh-blob-1 {
+.opalzero-mesh-blob-1 {
   position: absolute;
   width: 700px; height: 700px;
   top: -120px; left: -180px;
@@ -269,7 +269,7 @@ body {
   animation: blob-drift-1 20s ease-in-out infinite;
 }
 
-.axion-mesh-blob-2 {
+.opalzero-mesh-blob-2 {
   position: absolute;
   width: 500px; height: 500px;
   bottom: 80px; right: -60px;
@@ -295,7 +295,7 @@ body {
   50%       { transform: translateY(-8px); }
 }
 
-.axion-float {
+.opalzero-float {
   animation: float-widget 6s ease-in-out infinite;
 }
 
@@ -314,22 +314,22 @@ body {
   0%, 100% {
     box-shadow:
       0 8px 40px rgba(0,0,0,0.60),
-      0 0 28px rgba(var(--axion-accent-rgb, 167,202,220), 0.10);
+      0 0 28px rgba(var(--opalzero-accent-rgb, 167,202,220), 0.10);
   }
   50% {
     box-shadow:
       0 8px 40px rgba(0,0,0,0.60),
-      0 0 72px rgba(var(--axion-accent-rgb, 167,202,220), 0.28),
-      0 28px 96px rgba(var(--axion-accent-rgb, 167,202,220), 0.10);
+      0 0 72px rgba(var(--opalzero-accent-rgb, 167,202,220), 0.28),
+      0 28px 96px rgba(var(--opalzero-accent-rgb, 167,202,220), 0.10);
   }
 }
 
-.axion-breathe-glow {
+.opalzero-breathe-glow {
   animation: breathe-glow 3.2s ease-in-out infinite;
 }
 
 /* ── Bento-Snap: reveal pin/dismiss controls on card hover ──────────────── */
-.axion-grain:hover .bento-snap-controls {
+.opalzero-grain:hover .bento-snap-controls {
   opacity: 1 !important;
   pointer-events: auto !important;
 }
@@ -346,21 +346,21 @@ body {
   100% { transform: translateX(230%)  skewX(-12deg); }
 }
 
-.axion-refined-card {
-  border-left: 2px solid var(--axion-accent, #a7cadc) !important;
+.opalzero-refined-card {
+  border-left: 2px solid var(--opalzero-accent, #a7cadc) !important;
   animation: refined-enter 0.42s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
   position: relative;
   overflow: hidden;
 }
 
-.axion-refined-card::before {
+.opalzero-refined-card::before {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
     105deg,
     transparent 38%,
-    rgba(var(--axion-accent-rgb, 167,202,220), 0.10) 50%,
+    rgba(var(--opalzero-accent-rgb, 167,202,220), 0.10) 50%,
     transparent 62%
   );
   pointer-events: none;
@@ -369,7 +369,7 @@ body {
 }
 
 /* Badge chip shown in the top-left corner of refined cards */
-.axion-refined-badge {
+.opalzero-refined-badge {
   position: absolute;
   top: 8px;
   left: 10px;
@@ -380,34 +380,34 @@ body {
   text-transform: uppercase;
   padding: 2px 7px;
   border-radius: 5px;
-  background: rgba(var(--axion-accent-rgb, 167,202,220), 0.15);
-  border: 0.5px solid rgba(var(--axion-accent-rgb, 167,202,220), 0.35);
-  color: var(--axion-accent, #a7cadc);
+  background: rgba(var(--opalzero-accent-rgb, 167,202,220), 0.15);
+  border: 0.5px solid rgba(var(--opalzero-accent-rgb, 167,202,220), 0.35);
+  color: var(--opalzero-accent, #a7cadc);
   pointer-events: none;
 }
 
 /* ── Heading style — display font with tight tracking ────────────────────── */
-.axion-heading {
-  font-family: var(--axion-font-display);
+.opalzero-heading {
+  font-family: var(--opalzero-font-display);
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.05;
 }
 
 /* ── Mono badge — version / kernel chip (landing page style) ─────────────── */
-.axion-mono-badge {
+.opalzero-mono-badge {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(var(--axion-accent-rgb, 167,202,220), 0.35);
-  font-family: var(--axion-font-mono);
+  border: 1px solid rgba(var(--opalzero-accent-rgb, 167,202,220), 0.35);
+  font-family: var(--opalzero-font-mono);
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--axion-accent, #a7cadc);
-  background: rgba(var(--axion-accent-rgb, 167,202,220), 0.06);
+  color: var(--opalzero-accent, #a7cadc);
+  background: rgba(var(--opalzero-accent-rgb, 167,202,220), 0.06);
 }
 
 ::-webkit-scrollbar        { width: 4px; }
@@ -417,24 +417,24 @@ body {
 
 /* ── Typewriter cursor ───────────────────────────────────────────────────── */
 
-.axion-cursor {
+.opalzero-cursor {
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: var(--axion-accent, #a7cadc);
+  background: var(--opalzero-accent, #a7cadc);
   margin-left: 2px;
   vertical-align: text-bottom;
-  animation: axion-blink 0.9s step-end infinite;
+  animation: opalzero-blink 0.9s step-end infinite;
 }
 
-@keyframes axion-blink {
+@keyframes opalzero-blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
 }
 
 /* ── Source pills ────────────────────────────────────────────────────────── */
 
-.axion-source-pill {
+.opalzero-source-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -443,20 +443,20 @@ body {
   border: 1px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.04);
   font-size: 11px;
-  color: var(--axion-accent, #a7cadc);
+  color: var(--opalzero-accent, #a7cadc);
   text-decoration: none;
   transition: background 0.2s, border-color 0.2s;
   white-space: nowrap;
 }
 
-.axion-source-pill:hover {
+.opalzero-source-pill:hover {
   background: rgba(255,255,255,0.08);
   border-color: rgba(255,255,255,0.22);
 }
 
 /* ── Scene description text (ImageCard — scene mode) ─────────────────────── */
 
-.axion-scene-text {
+.opalzero-scene-text {
   font-style: italic;
   color: rgba(255,255,255,0.55);
   font-size: 13px;
@@ -483,7 +483,7 @@ body {
 }
 
 .model-selector-trigger:hover:not(:disabled) {
-  border-color: var(--axion-accent);
+  border-color: var(--opalzero-accent);
   background: oklch(1 0 0 / 8%);
 }
 
@@ -554,7 +554,7 @@ body {
   font-size: 13px;
   color: rgba(255, 255, 255, 0.45);
   background: rgba(255, 255, 255, 0.04);
-  border-left: 2px solid var(--axion-accent, #a7cadc);
+  border-left: 2px solid var(--opalzero-accent, #a7cadc);
   padding: 8px 12px;
   border-radius: 4px;
   margin-bottom: 22px;
@@ -585,7 +585,7 @@ body {
 }
 
 .clarify-question input:focus {
-  border-color: var(--axion-accent, #a7cadc);
+  border-color: var(--opalzero-accent, #a7cadc);
   background: rgba(255, 255, 255, 0.07);
 }
 
@@ -594,7 +594,7 @@ body {
 }
 
 .clarify-required-star {
-  color: var(--axion-accent, #a7cadc);
+  color: var(--opalzero-accent, #a7cadc);
   margin-left: 3px;
 }
 
@@ -603,7 +603,7 @@ body {
   padding: 1px 6px;
   border-radius: 4px;
   background: rgba(167,202,220,0.18);
-  color: var(--axion-accent, #a7cadc);
+  color: var(--opalzero-accent, #a7cadc);
   border: 0.5px solid rgba(167,202,220,0.30);
   font-weight: 700;
   letter-spacing: 0.03em;

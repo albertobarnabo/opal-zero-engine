@@ -87,11 +87,11 @@ function StatusIcon({ status }: { status: AgentStatus }) {
             inset: 0,
             borderRadius: "50%",
             background: "rgba(99,179,237,1)",
-            animation: "axion-pulse 1.5s ease-in-out infinite",
+            animation: "opalzero-pulse 1.5s ease-in-out infinite",
           }}
         />
         <style>{`
-          @keyframes axion-pulse {
+          @keyframes opalzero-pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.5; transform: scale(1.4); }
           }

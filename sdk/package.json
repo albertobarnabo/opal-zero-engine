@@ -1,7 +1,7 @@
 {
-  "name": "axion-sdk",
+  "name": "opalzero-sdk-legacy",
   "version": "2.0.0",
-  "description": "React SDK for Axion AI orchestration",
+  "description": "Legacy SDK (superseded by opalzero-sdk)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

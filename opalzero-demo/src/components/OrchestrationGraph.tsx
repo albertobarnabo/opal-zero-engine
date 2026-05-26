@@ -282,7 +282,7 @@ export function OrchestrationGraph({
             fontSize={11}
             fill="rgba(235,239,242,0.72)"
             textAnchor="middle"
-            fontFamily="var(--axion-font-mono, monospace)"
+            fontFamily="var(--opalzero-font-mono, monospace)"
           >
             {nodes.length === 0 ? "Planning…" : "Axion"}
           </text>
@@ -350,7 +350,7 @@ export function OrchestrationGraph({
                 fontSize={labelFS}
                 fill="rgba(147,153,160,0.78)"
                 textAnchor="middle"
-                fontFamily="var(--axion-font-mono, monospace)"
+                fontFamily="var(--opalzero-font-mono, monospace)"
               >
                 {node.count > 1
                   ? `${shortRole(node.role)} ×${node.count}`
@@ -367,7 +367,7 @@ export function OrchestrationGraph({
                     fontSize={labelFS - 1}
                     fill="rgba(110,231,183,0.60)"
                     textAnchor="middle"
-                    fontFamily="var(--axion-font-mono, monospace)"
+                    fontFamily="var(--opalzero-font-mono, monospace)"
                   >
                     {formatDuration(ms)}
                   </text>
@@ -438,7 +438,7 @@ export function OrchestrationGraph({
                 {/* Monospace one-liner */}
                 <span
                   style={{
-                    fontFamily:   "var(--axion-font-mono, monospace)",
+                    fontFamily:   "var(--opalzero-font-mono, monospace)",
                     fontSize:     11,
                     color:        "rgba(147,153,160,0.72)",
                     overflow:     "hidden",

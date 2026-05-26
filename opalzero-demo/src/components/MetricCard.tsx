@@ -95,13 +95,13 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
       ref={ref}
       className="flex flex-col gap-1 h-full"
       style={{
-        background: "var(--axion-glass-bg)",
-        border: "1px solid var(--axion-glass-border)",
-        borderRadius: "var(--axion-radius)",
-        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        background: "var(--opalzero-glass-bg)",
+        border: "1px solid var(--opalzero-glass-border)",
+        borderRadius: "var(--opalzero-radius)",
+        backdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
         boxShadow: "var(--shadow-glass)",
-        padding: "var(--axion-pad, 20px)",
+        padding: "var(--opalzero-pad, 20px)",
       }}
     >
       <p
@@ -114,7 +114,7 @@ export function MetricCard({ title, value, subtitle, unit, trend }: MetricCardPr
         <span
           className="text-6xl font-black tabular-nums leading-none tracking-tighter"
           style={{
-            fontFamily: "var(--axion-font-main)",
+            fontFamily: "var(--opalzero-font-main)",
             background: "linear-gradient(135deg, oklch(0.97 0.004 250), oklch(0.82 0.012 250))",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",

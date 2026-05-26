@@ -47,11 +47,11 @@ export function ImageCard({ title, description }: ImageCardProps) {
   return (
     <div
       style={{
-        background: "var(--axion-glass-bg)",
-        border: "1px solid var(--axion-glass-border)",
-        borderRadius: "var(--axion-radius)",
-        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        background: "var(--opalzero-glass-bg)",
+        border: "1px solid var(--opalzero-glass-border)",
+        borderRadius: "var(--opalzero-radius)",
+        backdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
         boxShadow: "var(--shadow-glass)",
         overflow: "hidden",
         position: "relative",
@@ -132,17 +132,17 @@ export function ImageCard({ title, description }: ImageCardProps) {
       )}
 
       {/* Caption */}
-      <div style={{ padding: "var(--axion-pad, 20px)", paddingTop: "16px" }}>
+      <div style={{ padding: "var(--opalzero-pad, 20px)", paddingTop: "16px" }}>
         {title && (
           <p
             className="text-[11px] font-semibold uppercase tracking-widest mb-1.5"
-            style={{ color: "rgba(255,255,255,0.55)", fontFamily: "var(--axion-font-main)" }}
+            style={{ color: "rgba(255,255,255,0.55)", fontFamily: "var(--opalzero-font-main)" }}
           >
             {title}
           </p>
         )}
         {!isUrl && (
-          <p className="axion-scene-text">{description}</p>
+          <p className="opalzero-scene-text">{description}</p>
         )}
       </div>
     </div>

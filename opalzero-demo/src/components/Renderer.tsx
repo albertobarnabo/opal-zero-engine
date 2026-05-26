@@ -128,7 +128,7 @@ export function Renderer({
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
         gridAutoFlow: "dense",
-        gap: "var(--axion-gap, 28px)",
+        gap: "var(--opalzero-gap, 28px)",
       }}
     >
       <AnimatePresence mode="popLayout">
@@ -202,11 +202,11 @@ export function Renderer({
               return (
                 <div
                   style={{
-                    background: "var(--axion-glass-bg, rgba(255,255,255,0.04))",
+                    background: "var(--opalzero-glass-bg, rgba(255,255,255,0.04))",
                     border: "0.5px solid rgba(255,255,255,0.10)",
-                    borderRadius: "var(--axion-radius, 24px)",
-                    padding: "var(--axion-pad, 20px)",
-                    backdropFilter: "blur(var(--axion-blur, 80px))",
+                    borderRadius: "var(--opalzero-radius, 24px)",
+                    padding: "var(--opalzero-pad, 20px)",
+                    backdropFilter: "blur(var(--opalzero-blur, 80px))",
                   }}
                 >
                   <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-500/70 mb-2">
@@ -231,7 +231,7 @@ export function Renderer({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, scale: 0.93, y: -12, transition: { duration: 0.22 } }}
             transition={{ type: "spring", stiffness: 240, damping: 22, delay: i * 0.055 }}
-            className={`axion-grain${isRefined ? " axion-refined-card" : ""}`}
+            className={`opalzero-grain${isRefined ? " opalzero-refined-card" : ""}`}
             style={{
               gridColumn: `span ${colSpan}`,
               gridRow: `span ${rowSpan}`,
@@ -240,7 +240,7 @@ export function Renderer({
               willChange: "transform",
               transition: "box-shadow 0.2s",
               // Pinned cards get a subtle accent ring
-              outline: isPinned ? "1.5px solid var(--axion-accent, rgba(167,202,220,0.60))" : "none",
+              outline: isPinned ? "1.5px solid var(--opalzero-accent, rgba(167,202,220,0.60))" : "none",
               outlineOffset: 2,
             }}
             onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => {
@@ -250,7 +250,7 @@ export function Renderer({
               e.currentTarget.style.transform =
                 `perspective(700px) rotateY(${x * 7}deg) rotateX(${-y * 7}deg) translateZ(6px)`;
               e.currentTarget.style.boxShadow =
-                "0 24px 60px rgba(0,0,0,0.55), 0 0 44px var(--axion-glow, rgba(167,202,220,0.12))";
+                "0 24px 60px rgba(0,0,0,0.55), 0 0 44px var(--opalzero-glow, rgba(167,202,220,0.12))";
               e.currentTarget.style.zIndex = "10";
             }}
             onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
@@ -263,7 +263,7 @@ export function Renderer({
 
             {/* ── Refined badge ─────────────────────────────────────────────── */}
             {isRefined && (
-              <span className="axion-refined-badge">updated</span>
+              <span className="opalzero-refined-badge">updated</span>
             )}
 
             {/* ── Bento-Snap controls (pin + dismiss) — revealed on hover ─── */}
@@ -290,9 +290,9 @@ export function Renderer({
                     style={{
                       width: 22, height: 22, borderRadius: 6,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      background: isPinned ? "rgba(var(--axion-accent-rgb,167,202,220),0.20)" : "rgba(255,255,255,0.08)",
-                      border: isPinned ? "1px solid rgba(var(--axion-accent-rgb,167,202,220),0.45)" : "0.5px solid rgba(255,255,255,0.15)",
-                      color: isPinned ? "var(--axion-accent,#a7cadc)" : "rgba(255,255,255,0.50)",
+                      background: isPinned ? "rgba(var(--opalzero-accent-rgb,167,202,220),0.20)" : "rgba(255,255,255,0.08)",
+                      border: isPinned ? "1px solid rgba(var(--opalzero-accent-rgb,167,202,220),0.45)" : "0.5px solid rgba(255,255,255,0.15)",
+                      color: isPinned ? "var(--opalzero-accent,#a7cadc)" : "rgba(255,255,255,0.50)",
                       fontSize: 10, fontWeight: 800,
                       cursor: "pointer",
                       backdropFilter: "blur(8px)",

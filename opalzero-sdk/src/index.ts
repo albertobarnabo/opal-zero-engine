@@ -1,7 +1,7 @@
-export { AxionClient } from "./client";
+export { OpalZeroClient } from "./client";
 export { parseBentoCards } from "./parseBentoCards";
 export type {
-  AxionClientConfig,
+  OpalZeroClientConfig,
   MissionEvent,
   TaskStartedEvent,
   TaskCompletedEvent,
@@ -23,4 +23,4 @@ export type {
   UseMissionOptions,
   UseMissionReturn,
 } from "./types";
-// Note: useMission is NOT exported from the main entry — import from 'axion-sdk/react'
+// Note: useMission is NOT exported from the main entry — import from '@opalzero/sdk/react'

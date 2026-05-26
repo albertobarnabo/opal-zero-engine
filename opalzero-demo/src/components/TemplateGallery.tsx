@@ -84,12 +84,12 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
                   borderRadius: 999,
                   cursor: "pointer",
                   background: active
-                    ? "var(--axion-accent, #a7cadc)"
+                    ? "var(--opalzero-accent, #a7cadc)"
                     : "rgba(255,255,255,0.07)",
                   border: active
-                    ? "0.5px solid var(--axion-accent, #a7cadc)"
+                    ? "0.5px solid var(--opalzero-accent, #a7cadc)"
                     : "0.5px solid rgba(255,255,255,0.12)",
-                  color: active ? "var(--axion-accent-fg, #07090c)" : "rgba(255,255,255,0.50)",
+                  color: active ? "var(--opalzero-accent-fg, #07090c)" : "rgba(255,255,255,0.50)",
                   transition: "background 0.15s, color 0.15s",
                 }}
               >
@@ -180,7 +180,7 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
               <p
                 style={{
                   fontSize: 11,
-                  color: "var(--axion-accent, #a7cadc)",
+                  color: "var(--opalzero-accent, #a7cadc)",
                   marginTop: 12,
                   fontWeight: 500,
                 }}

@@ -8,7 +8,7 @@ interface ComparisonTableProps {
   rows: (string | number)[][];
 }
 
-const cellBorder = "1px solid var(--axion-glass-border, rgba(255,255,255,0.08))";
+const cellBorder = "1px solid var(--opalzero-glass-border, rgba(255,255,255,0.08))";
 
 export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) {
   const [sortCol, setSortCol] = useState<number | null>(null);
@@ -42,11 +42,11 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
     <div
       className="overflow-hidden"
       style={{
-        background: "var(--axion-glass-bg)",
-        border: "1px solid var(--axion-glass-border)",
-        borderRadius: "var(--axion-radius)",
-        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        background: "var(--opalzero-glass-bg)",
+        border: "1px solid var(--opalzero-glass-border)",
+        borderRadius: "var(--opalzero-radius)",
+        backdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
         boxShadow: "var(--shadow-glass)",
       }}
     >
@@ -72,7 +72,7 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
                     : "↓"
                   : "↕";
                 const indicatorColor = isActive
-                  ? "var(--axion-accent, #a7cadc)"
+                  ? "var(--opalzero-accent, #a7cadc)"
                   : "rgba(255,255,255,0.20)";
 
                 return (
@@ -82,7 +82,7 @@ export function ComparisonTable({ title, headers, rows }: ComparisonTableProps) 
                     className="text-left text-[11px] font-semibold uppercase tracking-wide px-6 py-4 whitespace-nowrap select-none"
                     style={{
                       color: isActive
-                        ? "var(--axion-accent, #a7cadc)"
+                        ? "var(--opalzero-accent, #a7cadc)"
                         : i === 0
                         ? "rgba(255,255,255,0.90)"
                         : "rgba(255,255,255,0.55)",

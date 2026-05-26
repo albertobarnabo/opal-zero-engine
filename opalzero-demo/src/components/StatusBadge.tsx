@@ -24,13 +24,13 @@ export function StatusBadge({ label, status, description }: StatusBadgeProps) {
   return (
     <div
       style={{
-        background: "var(--axion-glass-bg)",
-        border: "1px solid var(--axion-glass-border)",
-        borderRadius: "var(--axion-radius)",
-        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        background: "var(--opalzero-glass-bg)",
+        border: "1px solid var(--opalzero-glass-border)",
+        borderRadius: "var(--opalzero-radius)",
+        backdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
         boxShadow: "var(--shadow-glass)",
-        padding: "var(--axion-pad, 20px)",
+        padding: "var(--opalzero-pad, 20px)",
       }}
     >
       <div className="flex items-center gap-3">

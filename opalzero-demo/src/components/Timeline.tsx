@@ -16,13 +16,13 @@ export function Timeline({ title, steps }: TimelineProps) {
   return (
     <div
       style={{
-        background: "var(--axion-glass-bg)",
-        border: "1px solid var(--axion-glass-border)",
-        borderRadius: "var(--axion-radius)",
-        backdropFilter: "blur(var(--axion-blur)) saturate(130%)",
-        WebkitBackdropFilter: "blur(var(--axion-blur)) saturate(130%)",
+        background: "var(--opalzero-glass-bg)",
+        border: "1px solid var(--opalzero-glass-border)",
+        borderRadius: "var(--opalzero-radius)",
+        backdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
+        WebkitBackdropFilter: "blur(var(--opalzero-blur)) saturate(130%)",
         boxShadow: "var(--shadow-glass)",
-        padding: "var(--axion-pad, 20px)",
+        padding: "var(--opalzero-pad, 20px)",
       }}
     >
       {title && (
@@ -43,9 +43,9 @@ export function Timeline({ title, steps }: TimelineProps) {
               ? { background: "#34d399", borderColor: "#34d399" }
               : s === "current"
               ? {
-                  background: "var(--axion-accent, #a7cadc)",
-                  borderColor: "var(--axion-accent, #a7cadc)",
-                  boxShadow: "0 0 12px var(--axion-glow, rgba(167,202,220,0.5))",
+                  background: "var(--opalzero-accent, #a7cadc)",
+                  borderColor: "var(--opalzero-accent, #a7cadc)",
+                  boxShadow: "0 0 12px var(--opalzero-glow, rgba(167,202,220,0.5))",
                 }
               : { background: "transparent", borderColor: "rgba(255,255,255,0.18)" };
 

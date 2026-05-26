@@ -1,4 +1,4 @@
-import type { AxionClient } from './client';
+import type { OpalZeroClient } from './client';
 
 // ── Mission lifecycle ────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ export interface MissionSummary {
 }
 
 // ── SSE event union ──────────────────────────────────────────────────────────
-// Mirrors axion-core's MissionUpdate enum (#[serde(tag = "type", rename_all = "snake_case")])
+// Mirrors opalzero-core's MissionUpdate enum (#[serde(tag = "type", rename_all = "snake_case")])
 
 export interface TaskStartedEvent {
   type:   "task_started";
@@ -128,7 +128,7 @@ export interface ConfigStatus {
 
 // ── Client config ────────────────────────────────────────────────────────────
 
-export interface AxionClientConfig {
+export interface OpalZeroClientConfig {
   /** e.g. "http://localhost:8080" */
   baseUrl:          string;
   /** X-Axion-Key — omit for local dev (when AXION_API_KEY is not set on the server) */
@@ -157,7 +157,7 @@ export interface BentoCard {
 // ── useMission ────────────────────────────────────────────────────────────────
 
 export interface UseMissionOptions {
-  client: AxionClient;
+  client: OpalZeroClient;
   /** Default model to use. Can be overridden per-call in run(). */
   model?: string;
   /** Called for every SSE event before the hook updates its own state. Use this for side effects (trace logs, banners, etc.) that the hook doesn't need to manage. */
