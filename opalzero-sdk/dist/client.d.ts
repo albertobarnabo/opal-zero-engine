@@ -1,8 +1,8 @@
-import type { AxionClientConfig, MissionEvent, MissionSnapshot, MissionSummary, UploadResult, ConfigStatus } from "./types";
-export declare class AxionClient {
+import type { OpalZeroClientConfig, MissionEvent, MissionSnapshot, MissionSummary, UploadResult, ConfigStatus } from "./types";
+export declare class OpalZeroClient {
     private readonly base;
     /** @internal */ readonly _headers: Record<string, string>;
-    constructor(config: AxionClientConfig);
+    constructor(config: OpalZeroClientConfig);
     execute(intent: string, model?: string): AsyncGenerator<MissionEvent>;
     readonly missions: {
         list: () => Promise<MissionSummary[]>;

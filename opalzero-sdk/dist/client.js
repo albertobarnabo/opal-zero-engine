@@ -1,5 +1,5 @@
 import { parseSSEStream } from "./stream";
-export class AxionClient {
+export class OpalZeroClient {
     constructor(config) {
         // ── Missions ──────────────────────────────────────────────────────────────
         this.missions = {

@@ -1,4 +1,4 @@
-import type { AxionClient } from './client';
+import type { OpalZeroClient } from './client';
 export type MissionStatus = "idle" | "running" | "complete" | "failed";
 export interface Task {
     slug: string;
@@ -90,7 +90,7 @@ export interface ConfigStatus {
     tavily: boolean;
     alpha_vantage?: boolean;
 }
-export interface AxionClientConfig {
+export interface OpalZeroClientConfig {
     /** e.g. "http://localhost:8080" */
     baseUrl: string;
     /** X-Axion-Key — omit for local dev (when AXION_API_KEY is not set on the server) */
@@ -113,7 +113,7 @@ export interface BentoCard {
     isRefined?: boolean;
 }
 export interface UseMissionOptions {
-    client: AxionClient;
+    client: OpalZeroClient;
     /** Default model to use. Can be overridden per-call in run(). */
     model?: string;
     /** Called for every SSE event before the hook updates its own state. Use this for side effects (trace logs, banners, etc.) that the hook doesn't need to manage. */
