@@ -1,6 +1,6 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 # Edition 2024 requires Rust 1.85+; use 1.85-slim as the minimum.
-FROM rust:1.86-slim AS builder
+FROM rust:1.88-slim AS builder
 
 WORKDIR /build
 
