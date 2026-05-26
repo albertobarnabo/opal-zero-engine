@@ -1,0 +1,19 @@
+{
+  "name": "write_file",
+  "description": "Writes text content to a file inside the output/ directory. Use this to persist reports or summaries to disk.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "filename": {
+        "type": "string",
+        "description": "Name of the file to write (e.g. 'trip_report.md'). Must not contain path separators."
+      },
+      "content": {
+        "type": "string",
+        "description": "The full text content to write into the file."
+      }
+    },
+    "required": ["filename", "content"]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "get_income_statement",
+  "description": "Fetches the last 4 annual income statements for a company from Alpha Vantage: total revenue, gross profit, operating income, net income, and EPS per fiscal year. Essential for financial due diligence and trend analysis. Requires ALPHA_VANTAGE_API_KEY.",
+  "is_async": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Stock ticker symbol (e.g. 'AAPL', 'TSLA', 'MSFT')."
+      }
+    },
+    "required": ["symbol"]
+  }
+}

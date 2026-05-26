@@ -1,0 +1,15 @@
+{
+  "name": "get_news_sentiment",
+  "description": "Fetches the latest 5 news articles and AI-scored sentiment for a stock ticker from Alpha Vantage. Returns article title, source, publication time, URL, and per-ticker sentiment label (Bearish / Somewhat-Bearish / Neutral / Somewhat-Bullish / Bullish). Use for market sentiment analysis and news-driven investment signals. Requires ALPHA_VANTAGE_API_KEY.",
+  "is_async": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Stock ticker symbol (e.g. 'AAPL', 'TSLA', 'MSFT')."
+      }
+    },
+    "required": ["symbol"]
+  }
+}

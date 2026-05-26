@@ -1,0 +1,15 @@
+{
+  "name": "python_interpreter",
+  "description": "Executes a Python 3 snippet and returns its stdout output. Use this for complex calculations, statistical analysis, data transformation, or any logic the calculator cannot express.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "description": "The Python 3 code to execute. Must use only the standard library. Use print() to emit results. Do not use file I/O or shell commands."
+      }
+    },
+    "required": ["code"]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "mission_1779776918_context_population_test",
+  "timestamp": 1779776918,
+  "intent": "Context population test",
+  "task_count": 1,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "find_flights_berlin": "mock result"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "read_file",
+  "description": "Reads a data file (CSV, JSON, or plain text) that was uploaded by the user and returns its contents as a string. Use this when the user has attached a data file and you need to inspect, analyse, or summarise its contents. Always call this tool before drawing any conclusions about uploaded data.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "filename": {
+        "type": "string",
+        "description": "The filename returned by the upload response (e.g. 'a1b2c3d4-uuid.csv'). Must not contain path separators or '..'."
+      }
+    },
+    "required": ["filename"]
+  }
+}

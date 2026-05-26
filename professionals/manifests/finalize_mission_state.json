@@ -1,0 +1,68 @@
+{
+  "name": "finalize_mission_state",
+  "description": "REQUIRED final-step tool. Submit all mission findings as a verified JSON state payload AND select Apple-inspired design tokens that match the mission's character. Call exactly once.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "A brief plain-text summary of all mission findings."
+      },
+      "structured_data_payload": {
+        "type": "object",
+        "description": "MANDATORY JSON object containing all mission findings. Use descriptive keys. Focus on completeness and accuracy.",
+        "additionalProperties": true
+      },
+      "design_tokens": {
+        "type": "object",
+        "description": "REQUIRED visual theme. You are the Visual Director. Choose low-saturation, high-luminosity Apple-inspired palettes. Avoid neon or high-contrast hacker colors. Prefer muted, sophisticated tones.",
+        "required": ["primary_accent", "glass_intensity", "theme_preset", "layout_density", "border_radius", "surface_opacity"],
+        "properties": {
+          "primary_accent": {
+            "type": "string",
+            "description": "Soft hex color for glows. Examples by context — Financial: '#5eead4' (soft teal). Travel: '#fbbf24' (warm amber). Research/Science: '#6ee7b7' (soft emerald). Creative: '#c084fc' (muted violet). General: '#8b9cf4' (soft indigo). Minimalist: '#94a3b8' (slate)."
+          },
+          "glass_intensity": {
+            "type": "number",
+            "description": "Frosted-glass depth 0.0–1.0. Financial/dense data: 0.75. Travel/narrative: 0.55. Minimalist: 0.40. Research: 0.60."
+          },
+          "theme_preset": {
+            "type": "string",
+            "enum": ["fintech", "organic", "research", "minimalist", "creative"],
+            "description": "Narrative theme matching mission type."
+          },
+          "layout_density": {
+            "type": "string",
+            "enum": ["spacious", "compact"],
+            "description": "'compact' for data-dense missions (tables, comparisons). 'spacious' for narrative, travel, creative."
+          },
+          "border_radius": {
+            "type": "number",
+            "description": "Card corner radius in px. Default 24. Use 16 for compact/fintech, 28–32 for organic/creative."
+          },
+          "surface_opacity": {
+            "type": "number",
+            "description": "Card background opacity 0.0–0.15. Keep low (0.05–0.08) for elegant frosted look. Higher values make cards more opaque."
+          },
+          "layout_strategy": {
+            "type": "string",
+            "enum": ["Overview", "FocusOnCharts", "DataHeavy", "Narrative"],
+            "description": "Frontend layout strategy. 'FocusOnCharts': mission has time-series or comparative data arrays → render charts. 'DataHeavy': many tables and metrics, use compact layout. 'Narrative': story-driven, spacious cards. 'Overview': balanced default."
+          }
+        }
+      },
+      "verification_logs": {
+        "type": "array",
+        "description": "Optional quality notes, data sources, or caveats.",
+        "items": { "type": "string" }
+      },
+      "suggested_widgets": {
+        "type": "array",
+        "description": "Optional hints for specific frontend components. Format: 'ComponentType:payload_key'. E.g. ['ChartCard:price_history', 'ImageCard:product_visual']. Use ChartCard for time-series or comparative arrays. Use ImageCard when a visual anchor (scene description, product render) would enhance the data.",
+        "items": { "type": "string" }
+      }
+    },
+    "required": ["summary", "structured_data_payload", "design_tokens"]
+  }
+}

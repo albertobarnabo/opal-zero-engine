@@ -1,0 +1,14 @@
+{
+  "id": "mission_1779553985_calculate_total_trip_cost",
+  "timestamp": 1779553985,
+  "intent": "Calculate total trip cost",
+  "task_count": 1,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "research_flight_hotel_prices": "flat result"
+    }
+  }
+}
