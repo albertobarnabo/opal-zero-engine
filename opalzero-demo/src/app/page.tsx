@@ -12,8 +12,8 @@ import { MODEL_CATALOG, type ModelId } from "@/data/models";
 import { ClarifyModal } from "@/components/ClarifyModal";
 import { ModeSelector } from "@/components/ModeSelector";
 import { OrchestrationGraph } from "@/components/OrchestrationGraph";
-import { OpalZeroClient } from "@opalzero/sdk";
-import { useMission } from "@opalzero/sdk/react";
+import { OpalZeroClient } from "opal-zero";
+import { useMission } from "opal-zero/react";
 import type {
   MissionEvent,
   TaskStartedEvent,
@@ -23,7 +23,7 @@ import type {
   MissionCompleteEvent,
   MissionFailedEvent,
   AwaitingFeedbackEvent,
-} from "@opalzero/sdk";
+} from "opal-zero";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

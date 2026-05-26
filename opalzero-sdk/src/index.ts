@@ -23,4 +23,4 @@ export type {
   UseMissionOptions,
   UseMissionReturn,
 } from "./types";
-// Note: useMission is NOT exported from the main entry — import from '@opalzero/sdk/react'
+// Note: useMission is NOT exported from the main entry — import from 'opal-zero/react'
