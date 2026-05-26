@@ -29,8 +29,14 @@ pub const CTX_USER_FEEDBACK: &str = "user_feedback";
 pub const CTX_FEEDBACK_QUESTION: &str = "awaiting_feedback_question";
 
 /// ContextBus key for the structured payload from a prior mission run.
-/// Injected during `refine_mission` so the Analyst can reference previous results.
+/// Injected during `refine_mission` and `run_mission_with_history` so the
+/// Analyst can build on previous results rather than starting blind.
 pub const CTX_PRIOR_MISSION_STATE: &str = "prior_mission_state";
+
+/// ContextBus key for the human-readable age of the prior mission run.
+/// Example value: `"47 hours ago (2026-05-24T10:30:00Z)"`.
+/// Lets the Analyst express confidence in how current the prior data is.
+pub const CTX_PRIOR_RUN_TIMESTAMP: &str = "__prior_run_timestamp";
 
 /// Returned by `run_mission` when the mission is paused awaiting human input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +108,17 @@ pub struct Task {
     /// failing tools (e.g. `python_interpreter` after a Coder failure).
     #[serde(default)]
     pub excluded_tools: Vec<String>,
+    /// Explicit allowlist of tool names the Planner declared for this task.
+    ///
+    /// When `Some`, the Dispatcher narrows the role's default tool set to only
+    /// these names before applying `excluded_tools`.  When `None` (the default),
+    /// the full role tool set is offered.
+    ///
+    /// This lets the Planner give each task the minimal tool scope it actually
+    /// needs — a WebSearcher that only needs `web_search` won't be distracted
+    /// by `calculator`, `diff`, or `sqlite_query`.
+    #[serde(default)]
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

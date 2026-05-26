@@ -420,7 +420,47 @@ async fn execute_with_role(
             finalize_only
         }
     } else {
-        get_tools_for_role(&task.role, keys)
+        let role_tools = get_tools_for_role(&task.role, keys);
+
+        // ── Allowlist (per-task skill set) ────────────────────────────────────
+        // When the Planner declared an explicit tool list for this task, narrow
+        // the role defaults to only those names.  None = use the full role set.
+        let after_allowlist: Vec<Tool> = match &task.allowed_tools {
+            Some(allowed) if !allowed.is_empty() => {
+                let filtered: Vec<Tool> = role_tools
+                    .into_iter()
+                    .filter(|t| allowed.contains(&t.name))
+                    .collect();
+                // Safety net: if the allowlist names don't match any registered
+                // tool (e.g. a typo in the planner output), fall back to the
+                // full role set so the task is never given zero tools.
+                if filtered.is_empty() {
+                    tracing::warn!(
+                        task = %task.slug,
+                        allowed = ?allowed,
+                        "allowed_tools matched no registered tools — using role defaults"
+                    );
+                    get_tools_for_role(&task.role, keys)
+                } else {
+                    tracing::debug!(
+                        task = %task.slug,
+                        tools = filtered.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "),
+                        "per-task skill set applied"
+                    );
+                    filtered
+                }
+            }
+            // Empty vec = caller explicitly wants zero tools (pure-reasoning task).
+            Some(allowed) if allowed.is_empty() => {
+                tracing::debug!(task = %task.slug, "empty allowed_tools — pure-reasoning task, no tools offered");
+                vec![]
+            }
+            // None = no planner constraint, use full role defaults.
+            _ => role_tools,
+        };
+
+        // ── Blocklist (re-planner exclusions) ─────────────────────────────────
+        after_allowlist
             .into_iter()
             .filter(|t| !task.excluded_tools.contains(&t.name))
             .collect()
@@ -456,6 +496,26 @@ async fn execute_with_role(
                     tool = tool_name,
                     "[text-mode] extracted tool call from prose — executing"
                 );
+
+                // ── Pre-Write Gate (text-mode path) ───────────────────────────
+                if crate::safety::is_write_invocation(&tool_name, &arguments) {
+                    match crate::safety::check_write_authorization(
+                        &tool_name,
+                        &arguments,
+                        &task.intent,
+                        effective_provider,
+                    )
+                    .await
+                    {
+                        crate::safety::WriteDecision::Denied(reason) => {
+                            task.status = TaskStatus::Failed;
+                            task.result = Some(reason);
+                            return;
+                        }
+                        crate::safety::WriteDecision::Authorized => {}
+                    }
+                }
+
                 match crate::tools::execute_tool(
                     &tool_name, &arguments, &task.id.to_string(), keys,
                 )
@@ -482,6 +542,26 @@ async fn execute_with_role(
         }
         Ok(ToolResponse::ToolCall { id, name, arguments }) => {
             tracing::info!(tool = name, args = arguments, "executing tool call");
+
+            // ── Pre-Write Gate ─────────────────────────────────────────────────
+            if crate::safety::is_write_invocation(&name, &arguments) {
+                match crate::safety::check_write_authorization(
+                    &name,
+                    &arguments,
+                    &task.intent,
+                    effective_provider,
+                )
+                .await
+                {
+                    crate::safety::WriteDecision::Denied(reason) => {
+                        task.status = TaskStatus::Failed;
+                        task.result = Some(reason);
+                        return;
+                    }
+                    crate::safety::WriteDecision::Authorized => {}
+                }
+            }
+
             match crate::tools::execute_tool(&name, &arguments, &task.id.to_string(), keys).await {
                 Ok(tool_result) => {
                     tracing::debug!(tool = name, result = tool_result, "tool result");
@@ -724,6 +804,7 @@ mod tests {
             result: None,
             depends_on: depends_on.into_iter().map(|s| s.to_string()).collect(),
             excluded_tools: vec![],
+            allowed_tools: None,
         }
     }
 

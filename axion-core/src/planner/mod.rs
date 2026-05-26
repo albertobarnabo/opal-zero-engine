@@ -93,8 +93,34 @@ impl Plan {
             result: None,
             depends_on: dependencies,
             excluded_tools,
+            allowed_tools: None, // populated by add_task_with_tools or the planner
         };
         self.tasks.push(task);
+        slug
+    }
+
+    /// Like [`add_task`] but also declares the **exact tools** the agent may use.
+    ///
+    /// The `allowed_tools` list is an allowlist: the Dispatcher will narrow the
+    /// role's default tool set to only the named tools before running the task.
+    /// `excluded_tools` is still applied on top as a secondary blocklist.
+    ///
+    /// Pass an empty `allowed_tools` vec to give the task zero tools (e.g. for
+    /// a pure-reasoning step that should not make any external calls).
+    ///
+    /// Returns the task's **slug**.
+    pub fn add_task_with_tools(
+        &mut self,
+        description: &str,
+        dependencies: Vec<String>,
+        role: AgentRole,
+        allowed_tools: Vec<String>,
+    ) -> String {
+        let slug = self.add_task_excluded(description, dependencies, role, vec![]);
+        // Patch the allowed_tools on the task we just pushed.
+        if let Some(task) = self.tasks.iter_mut().find(|t| t.slug == slug) {
+            task.allowed_tools = Some(allowed_tools);
+        }
         slug
     }
 }
@@ -106,13 +132,25 @@ impl Plan {
 pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> Plan {
     let mut plan = Plan::new(intent);
 
+    // ── Requirement Tracker: extract sub-requirements at plan time ────────────
+    // Store the serialized checklist in the context bus so the Governor can
+    // verify completeness before declaring success.
+    let requirements = crate::safety::extract_requirements(intent, provider).await;
+    if !requirements.is_empty() {
+        plan.context.data.insert(
+            crate::safety::CTX_REQUIREMENTS.to_string(),
+            crate::safety::serialize_requirements(&requirements),
+        );
+    }
+
     let prompt = format!(
         "You are a mission planner. Decompose the user request into 2-5 concrete tasks \
          for specialist agents.\n\n\
-         Available roles:\n\
-         - WebSearcher: searches the web for factual information\n\
-         - Analyst: runs calculations, synthesizes findings, builds dashboards\n\
-         - Coder: writes and executes Python code\n\n\
+         Available roles and their default tools:\n\
+         - WebSearcher  → web_search, fetch_page, rss_reader, diff\n\
+         - Analyst      → calculator, python_interpreter, sqlite_query, write_file, \
+                          read_csv, extract_pdf_text, memory_persist, finalize_mission_state\n\
+         - Coder        → python_interpreter, calculator, write_file\n\n\
          Rules:\n\
          - Always include a final Analyst task to synthesize the research results.\n\
          - Do NOT add a build_dynamic_ui step — the system injects it automatically.\n\
@@ -125,8 +163,16 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
            Example: the final Analyst should depend on all WebSearcher tasks.\n\
          - Never create circular dependencies.\n\
          - {slug_note}\n\n\
+         Per-task skill sets — tools field (optional but recommended):\n\
+         - Add a \"tools\" array listing only the tools this task actually needs.\n\
+         - Tighter tool lists prevent the agent from making unnecessary calls and \
+           improve accuracy. Only include tools the task genuinely requires.\n\
+         - If unsure, omit \"tools\" and the role defaults will be used.\n\
+         - Example: a task that only searches should declare \
+           \"tools\":[\"web_search\",\"fetch_page\"]\n\n\
          Respond ONLY with valid JSON, no markdown:\n\
-         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\",\"depends_on\":[]}}]}}\n\n\
+         {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\",\
+         \"depends_on\":[],\"tools\":[\"web_search\",\"fetch_page\"]}}]}}\n\n\
          User intent: {}",
         intent,
         slug_note = SLUG_FORMAT_NOTE,
@@ -141,6 +187,9 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
             role: String,
             #[serde(default)]
             depends_on: Vec<String>,
+            /// Optional per-task tool allowlist declared by the planner.
+            #[serde(default)]
+            tools: Option<Vec<String>>,
         }
 
         let json_str = crate::governor::extract_json(&text).unwrap_or_default();
@@ -155,7 +204,13 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
                     // Add all non-Analyst tasks first with the LLM's depends_on.
                     // Analyst tasks are wired below after we know the real slugs.
                     if !matches!(role, AgentRole::Analyst) {
-                        plan.add_task(&t.description, t.depends_on.clone(), role);
+                        let slug = plan.add_task(&t.description, t.depends_on.clone(), role);
+                        // Apply planner-declared skill set when present.
+                        if let Some(ref tools) = t.tools {
+                            if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                                task.allowed_tools = Some(tools.clone());
+                            }
+                        }
                     }
                 }
 
@@ -174,7 +229,13 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
 
                 for t in &parsed.tasks {
                     if matches!(t.role.as_str(), "Analyst") {
-                        plan.add_task(&t.description, non_analyst_slugs.clone(), AgentRole::Analyst);
+                        let slug = plan.add_task(&t.description, non_analyst_slugs.clone(), AgentRole::Analyst);
+                        // Apply planner-declared skill set when present.
+                        if let Some(ref tools) = t.tools {
+                            if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                                task.allowed_tools = Some(tools.clone());
+                            }
+                        }
                     }
                 }
 

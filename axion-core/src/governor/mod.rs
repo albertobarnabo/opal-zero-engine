@@ -502,6 +502,35 @@ impl Governor for BuiltinGovernor {
             return result;
         }
 
+        // ── Requirement Tracker: verify all sub-requirements are addressed ────
+        if let Some(req_json) = context.data.get(crate::safety::CTX_REQUIREMENTS) {
+            let requirements = crate::safety::deserialize_requirements(req_json);
+            if !requirements.is_empty() {
+                // Collect the results of all completed tasks into a single string.
+                let task_results: String = tasks
+                    .iter()
+                    .filter_map(|t| t.result.as_ref())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n---\n");
+
+                let (satisfied, total, unmet) =
+                    crate::safety::check_requirements(&requirements, &task_results, intent, provider)
+                        .await;
+
+                if total > 0 && !unmet.is_empty() {
+                    let unmet_str = unmet.join("; ");
+                    tracing::warn!(
+                        satisfied,
+                        total,
+                        unmet = %unmet_str,
+                        "RequirementTracker: unmet requirements — requesting retry"
+                    );
+                    return ValidationResult::Retry;
+                }
+            }
+        }
+
         // Generic LLM quality check.
         tracing::info!(task_count = tasks.len(), "BuiltinGovernor: all tasks completed — consulting Quality Controller");
 
@@ -568,7 +597,7 @@ Respond ONLY with valid JSON (no markdown, no prose):\n\
     }
 
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
-        match role {
+        let base = match role {
             AgentRole::Analyst => {
                 "You are an Analyst agent. Your ONLY output is a single call to 'finalize_mission_state'. Never write prose. Never skip the call.\n\
 \n\
@@ -626,7 +655,10 @@ Use only the standard library and print() for output.\n"
             AgentRole::Planner => {
                 "You are a Planner agent. Research and plan using available tools.\n".to_string()
             }
-        }
+        };
+        // Append the grounding rule to every role so factual claims are always
+        // sourced from tool results, not reconstructed from the model's memory.
+        format!("{}{}", base, crate::safety::grounding_suffix())
     }
 }
 

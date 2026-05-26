@@ -1,0 +1,30 @@
+[
+  {
+    "agent": "axion_baseline",
+    "domain": "mock",
+    "model": "gpt-4o-mini",
+    "total_tasks": 3,
+    "passed": 3,
+    "pass_rate": 1.0,
+    "avg_reward": 1.0,
+    "rewards": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  {
+    "agent": "axion_style",
+    "domain": "mock",
+    "model": "gpt-4o-mini",
+    "total_tasks": 3,
+    "passed": 3,
+    "pass_rate": 1.0,
+    "avg_reward": 1.0,
+    "rewards": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  }
+]

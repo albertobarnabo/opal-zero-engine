@@ -1,0 +1,14 @@
+{
+  "id": "mission_1779777136_analyze_uploaded_chart",
+  "timestamp": 1779777136,
+  "intent": "Analyze the uploaded chart",
+  "task_count": 1,
+  "expanded_task_count": 0,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "vision_tool_analyze_test_chart_png": "Image analysis complete. Vision tool returned: Image file 'test_chart.png' loaded (image/png, 69 bytes). [Set OPENAI_API_KEY to enable AI vision analysis]"
+    }
+  }
+}

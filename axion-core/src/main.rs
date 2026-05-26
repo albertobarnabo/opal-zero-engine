@@ -1,15 +1,42 @@
 use axion_core::engine::SimpleProvider;
 use axion_core::governor::BuiltinGovernor;
+use axion_core::mcp::AxionMcpServer;
 use axion_core::planner::Plan;
 use axion_core::protocol::AgentRole;
 use axion_core::run_mission;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "Axion — autonomous AI agent kernel")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// Run a one-shot mission with this intent (legacy positional mode).
     #[arg(short, long)]
-    intent: String,
+    intent: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Start the Axion MCP server on stdin/stdout.
+    ///
+    /// Register it in Claude Code with:
+    ///   claude mcp add axion -- axion mcp serve
+    ///
+    /// After registration, every Claude Code session in the project
+    /// automatically has access to all Axion tools (web_search, calculator,
+    /// sqlite_query, python_interpreter, …).
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpAction {
+    /// Run the MCP stdio server (used by MCP clients to discover and call tools).
+    Serve,
 }
 
 #[tokio::main]
@@ -18,6 +45,24 @@ async fn main() {
     axion_core::registry::Registry::init_default();
 
     let args = Args::parse();
+
+    // ── MCP server mode ───────────────────────────────────────────────────────
+    if let Some(Command::Mcp { action: McpAction::Serve }) = args.command {
+        if let Err(e) = AxionMcpServer::new().serve().await {
+            eprintln!("Axion MCP server error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // ── Legacy one-shot mission mode ──────────────────────────────────────────
+    let _intent = match args.intent {
+        Some(ref i) => i.clone(),
+        None => {
+            eprintln!("Usage: axion --intent \"<task>\"  OR  axion mcp serve");
+            std::process::exit(1);
+        }
+    };
 
     let provider = match SimpleProvider::openai("gpt-4o-mini") {
         Ok(p) => p,
@@ -29,7 +74,7 @@ async fn main() {
 
     let governor = BuiltinGovernor::new();
 
-    let mut plan = Plan::new(&args.intent);
+    let mut plan = Plan::new(&_intent);
     // Each add_task call returns the task's slug, which downstream tasks
     // reference in their depends_on list.
     let flight_slug = plan.add_task(

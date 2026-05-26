@@ -1,0 +1,16 @@
+[
+  {
+    "agent": "axion_baseline",
+    "domain": "mock",
+    "model": "claude-sonnet-4-5",
+    "total_tasks": 3,
+    "passed": 3,
+    "pass_rate": 1.0,
+    "avg_reward": 1.0,
+    "rewards": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  }
+]

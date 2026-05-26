@@ -19,6 +19,77 @@ pub struct MissionSnapshot {
     pub mission_state: Option<MissionState>,
 }
 
+/// Find and load the most recent **completed** snapshot whose `intent` matches
+/// `intent` (case-insensitive, trimmed).
+///
+/// Scans every `missions/*.json` file (skips `.tmp` files), filters to
+/// `status == "completed"` and a normalised intent match, and returns the one
+/// with the highest `timestamp`.
+///
+/// Returns `None` if the `missions/` directory doesn't exist, is empty, or
+/// contains no matching completed snapshot.
+pub fn load_latest_snapshot_for_intent(intent: &str) -> Option<MissionSnapshot> {
+    let dir = std::path::Path::new("missions");
+    if !dir.exists() {
+        return None;
+    }
+
+    let needle = intent.trim().to_lowercase();
+
+    let entries = std::fs::read_dir(dir).ok()?;
+
+    let mut best: Option<MissionSnapshot> = None;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Skip non-.json files and .tmp temps.
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "json" {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let snapshot: MissionSnapshot = match serde_json::from_str(&content) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        if snapshot.status != "completed" {
+            continue;
+        }
+
+        // Normalise intent: strip REFINE[] wrapper if present, then compare.
+        let haystack = snapshot
+            .intent
+            .trim_start_matches("REFINE[")
+            .split("]: ")
+            .last()
+            .unwrap_or(&snapshot.intent)
+            .trim()
+            .to_lowercase();
+
+        if haystack != needle {
+            continue;
+        }
+
+        let is_newer = best
+            .as_ref()
+            .map(|b| snapshot.timestamp > b.timestamp)
+            .unwrap_or(true);
+
+        if is_newer {
+            best = Some(snapshot);
+        }
+    }
+
+    best
+}
+
 /// Load an existing mission snapshot from `missions/<id>.json`.
 pub fn load_snapshot(id: &str) -> Result<MissionSnapshot, String> {
     // Basic path-traversal guard: only alphanumerics + underscores.
@@ -206,6 +277,90 @@ mod tests {
         let _ = std::fs::remove_file(path);
 
         assert!(content.contains("\"Analytical\""), "layout_hint should be 'Analytical' when Coder is present");
+    }
+
+    // ── load_latest_snapshot_for_intent ─────────────────────────────────────
+
+    fn write_snapshot_file(snapshot: &MissionSnapshot) -> std::path::PathBuf {
+        let dir = std::path::Path::new("missions");
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(format!("{}.json", snapshot.id));
+        let json = serde_json::to_string_pretty(snapshot).unwrap();
+        std::fs::write(&path, &json).unwrap();
+        path
+    }
+
+    fn make_snapshot(id: &str, intent: &str, timestamp: u64, status: &str) -> MissionSnapshot {
+        MissionSnapshot {
+            id: id.to_string(),
+            timestamp,
+            intent: intent.to_string(),
+            task_count: 1,
+            expanded_task_count: 0,
+            status: status.to_string(),
+            layout_hint: "Itinerary".to_string(),
+            context: crate::protocol::ContextBus::default(),
+            mission_state: None,
+        }
+    }
+
+    #[test]
+    fn load_latest_returns_most_recent_completed_match() {
+        let older = make_snapshot("test_older_abc", "track bitcoin price", 1000, "completed");
+        let newer = make_snapshot("test_newer_abc", "track bitcoin price", 2000, "completed");
+        let p1 = write_snapshot_file(&older);
+        let p2 = write_snapshot_file(&newer);
+
+        let result = load_latest_snapshot_for_intent("track bitcoin price");
+        let _ = std::fs::remove_file(p1);
+        let _ = std::fs::remove_file(p2);
+
+        assert!(result.is_some(), "should find a match");
+        assert_eq!(result.unwrap().id, "test_newer_abc");
+    }
+
+    #[test]
+    fn load_latest_ignores_failed_snapshots() {
+        let failed = make_snapshot("test_failed_xyz", "some special intent xyz", 9999, "failed");
+        let p = write_snapshot_file(&failed);
+
+        let result = load_latest_snapshot_for_intent("some special intent xyz");
+        let _ = std::fs::remove_file(p);
+
+        assert!(result.is_none(), "failed snapshots must be ignored");
+    }
+
+    #[test]
+    fn load_latest_is_case_insensitive() {
+        let snap = make_snapshot("test_case_ci", "Track Bitcoin Price", 1000, "completed");
+        let p = write_snapshot_file(&snap);
+
+        let result = load_latest_snapshot_for_intent("track bitcoin price");
+        let _ = std::fs::remove_file(p);
+
+        assert!(result.is_some(), "intent matching must be case-insensitive");
+    }
+
+    #[test]
+    fn load_latest_returns_none_when_no_match() {
+        let result = load_latest_snapshot_for_intent("intent that definitely does not exist xyz123");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_latest_strips_refine_wrapper_for_matching() {
+        let refined = make_snapshot(
+            "test_refined_wrap",
+            "REFINE[track bitcoin price]: add hourly data",
+            5000,
+            "completed",
+        );
+        let p = write_snapshot_file(&refined);
+
+        let result = load_latest_snapshot_for_intent("add hourly data");
+        let _ = std::fs::remove_file(p);
+
+        assert!(result.is_some(), "REFINE[] wrapper should be stripped before matching");
     }
 
     #[test]
