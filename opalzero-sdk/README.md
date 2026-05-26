@@ -1,4 +1,7 @@
-# opal-zero
+<div align="center">
+  <img src="logo.svg" width="64" alt="OpalZero" />
+  <h1>opal-zero</h1>
+</div>
 
 TypeScript SDK for [OpalZero](https://github.com/albertobarnabo/opal-zero-engine) — a self-hosted multi-agent intelligence kernel. Give it a plain-English intent; get back structured results streamed in real time.
 

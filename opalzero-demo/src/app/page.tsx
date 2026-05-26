@@ -892,7 +892,7 @@ export default function Home() {
 
     const title = status === "complete" ? "Mission complete" : "Mission failed";
     const body  = intentText.length > 80 ? intentText.slice(0, 77) + "…" : intentText;
-    const icon  = "/opalzero-logo.png";
+    const icon  = "/opalzero-logo.svg";
 
     try {
       const n = new Notification(title, { body, icon });

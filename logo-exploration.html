@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpalZero — Logo Exploration III</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:         #080808;
+      --card:       #0e0e0e;
+      --card-hover: #131313;
+      --border:     rgba(255,255,255,0.055);
+      --text-hi:    rgba(255,255,255,0.88);
+      --text-mid:   rgba(255,255,255,0.40);
+      --text-lo:    rgba(255,255,255,0.18);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text-hi);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Inter', sans-serif;
+      min-height: 100vh;
+      padding: 72px 48px 96px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header {
+      max-width: 980px;
+      margin: 0 auto 60px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .h-brand { font-size: 10px; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-lo); }
+    .h-rule  { flex: 1; height: 1px; background: var(--border); }
+    .h-phase { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-lo); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 56px 32px 44px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 36px;
+      transition: background 0.15s ease;
+      animation: rise 0.5s ease backwards;
+    }
+    .card:hover { background: var(--card-hover); }
+    .card:nth-child(1) { animation-delay: 0.04s; }
+    .card:nth-child(2) { animation-delay: 0.09s; }
+    .card:nth-child(3) { animation-delay: 0.14s; }
+    .card:nth-child(4) { animation-delay: 0.19s; }
+    .card:nth-child(5) { animation-delay: 0.24s; }
+    .card:nth-child(6) { animation-delay: 0.29s; }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .mark { width: 112px; height: 112px; }
+
+    .card-text { text-align: center; }
+    .num  { font-size: 9px; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-lo); margin-bottom: 6px; }
+    .name { font-size: 15px; font-weight: 400; letter-spacing: -0.01em; color: var(--text-hi); margin-bottom: 14px; }
+    .rationale { font-size: 11.5px; line-height: 1.78; color: var(--text-mid); font-weight: 300; }
+
+    footer { max-width: 980px; margin: 56px auto 0; display: flex; align-items: center; gap: 20px; }
+    .f-note { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-lo); white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="h-brand">OpalZero</span>
+  <div class="h-rule"></div>
+  <span class="h-phase">Logo Exploration · III · Colour + Form</span>
+</header>
+
+<div class="grid">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       01  IRIDESCENT WHEEL
+       Six arc-trapezoid segments: outer arc r=36, inner arc r=10,
+       5° dark gap on each side. Cycling three opal colours.
+       Each segment = M inner_start L outer_start A outer_end L inner_end A inner_start Z
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="card">
+    <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <!-- Wedge 0: 5°→55° — teal -->
+      <path fill="#0DD4C6"
+        d="M 59.96,50.87 L 85.86,53.14 A 36,36,0,0,1,70.65,79.49 L 55.74,58.19 A 10,10,0,0,0,59.96,50.87 Z"/>
+      <!-- Wedge 1: 65°→115° — blue -->
+      <path fill="#5B8FEE"
+        d="M 54.23,59.06 L 65.21,82.63 A 36,36,0,0,1,34.79,82.63 L 45.77,59.06 A 10,10,0,0,0,54.23,59.06 Z"/>
+      <!-- Wedge 2: 125°→175° — violet -->
+      <path fill="#9B68F0"
+        d="M 44.26,58.19 L 29.35,79.49 A 36,36,0,0,1,14.14,53.14 L 40.04,50.87 A 10,10,0,0,0,44.26,58.19 Z"/>
+      <!-- Wedge 3: 185°→235° — teal -->
+      <path fill="#0DD4C6"
+        d="M 40.04,49.13 L 14.14,46.86 A 36,36,0,0,1,29.35,20.51 L 44.26,41.81 A 10,10,0,0,0,40.04,49.13 Z"/>
+      <!-- Wedge 4: 245°→295° — blue -->
+      <path fill="#5B8FEE"
+        d="M 45.77,40.94 L 34.79,17.37 A 36,36,0,0,1,65.21,17.37 L 54.23,40.94 A 10,10,0,0,0,45.77,40.94 Z"/>
+      <!-- Wedge 5: 305°→355° — violet -->
+      <path fill="#9B68F0"
+        d="M 55.74,41.81 L 70.65,20.51 A 36,36,0,0,1,85.86,46.86 L 59.96,49.13 A 10,10,0,0,0,55.74,41.81 Z"/>
+    </svg>
+    <div class="card-text">
+      <div class="num">01</div>
+      <div class="name">Iridescent Wheel</div>
+      <div class="rationale">Six arc-trapezoid segments, each a curved wedge (not a pie slice) with both edges arced. Three opal colours cycle — teal, blue, violet — like the play-of-colour shifting across a black opal as you tilt it.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       02  GRADIENT RING
+       Bold solid annulus: outer r=36, inner r=15.
+       fill-rule evenodd on two same-direction circle paths.
+       Diagonal linear gradient: teal (top-left) → violet (bottom-right).
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="card">
+    <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="rg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%"   stop-color="#0DD4C6"/>
+          <stop offset="100%" stop-color="#9B68F0"/>
+        </linearGradient>
+      </defs>
+      <path fill-rule="evenodd" fill="url(#rg)"
+        d="M 86,50 A 36,36,0,1,0,14,50 A 36,36,0,1,0,86,50 Z
+           M 65,50 A 15,15,0,1,0,35,50 A 15,15,0,1,0,65,50 Z"/>
+    </svg>
+    <div class="card-text">
+      <div class="num">02</div>
+      <div class="name">Opal Ring</div>
+      <div class="rationale">A bold solid ring — wall thickness 21 units — filled with a diagonal iridescent gradient. The zero as a material object. The colour shift is what gives it life; a plain ring would be inert.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       03  FIRE DROP
+       Teardrop: two cubic beziers meet a bottom semicircle arc.
+       Pointed at (50,15). Widest at y=58 (r=30). Lowest at y=88.
+       Gradient: violet tip → teal body, simulating opal fire rising.
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="card">
+    <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="fg" x1="50%" y1="0%" x2="50%" y2="100%">
+          <stop offset="0%"   stop-color="#C084FC"/>
+          <stop offset="55%"  stop-color="#5B8FEE"/>
+          <stop offset="100%" stop-color="#0DD4C6"/>
+        </linearGradient>
+      </defs>
+      <path fill="url(#fg)"
+        d="M 50,15
+           C 72,15 80,38 80,58
+           A 30,30,0,0,1,20,58
+           C 20,38 28,15 50,15 Z"/>
+    </svg>
+    <div class="card-text">
+      <div class="num">03</div>
+      <div class="name">Fire</div>
+      <div class="rationale">The silhouette of a polished opal cabochon — pointed crown, rounded base. The gradient climbs through violet, blue and teal, mimicking the spectral fire seen in a black opal as light rakes across its surface.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       04  OPAL TRINITY
+       Three circles r=15 in equilateral triangle, centres at r=17.5 from (50,50).
+       Top: (50,32.5). BR: (65.15,57.25). BL: (34.85,57.25).
+       Adjacent circles are tangent (centre distance = 30.3 ≈ 2×15).
+       Individual flat colours — no merging, distinct patches of fire.
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="card">
+    <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="t1" cx="38%" cy="35%" r="65%">
+          <stop offset="0%" stop-color="#3EFFF0"/>
+          <stop offset="100%" stop-color="#07A89E"/>
+        </radialGradient>
+        <radialGradient id="t2" cx="62%" cy="35%" r="65%">
+          <stop offset="0%" stop-color="#D0A8FF"/>
+          <stop offset="100%" stop-color="#7B3FDB"/>
+        </radialGradient>
+        <radialGradient id="t3" cx="50%" cy="35%" r="65%">
+          <stop offset="0%" stop-color="#93C5FD"/>
+          <stop offset="100%" stop-color="#2C5FCC"/>
+        </radialGradient>
+      </defs>
+      <!-- Top: teal -->
+      <circle cx="50"    cy="32.5"  r="15" fill="url(#t1)"/>
+      <!-- Bottom-right: violet -->
+      <circle cx="65.15" cy="57.25" r="15" fill="url(#t2)"/>
+      <!-- Bottom-left: blue -->
+      <circle cx="34.85" cy="57.25" r="15" fill="url(#t3)"/>
+    </svg>
+    <div class="card-text">
+      <div class="num">04</div>
+      <div class="name">Silica</div>
+      <div class="rationale">Three spheres, just touching, in close-packed formation. A literal reference: black opal's iridescence is caused by close-packed silica nanospheres diffracting light. The stone's microstructure as its mark.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       05  ROUNDED HEXAGON
+       Smooth hex via midpoint-quadratic-bezier technique.
+       Hex vertices (pointy-top, R=37): V0=(50,13) V1=(82,31.5) V2=(82,68.5)
+       V3=(50,87) V4=(18,68.5) V5=(18,31.5).
+       Midpoints: M01=(66,22.25) M12=(82,50) M23=(66,77.75)
+       M34=(34,77.75) M45=(18,50) M50=(34,22.25)
+       Path goes through midpoints, curves at each vertex (vertex = control pt).
+       3-stop gradient: teal → blue → violet.
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="card">
+    <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="hg" x1="15%" y1="0%" x2="85%" y2="100%">
+          <stop offset="0%"   stop-color="#0DD4C6"/>
+          <stop offset="50%"  stop-color="#5B8FEE"/>
+          <stop offset="100%" stop-color="#9B68F0"/>
+        </linearGradient>
+      </defs>
+      <!--
+        Midpoints:
+        M50 = midpoint(V5,V0) = midpoint((18,31.5),(50,13)) = (34, 22.25)
+        M01 = midpoint(V0,V1) = midpoint((50,13),(82,31.5)) = (66, 22.25)
+        M12 = midpoint(V1,V2) = midpoint((82,31.5),(82,68.5)) = (82, 50)
+        M23 = midpoint(V2,V3) = midpoint((82,68.5),(50,87)) = (66, 77.75)
+        M34 = midpoint(V3,V4) = midpoint((50,87),(18,68.5)) = (34, 77.75)
+        M45 = midpoint(V4,V5) = midpoint((18,68.5),(18,31.5)) = (18, 50)
+      -->
+      <path fill="url(#hg)"
+        d="M 34,22.25
+           Q 50,13    66,22.25
+           Q 82,31.5  82,50
+           Q 82,68.5  66,77.75
+           Q 50,87    34,77.75
+           Q 18,68.5  18,50
+           Q 18,31.5  34,22.25
+           Z"/>
+    </svg>
+    <div class="card-text">
+      <div class="num">05</div>
+      <div class="name">Opal Stone</div>
+      <div class="rationale">A hexagon where every corner is a smooth curve — achieved by passing through edge midpoints and using vertices as bezier control points. The silhouette of a polished hexagonal gem. Gradient pours through it like light through stone.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       06  SHIELD
+       Equilateral triangle (50,12)→(80,66)→(20,66), filled.
+       Inscribed circle at centroid (50,48) r=18 — touches all three sides exactly.
+       fill-rule evenodd punches the circle void through the solid triangle.
+       Blue → violet gradient makes the mass feel deep rather than flat.
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="card">
+    <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="sg" x1="15%" y1="0%" x2="85%" y2="100%">
+          <stop offset="0%"   stop-color="#5BAEED"/>
+          <stop offset="100%" stop-color="#8B52EF"/>
+        </linearGradient>
+      </defs>
+      <!--
+        Triangle: (50,12) (80,66) (20,66)  centroid=(50,48)
+        Incircle r=18: right=(68,48) left=(32,48). Both circle arcs CCW (sweep=0).
+        evenodd rule: between triangle and circle = filled; inside circle = void.
+      -->
+      <path fill-rule="evenodd" fill="url(#sg)"
+        d="M 50,12 L 80,66 L 20,66 Z
+           M 68,48 A 18,18,0,1,0,32,48 A 18,18,0,1,0,68,48 Z"/>
+    </svg>
+    <div class="card-text">
+      <div class="num">06</div>
+      <div class="name">Shield</div>
+      <div class="rationale">A solid triangle with its inscribed circle precisely voided — the circle fits perfectly, touching all three sides. Triangle = precision and quality. The void circle = zero. Two concepts sharing one boundary.</div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <div class="h-rule"></div>
+  <span class="f-note">Phase III — colour + form — pick a direction to refine</span>
+</footer>
+
+</body>
+</html>
