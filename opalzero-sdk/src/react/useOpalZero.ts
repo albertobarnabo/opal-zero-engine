@@ -3,8 +3,8 @@ import type {
   MissionStatus,
   MissionState,
   BentoCard,
-  UseMissionOptions,
-  UseMissionReturn,
+  UseOpalZeroOptions,
+  UseOpalZeroReturn,
   MissionEvent,
   TaskStartedEvent,
   MissionCompleteEvent,
@@ -12,7 +12,7 @@ import type {
 } from '../types';
 import { parseBentoCards } from '../parseBentoCards';
 
-export function useMission({ client, model: defaultModel, onEvent }: UseMissionOptions): UseMissionReturn {
+export function useOpalZero({ client, model: defaultModel, onEvent }: UseOpalZeroOptions): UseOpalZeroReturn {
   const [status,       setStatus]       = useState<MissionStatus>('idle');
   const [cards,        setCards]        = useState<BentoCard[]>([]);
   const [activeAgent,  setActiveAgent]  = useState<{ role: string; intent: string } | null>(null);

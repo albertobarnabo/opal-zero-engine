@@ -13,7 +13,7 @@ import { ClarifyModal } from "@/components/ClarifyModal";
 import { ModeSelector } from "@/components/ModeSelector";
 import { OrchestrationGraph } from "@/components/OrchestrationGraph";
 import { OpalZeroClient } from "opal-zero";
-import { useMission } from "opal-zero/react";
+import { useOpalZero } from "opal-zero/react";
 import type {
   MissionEvent,
   TaskStartedEvent,
@@ -586,7 +586,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [settingsOpen]
   );
-  const missionHook = useMission({ client: hookClient, onEvent: (e) => onEventRef.current(e) });
+  const missionHook = useOpalZero({ client: hookClient, onEvent: (e) => onEventRef.current(e) });
   // Derived: hook state wins during live runs; hist* state is used for loaded historical missions
   const missionState = missionHook.missionState ?? histMissionState;
   const activeMissionId = missionHook.missionId ?? histActiveMissionId;

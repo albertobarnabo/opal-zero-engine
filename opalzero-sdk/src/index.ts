@@ -20,7 +20,7 @@ export type {
   UploadResult,
   ConfigStatus,
   BentoCard,
-  UseMissionOptions,
-  UseMissionReturn,
+  UseOpalZeroOptions,
+  UseOpalZeroReturn,
 } from "./types";
 // Note: useMission is NOT exported from the main entry — import from 'opal-zero/react'

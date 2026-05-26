@@ -156,7 +156,7 @@ export interface BentoCard {
 
 // ── useMission ────────────────────────────────────────────────────────────────
 
-export interface UseMissionOptions {
+export interface UseOpalZeroOptions {
   client: OpalZeroClient;
   /** Default model to use. Can be overridden per-call in run(). */
   model?: string;
@@ -164,7 +164,7 @@ export interface UseMissionOptions {
   onEvent?: (event: MissionEvent) => void;
 }
 
-export interface UseMissionReturn {
+export interface UseOpalZeroReturn {
   /** Execute a new mission. Clears previous state before starting. */
   run: (intent: string, model?: string) => Promise<void>;
   /** Refine an existing mission without clearing the card grid. */

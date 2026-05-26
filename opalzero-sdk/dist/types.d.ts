@@ -112,14 +112,14 @@ export interface BentoCard {
     /** True if this card was added/updated by a refinement round */
     isRefined?: boolean;
 }
-export interface UseMissionOptions {
+export interface UseOpalZeroOptions {
     client: OpalZeroClient;
     /** Default model to use. Can be overridden per-call in run(). */
     model?: string;
     /** Called for every SSE event before the hook updates its own state. Use this for side effects (trace logs, banners, etc.) that the hook doesn't need to manage. */
     onEvent?: (event: MissionEvent) => void;
 }
-export interface UseMissionReturn {
+export interface UseOpalZeroReturn {
     /** Execute a new mission. Clears previous state before starting. */
     run: (intent: string, model?: string) => Promise<void>;
     /** Refine an existing mission without clearing the card grid. */

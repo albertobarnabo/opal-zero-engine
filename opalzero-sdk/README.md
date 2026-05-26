@@ -41,7 +41,7 @@ yarn add opal-zero         # yarn
 pnpm add opal-zero         # pnpm
 ```
 
-React (`useMission`) is a peer dependency — install React separately if you haven't already:
+React (`useOpalZero`) is a peer dependency — install React separately if you haven't already:
 
 ```bash
 npm install react react-dom
@@ -53,13 +53,13 @@ npm install react react-dom
 
 ```tsx
 import { OpalZeroClient } from "opal-zero";
-import { useMission } from "opal-zero/react";
+import { useOpalZero } from "opal-zero/react";
 
 const client = new OpalZeroClient({ baseUrl: "http://localhost:8000" });
 
 export function MissionRunner() {
   const { run, status, cards, activeAgent, error, missionId, refine } =
-    useMission({ client });
+    useOpalZero({ client });
 
   return (
     <div>
@@ -324,10 +324,10 @@ import type {
 
 ---
 
-### `useMission(options)` · `opal-zero/react`
+### `useOpalZero(options)` · `opal-zero/react`
 
 ```ts
-import { useMission } from "opal-zero/react";
+import { useOpalZero } from "opal-zero/react";
 
 const {
   run,          // (intent: string, model?: string) => Promise<void>
@@ -339,7 +339,7 @@ const {
   missionId,    // string | null — pass to refine()
   missionState, // MissionState | null — raw payload for custom renderers
   reset,        // () => void — reset to idle
-} = useMission({
+} = useOpalZero({
   client,       // OpalZeroClient instance
   model?,       // default model string
   onEvent?,     // (event: MissionEvent) => void — tap every event for side effects
@@ -360,7 +360,7 @@ const {
 
 ### `parseBentoCards(state, options?)`
 
-Converts a raw `MissionState` into an ordered `BentoCard[]`. Used internally by `useMission` — export it when building a custom renderer.
+Converts a raw `MissionState` into an ordered `BentoCard[]`. Used internally by `useOpalZero` — export it when building a custom renderer.
 
 ```ts
 import { parseBentoCards } from "opal-zero";
@@ -405,11 +405,11 @@ interface BentoCard {
 
 ### Mission refinement
 
-Refinement runs a second pass on an existing mission with a narrower intent. New results are merged into the original `data_payload` — keys that didn't exist before are added, keys that changed are updated. The `useMission` hook marks changed cards `isRefined: true` so you can highlight them.
+Refinement runs a second pass on an existing mission with a narrower intent. New results are merged into the original `data_payload` — keys that didn't exist before are added, keys that changed are updated. The `useOpalZero` hook marks changed cards `isRefined: true` so you can highlight them.
 
 ```tsx
 // After a mission completes:
-const { missionId, refine } = useMission({ client });
+const { missionId, refine } = useOpalZero({ client });
 
 // First run
 await run("Compare the top 3 EVs under $60k");
@@ -465,7 +465,7 @@ if (!tavily) {
 Use `onEvent` to tap the SSE stream for cross-cutting concerns without coupling them to component state:
 
 ```tsx
-useMission({
+useOpalZero({
   client,
   onEvent(event) {
     analytics.track("opalzero_event", { type: event.type });
@@ -512,8 +512,8 @@ import type {
 
   // Bento / React hook
   BentoCard,
-  UseMissionOptions,
-  UseMissionReturn,
+  UseOpalZeroOptions,
+  UseOpalZeroReturn,
 } from "opal-zero";
 ```
 
