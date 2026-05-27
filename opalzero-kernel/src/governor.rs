@@ -27,21 +27,41 @@ pub struct OpalZeroGovernor {
     /// Used by `model_for_role` to keep reasoning-heavy roles on the stronger model
     /// while downscaling routine roles to gpt-4o-mini.
     selected_model: String,
+    /// Separate model for the Governor's own quality-assessment LLM calls.
+    /// When set, the run loop routes `validate()` calls through a critic-specific
+    /// provider so the auditor is independent from the agent model.
+    /// Reads `OPALZERO_CRITIC_MODEL` env var; `None` means use the plan's provider.
+    critic_model: Option<String>,
 }
 
 impl OpalZeroGovernor {
     /// Create a governor using `OPALZERO_MODEL` env var (or `gpt-4o-mini` as fallback).
+    /// Also reads `OPALZERO_CRITIC_MODEL` for the critic model.
     pub fn new() -> Self {
         Self {
             selected_model: std::env::var("OPALZERO_MODEL")
                 .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            critic_model: std::env::var("OPALZERO_CRITIC_MODEL")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 
-    /// Create a governor pinned to the given model string.
-    /// Call this in the server handler with the model the user selected.
+    /// Create a governor pinned to the given agent model string.
+    /// Also reads `OPALZERO_CRITIC_MODEL` from env for the critic model.
     pub fn with_model(model: impl Into<String>) -> Self {
-        Self { selected_model: model.into() }
+        Self {
+            selected_model: model.into(),
+            critic_model: std::env::var("OPALZERO_CRITIC_MODEL")
+                .ok()
+                .filter(|s| !s.is_empty()),
+        }
+    }
+
+    /// Override the critic model at build time (takes precedence over env var).
+    pub fn with_critic_model(mut self, model: impl Into<String>) -> Self {
+        self.critic_model = Some(model.into());
+        self
     }
 }
 
@@ -627,5 +647,9 @@ OUTPUT FORMAT (strict JSON, no markdown wrapper):\n\
         } else {
             Some(crate::engine::model_for_role(&self.selected_model, role))
         }
+    }
+
+    fn critic_model(&self) -> Option<String> {
+        self.critic_model.clone()
     }
 }
