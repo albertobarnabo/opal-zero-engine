@@ -17,14 +17,14 @@ const MAX_LLM_RETRIES: u32    = 3;
 const RETRY_BASE_DELAY_MS: u64 = 1_000; // 1 s → 2 s → 4 s
 
 fn max_llm_retries() -> u32 {
-    std::env::var("AXION_MAX_LLM_RETRIES")
+    std::env::var("OPALZERO_MAX_LLM_RETRIES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(MAX_LLM_RETRIES)
 }
 
 fn retry_base_delay_ms() -> u64 {
-    std::env::var("AXION_RETRY_BASE_DELAY_MS")
+    std::env::var("OPALZERO_RETRY_BASE_DELAY_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(RETRY_BASE_DELAY_MS)

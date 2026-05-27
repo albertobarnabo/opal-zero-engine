@@ -5,21 +5,21 @@ use crate::protocol::Tool;
 // ── Environment-driven defaults ───────────────────────────────────────────────
 
 fn default_max_tokens() -> u32 {
-    std::env::var("AXION_MAX_TOKENS")
+    std::env::var("OPALZERO_MAX_TOKENS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4096)
 }
 
 fn default_temperature() -> f32 {
-    std::env::var("AXION_TEMPERATURE")
+    std::env::var("OPALZERO_TEMPERATURE")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.1)
 }
 
 fn request_timeout() -> std::time::Duration {
-    let secs = std::env::var("AXION_REQUEST_TIMEOUT_SECS")
+    let secs = std::env::var("OPALZERO_REQUEST_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(90);
