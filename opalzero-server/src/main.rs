@@ -1250,6 +1250,7 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     opalzero_core::registry::Registry::init_default();
+    opalzero_core::research::init_default();
 
     // ── CORS origin allow-list ────────────────────────────────────────────────
     // Read from OPALZERO_ALLOWED_ORIGINS (comma-separated).  The special value "*"

@@ -531,6 +531,44 @@ async fn execute_with_role(
         "tools offered to agent",
     );
 
+    // ── Research manifest shortcut (WebSearcher only) ─────────────────────────
+    // When the task intent matches a TOML research manifest the kernel collects
+    // source data deterministically (no LLM tool calls) and runs one
+    // extraction-only LLM pass.  This path short-circuits the entire multi-turn
+    // Exa loop.  Any failure falls through to the normal search path below.
+    if matches!(task.role, crate::protocol::AgentRole::WebSearcher) {
+        if let Some(manifest) = crate::research::try_match(&task.intent) {
+            tracing::info!(
+                manifest = %manifest.manifest.id,
+                "Research manifest matched — collecting sources deterministically"
+            );
+            match crate::research::run_manifest(
+                manifest,
+                &task.intent,
+                task.output_schema.as_deref(),
+                keys,
+                effective_provider,
+            )
+            .await
+            {
+                Ok(result) => {
+                    tracing::info!(manifest = %manifest.manifest.id, "Research manifest completed");
+                    task.result = Some(result);
+                    task.status = TaskStatus::Completed;
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error    = %e,
+                        manifest = %manifest.manifest.id,
+                        "Research manifest failed — falling back to Exa"
+                    );
+                    // Fall through to normal multi-turn Exa path
+                }
+            }
+        }
+    }
+
     // ── First LLM turn — wrapped in retry loop ────────────────────────────────
     match call_with_retry(
         &role_label,

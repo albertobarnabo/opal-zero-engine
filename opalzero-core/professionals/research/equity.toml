@@ -1,0 +1,58 @@
+# Equity Research Manifest
+#
+# Triggers when a WebSearcher task intent contains any of the match_patterns.
+# The kernel extracts the ticker symbol, fetches all four Alpha Vantage
+# sources deterministically, then runs one LLM extraction pass.
+# No Exa calls are made — data quality is guaranteed by authoritative APIs.
+
+[manifest]
+id          = "equity_research"
+description = "Standard equity research via Alpha Vantage: fundamentals, price history, income statements, and news sentiment."
+match_patterns = [
+    "stock",
+    "equity",
+    "share price",
+    "ticker",
+    "market cap",
+    "earnings",
+    "revenue",
+]
+
+# ── Variables ─────────────────────────────────────────────────────────────────
+# Extracted from the task intent before any sources are fetched.
+
+[variables.ticker]
+# Matches a 1-5 uppercase-letter word (dollar-prefixed first, then bare)
+regex    = "\\$([A-Z]{1,5})|\\b([A-Z]{2,5})\\b"
+hint     = "the stock ticker symbol (e.g. AAPL, MSFT, NVDA, TSLA)"
+required = true
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+# Collected in order. Required sources abort the manifest path on failure
+# (Dispatcher falls back to Exa). Optional sources contribute an "unavailable"
+# note so the LLM knows the data is missing.
+
+[[sources]]
+id          = "company_overview"
+tool        = "get_company_overview"
+description = "Company fundamentals: sector, market cap, P/E ratio, EPS, dividend yield, 52-week range, analyst target"
+required    = true
+
+[[sources]]
+id          = "price_history"
+tool        = "get_price_history"
+description = "Recent daily OHLCV price history (last 100 trading days)"
+required    = true
+params      = { period = "compact" }
+
+[[sources]]
+id          = "income_statement"
+tool        = "get_income_statement"
+description = "Last 4 fiscal years: revenue, gross profit, operating income, net income, EPS"
+required    = false
+
+[[sources]]
+id          = "news_sentiment"
+tool        = "get_news_sentiment"
+description = "Recent news articles with per-ticker sentiment scores"
+required    = false
