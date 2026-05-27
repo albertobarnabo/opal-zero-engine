@@ -8,6 +8,7 @@ pub mod persistence;
 pub mod planner;
 pub mod protocol;
 pub mod registry;
+pub mod research;
 pub mod safety;
 pub mod tools;
 pub mod util;
