@@ -1,0 +1,26 @@
+{
+  "name": "memory",
+  "description": "Recall details from previous OpalZero missions. Use this tool when the user asks about a past task, references a previous result, or says things like 'last time', 'remember when', 'what did we find about', or 'the result of'. Pass a 'query' with key words from the user's request, or a 'mission_id' if the exact ID is known.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "mission_id": {
+        "type": "string",
+        "description": "Exact mission ID to retrieve (e.g. 'mission_1234_plan_trip_rome'). Use this when you know the precise ID."
+      },
+      "query": {
+        "type": "string",
+        "description": "Free-text search query. The tool will find the past mission whose intent best matches these keywords."
+      }
+    },
+    "required": []
+  },
+  "preopens": [
+    {
+      "host": "missions",
+      "guest": "/missions",
+      "readonly": true
+    }
+  ]
+}

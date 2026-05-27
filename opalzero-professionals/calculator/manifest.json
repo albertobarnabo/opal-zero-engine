@@ -1,0 +1,22 @@
+{
+  "name": "calculator",
+  "description": "Performs mathematical calculations (add, subtract, multiply, divide)",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "description": "The operation to perform: 'add', 'subtract', 'multiply', or 'divide'"
+      },
+      "values": {
+        "type": "array",
+        "description": "Array of numbers to perform the operation on",
+        "items": {
+          "type": "number"
+        }
+      }
+    },
+    "required": ["operation", "values"]
+  }
+}

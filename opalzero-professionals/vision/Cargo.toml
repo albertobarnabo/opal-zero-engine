@@ -1,10 +1,14 @@
-# Declaring an explicit [workspace] keeps this crate isolated from the root
-# OpalZero workspace.  It must be compiled separately for the wasm32-wasip1 target:
+# This crate compiles to a WASM professional for the OpalZero kernel.
+# Build it separately (wasm32-wasip1 target) then copy both the binary
+# AND the manifest to opalzero-core/professionals/:
 #
-#   cd opalzero-professionals/vision
 #   cargo build --target wasm32-wasip1 --release
 #   cp target/wasm32-wasip1/release/opalzero-vision.wasm \
 #      ../../opalzero-core/professionals/vision.wasm
+#   cp manifest.json \
+#      ../../opalzero-core/professionals/manifests/vision.json
+#
+# Or run `./build.sh` from the opalzero-professionals/ root to build all tools.
 [workspace]
 
 [package]

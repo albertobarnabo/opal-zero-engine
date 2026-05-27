@@ -1,0 +1,20 @@
+{
+  "name": "feedback",
+  "description": "Pause the mission and ask the human user a question or request approval before continuing. Use when you need a decision, confirmation, or clarification that only the user can provide — for example: 'The UI dashboard is ready, does the layout look correct?' or 'I found two conflicting prices — which one should I use?'. The mission will automatically resume once the user responds.",
+  "is_async": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string",
+        "description": "The question or decision you want the user to answer before work continues. Be specific and concise."
+      },
+      "context": {
+        "type": "string",
+        "description": "Optional summary of what was accomplished so far, to give the user enough context to answer the question."
+      }
+    },
+    "required": ["question"]
+  },
+  "preopens": []
+}

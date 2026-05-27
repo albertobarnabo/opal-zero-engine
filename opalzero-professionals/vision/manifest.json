@@ -1,0 +1,26 @@
+{
+  "name": "vision",
+  "description": "Analyze an image file and return a detailed textual description or data summary. Use this when the user provides an image (chart, photo, diagram, screenshot) and asks for analysis, description, or data extraction. Pass the file name (e.g. 'chart.png') as 'file_path'. Optionally pass a 'prompt' to focus the analysis on a specific question.",
+  "is_async": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "file_path": {
+        "type": "string",
+        "description": "File name of the image in the uploads directory (e.g. 'chart.png'). Do not include directory separators or path prefixes."
+      },
+      "prompt": {
+        "type": "string",
+        "description": "Specific analysis question or instruction (e.g. 'What data is shown in this chart?', 'Extract all visible text', 'Identify the trend'). Defaults to a general description if omitted."
+      }
+    },
+    "required": ["file_path"]
+  },
+  "preopens": [
+    {
+      "host": "uploads",
+      "guest": "/uploads",
+      "readonly": true
+    }
+  ]
+}
