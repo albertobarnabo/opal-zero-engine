@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="logo.svg" width="64" alt="OpalZero" />
+  <img src="https://albertobarnabo.com/opal-zero/opalzero-logo.svg" width="64" alt="OpalZero" />
   <h1>opal-zero</h1>
 </div>
 
