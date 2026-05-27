@@ -711,8 +711,20 @@ async fn run_loop(
         )
         .await;
 
+        // Resolve critic provider: Governor may declare a separate model for
+        // quality-check calls (cheaper / independent from the agent model).
+        // Falls back to the plan's main provider when critic_model is None.
+        let critic_model = governor.critic_model();
+        if let Some(ref m) = critic_model {
+            tracing::info!(critic_model = m.as_str(), "Governor: using dedicated critic model");
+        }
+        let critic_box: Option<Box<dyn engine::AiProvider>> = critic_model
+            .as_deref()
+            .and_then(|m| provider.with_text_model(m));
+        let critic: &dyn engine::AiProvider = critic_box.as_deref().unwrap_or(provider);
+
         match governor
-            .validate(&plan.tasks, &plan.context, &plan.original_intent, provider)
+            .validate(&plan.tasks, &plan.context, &plan.original_intent, critic)
             .await
         {
             governor::ValidationResult::Success => {

@@ -95,6 +95,20 @@ whatever you have. Partial results are always better than nothing.\n\
     fn model_for_role(&self, _role: &AgentRole) -> Option<String> {
         None
     }
+
+    /// Optional: return the model string to use for the Governor's own quality
+    /// checks inside [`validate`].
+    ///
+    /// When `Some(model)` is returned, the run loop in `lib.rs` creates a
+    /// critic-specific provider via [`AiProvider::with_text_model`] and passes
+    /// it to `validate()` instead of the plan's main provider.  This lets you
+    /// route quality assessment to a faster / cheaper model (e.g. `gpt-4o-mini`)
+    /// or to a completely different model class than the one used by agents.
+    ///
+    /// Return `None` (the default) to use the plan's provider unchanged.
+    fn critic_model(&self) -> Option<String> {
+        None
+    }
 }
 
 // ── Shared code-level gate helpers ────────────────────────────────────────────
@@ -474,11 +488,25 @@ pub fn extract_json(text: &str) -> Option<String> {
 ///
 /// For the full-quality Auditor, use
 /// [`opalzero_kernel::governor::OpalZeroGovernor`] in the `opalzero-kernel` crate.
-pub struct BuiltinGovernor;
+pub struct BuiltinGovernor {
+    /// Model to use for quality-check LLM calls.  `None` → same provider as agents.
+    /// Set via `OPALZERO_CRITIC_MODEL` env var or the builder method.
+    critic_model: Option<String>,
+}
 
 impl BuiltinGovernor {
     pub fn new() -> Self {
-        BuiltinGovernor
+        BuiltinGovernor {
+            critic_model: std::env::var("OPALZERO_CRITIC_MODEL")
+                .ok()
+                .filter(|s| !s.is_empty()),
+        }
+    }
+
+    /// Override the critic model at build time.
+    pub fn with_critic_model(mut self, model: impl Into<String>) -> Self {
+        self.critic_model = Some(model.into());
+        self
     }
 }
 
@@ -594,6 +622,10 @@ Respond ONLY with valid JSON (no markdown, no prose):\n\
                 ValidationResult::Success
             }
         }
+    }
+
+    fn critic_model(&self) -> Option<String> {
+        self.critic_model.clone()
     }
 
     fn system_prompt_for_role(&self, role: &AgentRole) -> String {
