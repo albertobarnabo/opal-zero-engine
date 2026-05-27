@@ -429,12 +429,12 @@ async fn execute(
     // These are stored in RequestKeys and threaded through the call chain, so
     // concurrent handlers never race on global environment variables.
     let openai_key  = headers.get("x-openai-key").and_then(|v| v.to_str().ok()).map(String::from);
-    let tavily_key  = headers.get("x-tavily-key").and_then(|v| v.to_str().ok()).map(String::from);
+    let exa_key     = headers.get("x-exa-key").and_then(|v| v.to_str().ok()).map(String::from);
     let av_key      = headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()).map(String::from);
 
     let request_keys = RequestKeys {
         openai_key:        openai_key.clone().filter(|k| !k.is_empty()),
-        tavily_key:        tavily_key.filter(|k| !k.is_empty()),
+        exa_key:           exa_key.filter(|k| !k.is_empty()),
         alpha_vantage_key: av_key.clone().filter(|k| !k.is_empty()),
     };
 
@@ -890,7 +890,7 @@ async fn refine_mission_handler(
     let openai_key = headers.get("x-openai-key").and_then(|v| v.to_str().ok()).map(String::from);
     let request_keys = RequestKeys {
         openai_key:        openai_key.clone().filter(|k| !k.is_empty()),
-        tavily_key:        headers.get("x-tavily-key").and_then(|v| v.to_str().ok()).map(String::from).filter(|k| !k.is_empty()),
+        exa_key:           headers.get("x-exa-key").and_then(|v| v.to_str().ok()).map(String::from).filter(|k| !k.is_empty()),
         alpha_vantage_key: headers.get("x-alpha-vantage-key").and_then(|v| v.to_str().ok()).map(String::from).filter(|k| !k.is_empty()),
     };
 
@@ -1117,18 +1117,18 @@ User intent: {}",
 /// `GET /api/v1/config/status`
 ///
 /// Reports which API keys are currently configured via environment variables.
-/// Returns HTTP 200 JSON `{ "openai": bool, "tavily": bool, "alpha_vantage": bool }` — always succeeds.
+/// Returns HTTP 200 JSON `{ "openai": bool, "exa": bool, "alpha_vantage": bool }` — always succeeds.
 async fn config_status_handler() -> impl IntoResponse {
     let openai = std::env::var("OPENAI_API_KEY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
-    let tavily = std::env::var("TAVILY_API_KEY")
+    let exa = std::env::var("EXA_API_KEY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
     let alpha_vantage = std::env::var("ALPHA_VANTAGE_API_KEY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
-    Json(json!({ "openai": openai, "tavily": tavily, "alpha_vantage": alpha_vantage }))
+    Json(json!({ "openai": openai, "exa": exa, "alpha_vantage": alpha_vantage }))
 }
 
 /// `POST /api/v1/upload`
@@ -1279,7 +1279,7 @@ async fn main() {
             axum::http::header::CONTENT_TYPE,
             axum::http::header::HeaderName::from_static("x-opalzero-key"),
             axum::http::header::HeaderName::from_static("x-openai-key"),
-            axum::http::header::HeaderName::from_static("x-tavily-key"),
+            axum::http::header::HeaderName::from_static("x-exa-key"),
             axum::http::header::HeaderName::from_static("x-alpha-vantage-key"),
             axum::http::header::HeaderName::from_static("x-opalzero-model"),
         ]);
