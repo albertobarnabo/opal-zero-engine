@@ -119,6 +119,20 @@ pub struct Task {
     /// by `calculator`, `diff`, or `sqlite_query`.
     #[serde(default)]
     pub allowed_tools: Option<Vec<String>>,
+
+    /// JSON-encoded output schema the Planner declared for this task.
+    ///
+    /// Object whose keys are the specific data points this task must contribute.
+    /// Values are type hints ("string", "number", …) for documentation.
+    ///
+    /// For **WebSearcher** tasks the Dispatcher injects these as "REQUIRED DATA
+    /// POINTS" in the prompt so the agent knows what specific facts to surface.
+    ///
+    /// For **Analyst** tasks it serves as the schema-enforcement contract when
+    /// no global `CTX_OUTPUT_SCHEMA` was provided by the client.  The global
+    /// schema always takes priority.
+    #[serde(default)]
+    pub output_schema: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
