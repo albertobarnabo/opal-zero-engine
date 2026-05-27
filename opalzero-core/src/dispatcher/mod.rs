@@ -599,36 +599,133 @@ async fn execute_with_role(
                         task.result = Some(final_result);
                         task.status = TaskStatus::Completed;
                     } else {
-                        // ── Second LLM turn — also wrapped in retry loop ──────────────────
-                        match call_with_retry(
-                            &role_label,
-                            retries,
-                            base_delay,
-                            || effective_provider.submit_tool_result(
-                                &prompt,
-                                Some(tools.clone()),
-                                &id,
-                                &name,
-                                &arguments,
-                                &tool_result,
-                            ),
-                        )
-                        .await
-                        {
-                            Ok(ToolResponse::Text(final_answer)) => {
-                                tracing::debug!(final_answer, "final answer from provider");
-                                task.result = Some(final_answer);
-                                task.status = TaskStatus::Completed;
+                        // ── Multi-turn tool-use loop ──────────────────────────────────────
+                        // The LLM may call multiple tools sequentially:
+                        //   web_search → fetch_page → fetch_page → finalize_mission_state
+                        // We keep feeding tool results back until the LLM emits a Text
+                        // answer, calls a terminal tool, the task fails, or we reach the
+                        // role's max-turns cap.
+                        let max_turns = max_tool_turns_for_role(&task.role);
+                        let mut t_result = tool_result;
+                        let mut t_id     = id;
+                        let mut t_name   = name;
+                        let mut t_args   = arguments;
+
+                        'multi_turn: for turn in 2..=max_turns {
+                            match call_with_retry(
+                                &role_label,
+                                retries,
+                                base_delay,
+                                || effective_provider.submit_tool_result(
+                                    &prompt,
+                                    Some(tools.clone()),
+                                    &t_id,
+                                    &t_name,
+                                    &t_args,
+                                    &t_result,
+                                ),
+                            )
+                            .await
+                            {
+                                Ok(ToolResponse::Text(final_answer)) => {
+                                    tracing::debug!(turn, "final text answer from provider");
+                                    task.result = Some(final_answer);
+                                    task.status = TaskStatus::Completed;
+                                    break 'multi_turn;
+                                }
+                                Ok(ToolResponse::ToolCall {
+                                    id: new_id,
+                                    name: new_name,
+                                    arguments: new_args,
+                                }) => {
+                                    tracing::info!(turn, tool = new_name, "continuation tool call");
+
+                                    // ── Write gate (continuation) ─────────────────────────
+                                    if crate::safety::is_write_invocation(&new_name, &new_args) {
+                                        match crate::safety::check_write_authorization(
+                                            &new_name,
+                                            &new_args,
+                                            &task.intent,
+                                            effective_provider,
+                                        )
+                                        .await
+                                        {
+                                            crate::safety::WriteDecision::Denied(reason) => {
+                                                task.status = TaskStatus::Failed;
+                                                task.result = Some(reason);
+                                                break 'multi_turn;
+                                            }
+                                            crate::safety::WriteDecision::Authorized => {}
+                                        }
+                                    }
+
+                                    match crate::tools::execute_tool(
+                                        &new_name,
+                                        &new_args,
+                                        &task.id.to_string(),
+                                        keys,
+                                    )
+                                    .await
+                                    {
+                                        Ok(new_result) => {
+                                            tracing::debug!(
+                                                turn,
+                                                tool = new_name,
+                                                "continuation tool executed"
+                                            );
+                                            if crate::tools::is_terminal_tool(&new_name) {
+                                                let final_result =
+                                                    if new_name == "finalize_mission_state" {
+                                                        enforce_output_schema(
+                                                            new_result,
+                                                            &new_args,
+                                                            &new_id,
+                                                            &prompt,
+                                                            &tools,
+                                                            context,
+                                                            effective_provider,
+                                                            &task.id.to_string(),
+                                                            keys,
+                                                        )
+                                                        .await
+                                                    } else {
+                                                        new_result
+                                                    };
+                                                task.result = Some(final_result);
+                                                task.status = TaskStatus::Completed;
+                                                break 'multi_turn;
+                                            }
+                                            t_result = new_result;
+                                            t_id     = new_id;
+                                            t_name   = new_name;
+                                            t_args   = new_args;
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                turn, tool = t_name, error = %e,
+                                                "continuation tool failed"
+                                            );
+                                            task.status = TaskStatus::Failed;
+                                            break 'multi_turn;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::debug!(turn, error = %err, "submit_tool_result failed");
+                                    task.status = TaskStatus::Failed;
+                                    break 'multi_turn;
+                                }
                             }
-                            Ok(ToolResponse::ToolCall { name: n, .. }) => {
-                                tracing::debug!(tool = n, "model requested another tool call — using raw result");
-                                task.result = Some(tool_result);
-                                task.status = TaskStatus::Completed;
-                            }
-                            Err(err) => {
-                                tracing::debug!(error = %err, "submit_tool_result failed");
-                                task.status = TaskStatus::Failed;
-                            }
+                        }
+
+                        // Safety net: all turns exhausted without a terminal response.
+                        if matches!(task.status, TaskStatus::Running) {
+                            tracing::warn!(
+                                max_turns, role = role_label,
+                                "max tool turns exhausted — using last tool result"
+                            );
+                            task.result = Some(t_result);
+                            task.status = TaskStatus::Completed;
                         }
                     }
                 }
@@ -982,6 +1079,30 @@ mod tests {
         assert!(out.contains("task_alpha"));
         assert!(out.contains("task_beta"));
     }
+}
+
+// ── Per-role tool-turn cap ─────────────────────────────────────────────────────
+
+/// Maximum number of tool calls a role may make in a single task execution.
+///
+/// Turn 1 is always the first `generate_response` call.  The cap applies to
+/// the continuation loop that begins at turn 2 — i.e. a cap of 6 means the
+/// LLM may call up to 6 tools before the kernel forces a text result.
+///
+/// WebSearcher gets the highest cap because iterative search–fetch–refine
+/// cycles are its core job.  Analyst is slightly lower because it usually
+/// calls `finalize_mission_state` after a handful of reads.
+fn max_tool_turns_for_role(role: &crate::protocol::AgentRole) -> u32 {
+    use crate::protocol::AgentRole;
+    std::env::var("OPALZERO_MAX_TOOL_TURNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(match role {
+            AgentRole::WebSearcher => 8,
+            AgentRole::Analyst     => 6,
+            AgentRole::Planner     => 4,
+            AgentRole::Coder       => 6,
+        })
 }
 
 // ── Structured-output enforcement ─────────────────────────────────────────────
