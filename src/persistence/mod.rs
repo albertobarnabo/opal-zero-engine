@@ -1,6 +1,24 @@
 use crate::planner::Plan;
 use crate::protocol::MissionState;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+
+// ── Persistence kill-switch ───────────────────────────────────────────────────
+// Set OPALZERO_DISABLE_PERSISTENCE=true to skip all disk I/O.
+// Useful when missions should be stateless (e.g. a shared demo server where
+// per-user storage isn't implemented yet).
+static PERSISTENCE_DISABLED: OnceLock<bool> = OnceLock::new();
+
+fn is_disabled() -> bool {
+    *PERSISTENCE_DISABLED.get_or_init(|| {
+        std::env::var("OPALZERO_DISABLE_PERSISTENCE")
+            .map(|v| {
+                let v = v.trim().to_lowercase();
+                v == "true" || v == "1"
+            })
+            .unwrap_or(false)
+    })
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct MissionSnapshot {
@@ -29,6 +47,7 @@ pub struct MissionSnapshot {
 /// Returns `None` if the `missions/` directory doesn't exist, is empty, or
 /// contains no matching completed snapshot.
 pub fn load_latest_snapshot_for_intent(intent: &str) -> Option<MissionSnapshot> {
+    if is_disabled() { return None; }
     let dir = std::path::Path::new("missions");
     if !dir.exists() {
         return None;
@@ -92,6 +111,9 @@ pub fn load_latest_snapshot_for_intent(intent: &str) -> Option<MissionSnapshot> 
 
 /// Load an existing mission snapshot from `missions/<id>.json`.
 pub fn load_snapshot(id: &str) -> Result<MissionSnapshot, String> {
+    if is_disabled() {
+        return Err(format!("Mission '{}' not found: persistence is disabled", id));
+    }
     // Basic path-traversal guard: only alphanumerics + underscores.
     if id.chars().any(|c| !c.is_alphanumeric() && c != '_') {
         return Err(format!("Invalid mission ID: '{}'", id));
@@ -113,6 +135,7 @@ pub fn save_snapshot_with_id(
     status: &str,
     id: &str,
 ) -> Result<(), String> {
+    if is_disabled() { return Ok(()); }
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -187,6 +210,14 @@ pub fn save_snapshot(
     original_task_count: usize,
     status: &str,
 ) -> Result<String, String> {
+    if is_disabled() {
+        // Return a generated ID without touching disk.
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        return Ok(format!("mission_{}_{}", timestamp, crate::util::slugify(&plan.original_intent, 5)));
+    }
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
