@@ -93,7 +93,7 @@ export interface ConfigStatus {
 export interface OpalZeroClientConfig {
     /** e.g. "http://localhost:8080" */
     baseUrl: string;
-    /** X-Axion-Key — omit for local dev (when AXION_API_KEY is not set on the server) */
+    /** X-Axion-Key — omit for local dev (when OPALZERO_API_KEY is not set on the server) */
     apiKey?: string;
     /** X-OpenAI-Key — optional per-request override */
     openAiKey?: string;

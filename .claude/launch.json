@@ -13,6 +13,20 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["serve", "-p", "3002", "."],
       "port": 3002
+    },
+    {
+      "name": "opal-zero-landing-page",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173,
+      "cwd": "/Users/albi/Projects/albertobarnabo.it/apps/opal-zero-landing-page"
+    },
+    {
+      "name": "brief",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "cwd": "/Users/albi/Projects/albertobarnabo.it/apps/brief-your-interview-edge"
     }
   ]
 }

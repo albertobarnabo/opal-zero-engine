@@ -50,12 +50,12 @@ That's it. The kernel plans, searches, analyses, and validates. You get structur
 
 ## Providers
 
-opalzero-server supports multiple AI backends, selected via the `AXION_PROVIDER` environment variable.
+opalzero-server supports multiple AI backends, selected via the `OPALZERO_PROVIDER` environment variable.
 
 ### OpenAI (default)
 
 ```bash
-AXION_PROVIDER=openai OPALZERO_MODEL=gpt-4o-mini OPENAI_API_KEY=sk-... cargo run --bin opalzero-server
+OPALZERO_PROVIDER=openai OPALZERO_MODEL=gpt-4o-mini OPENAI_API_KEY=sk-... cargo run --bin opalzero-server
 ```
 
 ### Ollama (local, free)
@@ -64,7 +64,7 @@ Run any model locally with no API key required. OpalZero relies on tool calling,
 
 ```bash
 ollama pull llama3.1:8b
-AXION_PROVIDER=ollama OPALZERO_MODEL=llama3.1:8b cargo run --bin opalzero-server
+OPALZERO_PROVIDER=ollama OPALZERO_MODEL=llama3.1:8b cargo run --bin opalzero-server
 ```
 
 **Recommended models** (all support tool calling):
@@ -80,7 +80,7 @@ AXION_PROVIDER=ollama OPALZERO_MODEL=llama3.1:8b cargo run --bin opalzero-server
 ### Anthropic Claude
 
 ```bash
-AXION_PROVIDER=claude OPALZERO_MODEL=claude-sonnet-4-5 ANTHROPIC_API_KEY=sk-ant-... cargo run --bin opalzero-server
+OPALZERO_PROVIDER=claude OPALZERO_MODEL=claude-sonnet-4-5 ANTHROPIC_API_KEY=sk-ant-... cargo run --bin opalzero-server
 ```
 
 Defaults to `claude-sonnet-4-5`. Haiku is automatically used for cheaper sub-tasks (web search, code execution) while the selected model handles planning and analysis.
@@ -88,10 +88,10 @@ Defaults to `claude-sonnet-4-5`. Haiku is automatically used for cheaper sub-tas
 ### Any OpenAI-compatible endpoint (Groq, Together, Mistral…)
 
 ```bash
-AXION_PROVIDER=compatible \
-  AXION_BASE_URL=https://api.groq.com/openai/v1 \
+OPALZERO_PROVIDER=compatible \
+  OPALZERO_BASE_URL=https://api.groq.com/openai/v1 \
   OPALZERO_MODEL=llama-3.3-70b-versatile \
-  AXION_API_KEY=gsk_... \
+  OPALZERO_API_KEY=gsk_... \
   cargo run --bin opalzero-server
 ```
 
@@ -99,10 +99,10 @@ AXION_PROVIDER=compatible \
 
 | Env var | Default | Description |
 |---|---|---|
-| `AXION_PROVIDER` | `openai` | Backend: `openai`, `claude`, `ollama`, or `compatible` |
+| `OPALZERO_PROVIDER` | `openai` | Backend: `openai`, `claude`, `ollama`, or `compatible` |
 | `OPALZERO_MODEL` | `gpt-4o-mini` / `llama3.1:8b` | Model name (default varies by provider) |
-| `AXION_BASE_URL` | — | Required when `AXION_PROVIDER=compatible` |
-| `AXION_API_KEY` | — | API key for compatible endpoints |
+| `OPALZERO_BASE_URL` | — | Required when `OPALZERO_PROVIDER=compatible` |
+| `OPALZERO_API_KEY` | — | API key for compatible endpoints |
 
 ---
 
@@ -190,7 +190,7 @@ Full methodology, scoring rubrics, per-framework profiles, and performance numbe
 |---|---|---|
 | `OPENAI_API_KEY` | required | LLM provider key |
 | `ALPHA_VANTAGE_API_KEY` | optional | Enables financial data tools |
-| `ANTHROPIC_API_KEY` | optional | Required when `AXION_PROVIDER=claude` |
+| `ANTHROPIC_API_KEY` | optional | Required when `OPALZERO_PROVIDER=claude` |
 | `AXION_SMTP_HOST` | optional | SMTP host — enables the `send_email` tool |
 | `AXION_SMTP_USER` | optional | SMTP username |
 | `AXION_SMTP_PASS` | optional | SMTP password / app password |
