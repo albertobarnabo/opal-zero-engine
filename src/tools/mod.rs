@@ -30,17 +30,17 @@ struct VisionProxy {
 #[derive(Clone, Debug, Default)]
 pub struct RequestKeys {
     pub openai_key:        Option<String>,
-    pub tavily_key:        Option<String>,
+    pub exa_key:           Option<String>,
     pub alpha_vantage_key: Option<String>,
 }
 
 impl RequestKeys {
-    /// Return the effective Tavily key: explicit override → env var → None.
-    pub fn tavily(&self) -> Option<String> {
-        if let Some(ref k) = self.tavily_key {
+    /// Return the effective Exa key: explicit override → env var → None.
+    pub fn exa(&self) -> Option<String> {
+        if let Some(ref k) = self.exa_key {
             if !k.is_empty() { return Some(k.clone()); }
         }
-        std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty())
+        std::env::var("EXA_API_KEY").ok().filter(|k| !k.is_empty())
     }
 
     /// Return the effective Alpha Vantage key: explicit override → env var → None.
@@ -117,7 +117,7 @@ pub async fn execute_tool(
     // ── 2. Async native tools ─────────────────────────────────────────────────
     // Handled before the synchronous dispatch match.
     if name == "web_search" {
-        return execute_web_search(arguments, keys.tavily().as_deref()).await;
+        return execute_web_search(arguments, keys.exa().as_deref()).await;
     }
     // Vision native fallback: runs when vision.wasm is absent (tests, offline).
     if name == "vision" {
@@ -591,9 +591,12 @@ fn execute_read_file(arguments: &str) -> Result<String, String> {
     Ok(format!("File: {}\nSize: {} bytes\n\n{}", name, content.len(), content))
 }
 
-/// `tavily_key_override` is the per-request Tavily key (already resolved via
-/// `RequestKeys::tavily()`); pass `None` to use only the env var.
-async fn execute_web_search(arguments: &str, tavily_key_override: Option<&str>) -> Result<String, String> {
+/// Dispatch web_search to Exa (neural semantic search) when a key is present,
+/// or fall back to the offline simulation for dev/test environments.
+///
+/// `exa_key_override` is the per-request Exa key (already resolved via
+/// `RequestKeys::exa()`); pass `None` to use only the env var.
+async fn execute_web_search(arguments: &str, exa_key_override: Option<&str>) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct SearchArgs {
         query: String,
@@ -602,66 +605,94 @@ async fn execute_web_search(arguments: &str, tavily_key_override: Option<&str>) 
     let args: SearchArgs = serde_json::from_str(arguments)
         .map_err(|e| format!("Failed to parse search arguments: {}", e))?;
 
-    // Use the per-request key when provided; otherwise fall back to the env var.
-    // Never call set_var — read directly to avoid the concurrent-handler race.
-    let effective_key = tavily_key_override
+    let effective_key = exa_key_override
         .map(|k| k.to_owned())
-        .or_else(|| std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty()));
+        .or_else(|| std::env::var("EXA_API_KEY").ok().filter(|k| !k.is_empty()));
 
     match effective_key {
-        Some(key) => tavily_search(&args.query, &key).await,
+        Some(key) => exa_search(&args.query, &key).await,
         None => Ok(simulated_search(&args.query)),
     }
 }
 
-async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
+/// Call the Exa neural-search API and return formatted results.
+///
+/// Exa uses embedding-based retrieval instead of keyword matching, which
+/// gives substantially better results for company research, people lookups,
+/// and nuanced analytical queries.  Text content is extracted inline so the
+/// LLM can often skip a separate `fetch_page` call for the top results.
+async fn exa_search(query: &str, api_key: &str) -> Result<String, String> {
     #[derive(serde::Serialize)]
-    struct TavilyRequest<'a> {
-        api_key: &'a str,
+    struct ExaRequest<'a> {
         query: &'a str,
-        search_depth: &'a str,
-        max_results: u8,
-        include_images: bool,
+        #[serde(rename = "numResults")]
+        num_results: u8,
+        #[serde(rename = "useAutoprompt")]
+        use_autoprompt: bool,
+        #[serde(rename = "type")]
+        search_type: &'a str,
+        contents: ExaContents,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ExaContents {
+        text: ExaText,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ExaText {
+        #[serde(rename = "maxCharacters")]
+        max_characters: u32,
+        #[serde(rename = "includeHtmlTags")]
+        include_html_tags: bool,
     }
 
     #[derive(serde::Deserialize)]
-    struct TavilyResponse {
-        results: Vec<TavilyResult>,
+    struct ExaResponse {
+        results: Vec<ExaResult>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ExaResult {
+        url:   String,
+        title: Option<String>,
         #[serde(default)]
-        images: Vec<String>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct TavilyResult {
-        title: String,
-        url: String,
-        content: String,
+        text:  String,
+        #[serde(rename = "publishedDate")]
+        published_date: Option<String>,
     }
 
     let client = reqwest::Client::new();
     let resp = client
-        .post("https://api.tavily.com/search")
-        .json(&TavilyRequest {
-            api_key,
+        .post("https://api.exa.ai/search")
+        .header("x-api-key", api_key)
+        .header("content-type", "application/json")
+        .json(&ExaRequest {
             query,
-            search_depth: "advanced",
-            max_results: 8,
-            include_images: true,
+            num_results: 8,
+            use_autoprompt: true,
+            search_type: "auto",
+            contents: ExaContents {
+                text: ExaText {
+                    max_characters: 3_000,
+                    include_html_tags: false,
+                },
+            },
         })
         .send()
         .await
-        .map_err(|e| format!("Tavily request failed: {}", e))?;
+        .map_err(|e| format!("Exa request failed: {}", e))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Tavily API error {}: {}", status, body));
+        return Err(format!("Exa API error {}: {}", status, body));
     }
 
-    let body: TavilyResponse = resp
+    let body: ExaResponse = resp
         .json()
         .await
-        .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
+        .map_err(|e| format!("Failed to parse Exa response: {}", e))?;
 
     if body.results.is_empty() {
         return Ok(format!("No results found for '{}'.", query));
@@ -671,24 +702,22 @@ async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
         .results
         .iter()
         .enumerate()
-        .map(|(i, r)| format!("{}. {}\n   {}\n   Source: {}", i + 1, r.title, r.content, r.url))
+        .map(|(i, r)| {
+            let title = r.title.as_deref().unwrap_or("(no title)");
+            let date  = r.published_date.as_deref()
+                .map(|d| format!(" [{}]", &d[..d.len().min(10)]))
+                .unwrap_or_default();
+            let snippet = if r.text.is_empty() {
+                String::new()
+            } else {
+                format!("\n   {}", r.text.chars().take(500).collect::<String>())
+            };
+            format!("{}. {}{}\n   Source: {}{}", i + 1, title, date, r.url, snippet)
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    let mut output = format!("Live search results for '{}':\n\n{}", query, formatted);
-
-    if !body.images.is_empty() {
-        let image_lines = body.images
-            .iter()
-            .take(3)
-            .enumerate()
-            .map(|(i, url)| format!("  Image {}: {}", i + 1, url))
-            .collect::<Vec<_>>()
-            .join("\n");
-        output.push_str(&format!("\n\nVerified images for this topic:\n{}", image_lines));
-    }
-
-    Ok(output)
+    Ok(format!("Search results for '{}':\n\n{}", query, formatted))
 }
 
 // ── Vision tool ───────────────────────────────────────────────────────────────
