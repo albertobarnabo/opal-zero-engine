@@ -644,8 +644,8 @@ async fn tavily_search(query: &str, api_key: &str) -> Result<String, String> {
         .json(&TavilyRequest {
             api_key,
             query,
-            search_depth: "basic",
-            max_results: 5,
+            search_depth: "advanced",
+            max_results: 8,
             include_images: true,
         })
         .send()
