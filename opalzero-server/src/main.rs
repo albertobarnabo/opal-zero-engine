@@ -15,12 +15,22 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use governor::{Quota, RateLimiter};
+use governor::clock::{Clock, DefaultClock};
+use governor::state::keyed::DefaultKeyedStateStore;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::net::IpAddr;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use tower_http::cors::{AllowOrigin, CorsLayer};
+
+// ── Per-IP rate limiter ───────────────────────────────────────────────────────
+/// Keyed rate limiter: one bucket per client IP address.
+/// Enabled when `OPALZERO_RATE_LIMIT_PER_HOUR` is set to a positive integer.
+type IpRateLimiter = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
 
 // ── UI presentation types (server layer only) ─────────────────────────────────
 
@@ -168,8 +178,10 @@ type InFlight = Arc<Mutex<HashSet<String>>>;
 /// that occurs when multiple handlers call `std::env::set_var` concurrently.
 #[derive(Clone)]
 struct AppState {
-    provider:  Arc<dyn AiProvider>,
-    in_flight: InFlight,
+    provider:     Arc<dyn AiProvider>,
+    in_flight:    InFlight,
+    /// `None` means rate limiting is disabled (local dev default).
+    rate_limiter: Option<Arc<IpRateLimiter>>,
 }
 
 /// Build the global provider from environment variables.
@@ -287,6 +299,49 @@ struct MissionSummary {
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
 
+/// Extract the real client IP from `x-forwarded-for` (set by Fly.io and most
+/// reverse proxies) or fall back to localhost as a safe default.
+fn extract_client_ip(headers: &axum::http::HeaderMap) -> IpAddr {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .and_then(|s| s.trim().parse::<IpAddr>().ok())
+        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+}
+
+/// Returns a `429 Too Many Requests` response if the rate limiter is enabled
+/// and the client IP has exceeded the per-hour quota. Returns `None` otherwise.
+fn check_rate_limit(
+    limiter: &Option<Arc<IpRateLimiter>>,
+    headers: &axum::http::HeaderMap,
+) -> Option<axum::response::Response> {
+    let limiter = limiter.as_ref()?;
+    let ip = extract_client_ip(headers);
+    match limiter.check_key(&ip) {
+        Ok(_) => None,
+        Err(not_until) => {
+            let retry_secs = not_until
+                .wait_time_from(DefaultClock::default().now())
+                .as_secs();
+            Some(
+                (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    [(axum::http::header::RETRY_AFTER, retry_secs.to_string())],
+                    ApiError::new(
+                        "RATE_LIMITED",
+                        &format!(
+                            "Brief limit reached — please wait {} seconds before running another.",
+                            retry_secs
+                        ),
+                    ),
+                )
+                    .into_response(),
+            )
+        }
+    }
+}
+
 async fn auth_middleware(
     headers: axum::http::HeaderMap,
     request: axum::extract::Request,
@@ -366,6 +421,10 @@ async fn execute(
     headers: HeaderMap,
     Json(req): Json<TaskRequest>,
 ) -> Response {
+    if let Some(resp) = check_rate_limit(&state.rate_limiter, &headers) {
+        return resp;
+    }
+
     // Capture per-request API keys from custom headers.
     // These are stored in RequestKeys and threaded through the call chain, so
     // concurrent handlers never race on global environment variables.
@@ -822,6 +881,10 @@ async fn refine_mission_handler(
     AxumPath(id): AxumPath<String>,
     Json(req): Json<RefineRequest>,
 ) -> Response {
+    if let Some(resp) = check_rate_limit(&state.rate_limiter, &headers) {
+        return resp;
+    }
+
     let in_flight = state.in_flight.clone();
     // Capture per-request API keys — same pattern as the execute handler.
     let openai_key = headers.get("x-openai-key").and_then(|v| v.to_str().ok()).map(String::from);
@@ -1236,9 +1299,27 @@ async fn main() {
     // SSE stream.  Prevents concurrent refinements for the same mission.
     let in_flight: InFlight = Arc::new(Mutex::new(HashSet::new()));
 
+    // ── Per-IP rate limiter ───────────────────────────────────────────────────
+    // Enabled when OPALZERO_RATE_LIMIT_PER_HOUR is set to a positive integer.
+    // Disabled in local dev (env var absent) to avoid friction.
+    let rate_limiter: Option<Arc<IpRateLimiter>> =
+        std::env::var("OPALZERO_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .and_then(NonZeroU32::new)
+            .map(|n| {
+                tracing::info!(limit_per_hour = n.get(), "Rate limiting enabled");
+                Arc::new(IpRateLimiter::keyed(Quota::per_hour(n)))
+            });
+
+    if rate_limiter.is_none() {
+        tracing::info!("Rate limiting disabled (OPALZERO_RATE_LIMIT_PER_HOUR not set)");
+    }
+
     let app_state = AppState {
-        provider:  startup_provider,
+        provider: startup_provider,
         in_flight,
+        rate_limiter,
     };
 
     // All routes except /health are versioned under /api/v1 and protected by
