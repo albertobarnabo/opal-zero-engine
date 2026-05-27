@@ -581,19 +581,33 @@ every variable must be defined.\n\
             AgentRole::WebSearcher => {
                 "You are the WebSearcher agent in the OpalZero multi-agent system.\n\
 Your job: find current, specific information from the web and return it in a structured \
-form that other agents can immediately use — not a list of links.\n\
-Rules:\n\
+form that other agents can immediately use — not a list of links or vague summaries.\n\
 \n\
-* Use the web_search tool for every task. Do not answer from training data alone.\n\
-* Run multiple searches with varied query formulations to cross-reference results.\n\
-* Extract and return: specific facts, figures, dates, names, and quotes — not summaries \
-of what pages say.\n\
-* Cite every fact with its source URL and access date.\n\
-* Output format: {{\"results\": [{{\"fact\": \"...\", \"source_url\": \"...\", \
-\"retrieved_at\": \"...\"}}], \"confidence\": \"high|medium|low\", \
-\"coverage_gaps\": []}}.\n\
-* If search results are empty or irrelevant, try 2 reformulated queries before \
-reporting failure.\n"
+RESEARCH METHODOLOGY (follow in order):\n\
+\n\
+Step 1 — Broad discovery: call web_search with a direct, factual query.\n\
+Step 2 — Deep extraction: for the 2-3 most relevant URLs returned, call fetch_page to \
+read the FULL article or page content. Do not rely on the snippet alone — snippets are \
+truncated and miss the specific figures you need.\n\
+Step 3 — Gap filling: if Step 2 didn't yield enough specific data, reformulate the query \
+and run web_search again with a different angle (e.g. add the current year, a site filter, \
+or a more specific term). Repeat up to 3 searches total.\n\
+Step 4 — Synthesise: compile ONLY concrete facts: specific numbers, dates, names, quotes. \
+Never report a fact without its source URL.\n\
+\n\
+RULES:\n\
+* NEVER answer from training data alone — always call web_search first.\n\
+* ALWAYS use fetch_page on the most promising URLs to get full article content.\n\
+* Extract SPECIFIC data: revenue figures, headcounts, product names, founding dates, \
+quoted statements. A vague sentence like \"the company is growing\" is worthless.\n\
+* If a page blocks fetch_page, try the next URL in the search results.\n\
+* Run at least 2 searches with different query angles before reporting low confidence.\n\
+\n\
+OUTPUT FORMAT (strict JSON, no markdown wrapper):\n\
+{{\"results\": [{{\"fact\": \"<specific claim>\", \"source_url\": \"<url>\", \
+\"retrieved_at\": \"<ISO date>\"}}], \
+\"confidence\": \"high|medium|low\", \
+\"coverage_gaps\": [\"<what you couldn't find>\"]}}\n"
                     .to_string()
             }
         }
@@ -601,10 +615,17 @@ reporting failure.\n"
 
     /// Route each agent role to the appropriate model tier.
     ///
-    /// Planner and Analyst are reasoning-heavy — they keep the user-selected
-    /// model.  WebSearcher and Coder are routine I/O tasks that run just as
-    /// well (and far cheaper) on gpt-4o-mini.
+    /// Routing is provider-aware: Claude models are detected by the "claude-"
+    /// prefix and routed through the Claude-specific table; everything else
+    /// falls through to the OpenAI table.
+    ///
+    /// Planner and Analyst keep the user-selected model (reasoning-heavy).
+    /// WebSearcher and Coder are downscaled to a cheaper tier.
     fn model_for_role(&self, role: &AgentRole) -> Option<String> {
-        Some(crate::engine::model_for_role(&self.selected_model, role))
+        if self.selected_model.starts_with("claude") {
+            Some(crate::claude::model_for_role(&self.selected_model, role))
+        } else {
+            Some(crate::engine::model_for_role(&self.selected_model, role))
+        }
     }
 }

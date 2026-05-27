@@ -25,7 +25,7 @@ fn default_max_tokens() -> u32 {
     std::env::var("OPALZERO_MAX_TOKENS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(4096)
+        .unwrap_or(8192)
 }
 
 fn default_temperature() -> f32 {

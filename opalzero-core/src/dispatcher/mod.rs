@@ -8,9 +8,9 @@ use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool, CTX_OUT
 use crate::tools::RequestKeys;
 
 // Maximum characters of prior-task context to include in an agent's prompt.
-// At ~4 chars/token this is ≈1 500 tokens, leaving ≥2 500 tokens of headroom
-// for the agent's own reasoning at the default 4 096 max_tokens ceiling.
-const CONTEXT_CHAR_BUDGET: usize = 6_000;
+// At ~4 chars/token this is ≈3 000 tokens — enough for the Analyst to see full
+// WebSearcher findings without hitting the 4 096 max_tokens ceiling.
+const CONTEXT_CHAR_BUDGET: usize = 12_000;
 
 // ── Retry policy constants (overridable via environment variables) ─────────────
 const MAX_LLM_RETRIES: u32    = 3;
@@ -37,7 +37,7 @@ fn retry_base_delay_ms() -> u64 {
 /// Individual entries are truncated at 600 characters rather than dropped
 /// entirely, so every task always contributes at least a summary.
 fn build_context_window(bus: &ContextBus, char_budget: usize) -> String {
-    const ENTRY_CAP: usize = 600;
+    const ENTRY_CAP: usize = 2_000;
 
     // Collect all entries and sort longest-key-first (recency heuristic).
     let mut entries: Vec<(&String, &String)> = bus.data.iter().collect();
