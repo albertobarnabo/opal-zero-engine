@@ -48,7 +48,7 @@ fn build_context_window(bus: &ContextBus, char_budget: usize) -> String {
 
     for (slug, result) in &entries {
         let body: String = if result.len() > ENTRY_CAP {
-            let safe_end = result.floor_char_boundary(ENTRY_CAP);
+            let safe_end = (0..=ENTRY_CAP.min(result.len())).rev().find(|&i| result.is_char_boundary(i)).unwrap_or(0);
             format!("{}… [truncated]", &result[..safe_end])
         } else {
             result.to_string()

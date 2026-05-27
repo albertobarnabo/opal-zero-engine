@@ -78,7 +78,7 @@ pub async fn execute_fetch_page(arguments: &str) -> Result<String, String> {
 
     let text = html_to_text(&html);
     let out = if text.chars().count() > MAX_OUTPUT_CHARS {
-        let end = text.floor_char_boundary(MAX_OUTPUT_CHARS);
+        let end = (0..=MAX_OUTPUT_CHARS.min(text.len())).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
         format!("{}… [truncated — page had more content]", &text[..end])
     } else {
         text

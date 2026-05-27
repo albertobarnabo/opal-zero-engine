@@ -56,7 +56,7 @@ pub fn execute_extract_pdf_text(arguments: &str) -> Result<String, String> {
     let char_count = text.chars().count();
 
     let (out, truncated) = if char_count > MAX_OUTPUT_CHARS {
-        let end = text.floor_char_boundary(MAX_OUTPUT_CHARS);
+        let end = (0..=MAX_OUTPUT_CHARS.min(text.len())).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
         (
             format!("{}… [truncated — {} total chars across ~{} pages]",
                 &text[..end], char_count, page_count),
