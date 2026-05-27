@@ -331,11 +331,34 @@ async fn execute_with_role(
         tracing::info!(role = task.role.as_str(), model = m.as_str(), "role model override");
     }
 
+    // ── Effective schema resolution ───────────────────────────────────────────
+    // Priority order for Analyst tasks:
+    //   1. Global CTX_OUTPUT_SCHEMA (client contract — always wins)
+    //   2. task.output_schema (Planner-declared contract for this specific task)
+    // For non-Analyst roles the effective schema is used only for data-point
+    // injection (WebSearcher) and is not used for finalize enforcement.
+    let effective_schema_str: Option<&str> = match task.role {
+        crate::protocol::AgentRole::Analyst => {
+            context.data.get(CTX_OUTPUT_SCHEMA)
+                .map(|s| s.as_str())
+                .or_else(|| task.output_schema.as_deref())
+        }
+        _ => None,
+    };
+
     // ── Schema contract extracted before prompt assembly ─────────────────────
-    // When the caller supplied an output schema it MUST lead the Analyst prompt
-    // so it overrides the generic component-format examples that follow.
-    let schema_contract: Option<String> =
-        context.data.get(CTX_OUTPUT_SCHEMA).and_then(|s| {
+    // For Analyst: uses effective_schema_str (global > task-level).
+    // For Planner: still uses the global schema so replanning tasks align with
+    //              the client's expectations.
+    // Other roles: no schema_contract (handled via data-point injection below).
+    let schema_contract: Option<String> = {
+        let planner_schema = if matches!(task.role, crate::protocol::AgentRole::Planner) {
+            context.data.get(CTX_OUTPUT_SCHEMA).map(|s| s.as_str())
+        } else {
+            None
+        };
+        let source = effective_schema_str.or(planner_schema);
+        source.and_then(|s| {
             serde_json::from_str::<serde_json::Value>(s).ok().and_then(|v| {
                 v.as_object().map(|obj| {
                     let keys: String = obj
@@ -367,7 +390,8 @@ async fn execute_with_role(
                 })
             })
         })
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+    };
 
     // ── System prefix — use minimal schema-aware prompt when schema is present ─
     let system_prefix =
@@ -396,6 +420,30 @@ async fn execute_with_role(
     }
 
     prompt.push_str(&format!("\nTASK: {}", task.intent));
+
+    // ── WebSearcher data-point injection ──────────────────────────────────────
+    // When the Planner declared an output_schema for this WebSearcher task,
+    // inject the required keys so the agent knows exactly what facts to surface.
+    if matches!(task.role, crate::protocol::AgentRole::WebSearcher) {
+        if let Some(ref schema_str) = task.output_schema {
+            if let Ok(schema) = serde_json::from_str::<serde_json::Value>(schema_str) {
+                if let Some(obj) = schema.as_object() {
+                    if !obj.is_empty() {
+                        let keys_list = obj
+                            .keys()
+                            .map(|k| format!("  - {k}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        prompt.push_str(&format!(
+                            "\n\nREQUIRED DATA POINTS — your research MUST surface specific \
+                             values for ALL of these keys:\n{keys_list}\n\
+                             Include these exact key names and their values in your findings.",
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     // Get available tools for this role, then strip any the task has blacklisted
     // (set by the re-planner when a tool has already failed once).
@@ -467,11 +515,10 @@ async fn execute_with_role(
     };
 
     // ── Schema-aware tool enrichment ──────────────────────────────────────────
-    // When CTX_OUTPUT_SCHEMA is present, rewrite finalize_mission_state's
-    // structured_data_payload description to list the exact required keys so
-    // the LLM knows from the tool schema itself — not just the system prompt —
-    // what it MUST include.
-    let tools = apply_schema_enrichment(tools, context.data.get(CTX_OUTPUT_SCHEMA).map(|s| s.as_str()));
+    // Rewrite finalize_mission_state's structured_data_payload description to
+    // list the required keys so the LLM knows from the tool schema itself.
+    // Uses effective_schema_str (global schema > task-level schema fallback).
+    let tools = apply_schema_enrichment(tools, effective_schema_str);
 
     let retries    = max_llm_retries();
     let base_delay = retry_base_delay_ms();
@@ -587,7 +634,7 @@ async fn execute_with_role(
                                 &id,
                                 &prompt,
                                 &tools,
-                                context,
+                                effective_schema_str,
                                 effective_provider,
                                 &task.id.to_string(),
                                 keys,
@@ -682,7 +729,7 @@ async fn execute_with_role(
                                                             &new_id,
                                                             &prompt,
                                                             &tools,
-                                                            context,
+                                                            effective_schema_str,
                                                             effective_provider,
                                                             &task.id.to_string(),
                                                             keys,
@@ -928,6 +975,7 @@ mod tests {
             depends_on: depends_on.into_iter().map(|s| s.to_string()).collect(),
             excluded_tools: vec![],
             allowed_tools: None,
+            output_schema: None,
         }
     }
 
@@ -1201,13 +1249,15 @@ async fn enforce_output_schema(
     initial_id:     &str,
     prompt:         &str,
     tools:          &[Tool],
-    context:        &ContextBus,
+    // Effective schema string (already resolved by the caller — global schema
+    // takes priority, task-level schema is the fallback).
+    effective_schema: Option<&str>,
     provider:       &dyn AiProvider,
     task_id:        &str,
     keys:           &RequestKeys,
 ) -> String {
-    let schema_str = match context.data.get(CTX_OUTPUT_SCHEMA) {
-        Some(s) if !s.is_empty() => s.clone(),
+    let schema_str = match effective_schema {
+        Some(s) if !s.is_empty() => s.to_string(),
         _ => return initial_result,
     };
 

@@ -93,7 +93,8 @@ impl Plan {
             result: None,
             depends_on: dependencies,
             excluded_tools,
-            allowed_tools: None, // populated by add_task_with_tools or the planner
+            allowed_tools: None,  // populated by add_task_with_tools or the planner
+            output_schema: None,  // populated by the planner via build_plan_from_intent
         };
         self.tasks.push(task);
         slug
@@ -170,9 +171,19 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
          - If unsure, omit \"tools\" and the role defaults will be used.\n\
          - Example: a task that only searches should declare \
            \"tools\":[\"web_search\",\"fetch_page\"]\n\n\
+         Per-task output contracts — output_schema field (strongly recommended):\n\
+         - Add an \"output_schema\" JSON object declaring the specific data keys \
+           this task must produce. Values are type hints (\"string\", \"number\", etc.).\n\
+         - WebSearcher tasks: declare the exact fact keys to find \
+           (e.g. {{\"revenue_2024\":\"number\", \"ceo_name\":\"string\"}}).\n\
+         - The final Analyst task: declare ALL keys that must appear in \
+           data_payload — this is the authoritative contract for the mission output.\n\
+         - Consistency is key: every key a WebSearcher declares should appear \
+           in the Analyst's output_schema so nothing gets lost in synthesis.\n\n\
          Respond ONLY with valid JSON, no markdown:\n\
          {{\"tasks\":[{{\"description\":\"...\",\"role\":\"WebSearcher\",\
-         \"depends_on\":[],\"tools\":[\"web_search\",\"fetch_page\"]}}]}}\n\n\
+         \"depends_on\":[],\"tools\":[\"web_search\",\"fetch_page\"],\
+         \"output_schema\":{{\"company_name\":\"string\",\"revenue\":\"number\"}}}}]}}\n\n\
          User intent: {}",
         intent,
         slug_note = SLUG_FORMAT_NOTE,
@@ -190,6 +201,9 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
             /// Optional per-task tool allowlist declared by the planner.
             #[serde(default)]
             tools: Option<Vec<String>>,
+            /// Optional typed output contract: keys = data points, values = type hints.
+            #[serde(default)]
+            output_schema: Option<serde_json::Value>,
         }
 
         let json_str = crate::governor::extract_json(&text).unwrap_or_default();
@@ -205,10 +219,13 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
                     // Analyst tasks are wired below after we know the real slugs.
                     if !matches!(role, AgentRole::Analyst) {
                         let slug = plan.add_task(&t.description, t.depends_on.clone(), role);
-                        // Apply planner-declared skill set when present.
-                        if let Some(ref tools) = t.tools {
-                            if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                        // Apply planner-declared skill set and output schema when present.
+                        if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                            if let Some(ref tools) = t.tools {
                                 task.allowed_tools = Some(tools.clone());
+                            }
+                            if let Some(ref schema) = t.output_schema {
+                                task.output_schema = serde_json::to_string(schema).ok();
                             }
                         }
                     }
@@ -230,10 +247,13 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
                 for t in &parsed.tasks {
                     if matches!(t.role.as_str(), "Analyst") {
                         let slug = plan.add_task(&t.description, non_analyst_slugs.clone(), AgentRole::Analyst);
-                        // Apply planner-declared skill set when present.
-                        if let Some(ref tools) = t.tools {
-                            if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                        // Apply planner-declared skill set and output schema when present.
+                        if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                            if let Some(ref tools) = t.tools {
                                 task.allowed_tools = Some(tools.clone());
+                            }
+                            if let Some(ref schema) = t.output_schema {
+                                task.output_schema = serde_json::to_string(schema).ok();
                             }
                         }
                     }
@@ -309,6 +329,8 @@ pub async fn build_refinement_plan(
             role: String,
             #[serde(default)]
             depends_on: Vec<String>,
+            #[serde(default)]
+            output_schema: Option<serde_json::Value>,
         }
 
         let json_str = crate::governor::extract_json(&text).unwrap_or_default();
@@ -320,7 +342,12 @@ pub async fn build_refinement_plan(
                         "Coder"   => AgentRole::Coder,
                         _         => AgentRole::WebSearcher,
                     };
-                    plan.add_task(&t.description, t.depends_on, role);
+                    let slug = plan.add_task(&t.description, t.depends_on, role);
+                    if let Some(ref schema) = t.output_schema {
+                        if let Some(task) = plan.tasks.iter_mut().find(|t| t.slug == slug) {
+                            task.output_schema = serde_json::to_string(schema).ok();
+                        }
+                    }
                 }
                 return plan;
             }

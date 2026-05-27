@@ -1017,6 +1017,7 @@ mod tests {
             depends_on: vec![],
             excluded_tools: vec![],
             allowed_tools: None,
+            output_schema: None,
         };
         plan.tasks.push(task);
         plan
@@ -1107,6 +1108,7 @@ mod tests {
             depends_on: vec![],
             excluded_tools: vec![],
             allowed_tools: None,
+            output_schema: None,
         };
         plan.tasks.push(task);
 
@@ -1135,6 +1137,7 @@ mod tests {
             depends_on: vec![],
             excluded_tools: vec![],
             allowed_tools: None,
+            output_schema: None,
         };
         plan.tasks.push(task);
 
