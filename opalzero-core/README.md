@@ -91,7 +91,6 @@ Defaults to `claude-sonnet-4-5`. Haiku is automatically used for cheaper sub-tas
 OPALZERO_PROVIDER=compatible \
   OPALZERO_BASE_URL=https://api.groq.com/openai/v1 \
   OPALZERO_MODEL=llama-3.3-70b-versatile \
-  OPALZERO_API_KEY=gsk_... \
   cargo run --bin opalzero-server
 ```
 
@@ -102,7 +101,6 @@ OPALZERO_PROVIDER=compatible \
 | `OPALZERO_PROVIDER` | `openai` | Backend: `openai`, `claude`, `ollama`, or `compatible` |
 | `OPALZERO_MODEL` | `gpt-4o-mini` / `llama3.1:8b` | Model name (default varies by provider) |
 | `OPALZERO_BASE_URL` | — | Required when `OPALZERO_PROVIDER=compatible` |
-| `OPALZERO_API_KEY` | — | API key for compatible endpoints |
 
 ---
 
@@ -191,15 +189,15 @@ Full methodology, scoring rubrics, per-framework profiles, and performance numbe
 | `OPENAI_API_KEY` | required | LLM provider key |
 | `ALPHA_VANTAGE_API_KEY` | optional | Enables financial data tools |
 | `ANTHROPIC_API_KEY` | optional | Required when `OPALZERO_PROVIDER=claude` |
-| `AXION_SMTP_HOST` | optional | SMTP host — enables the `send_email` tool |
-| `AXION_SMTP_USER` | optional | SMTP username |
-| `AXION_SMTP_PASS` | optional | SMTP password / app password |
-| `AXION_SMTP_FROM` | optional | Sender address |
+| `OPALZERO_SMTP_HOST` | optional | SMTP host — enables the `send_email` tool |
+| `OPALZERO_SMTP_USER` | optional | SMTP username |
+| `OPALZERO_SMTP_PASS` | optional | SMTP password / app password |
+| `OPALZERO_SMTP_FROM` | optional | Sender address |
 | `PORT` | 8080 | opalzero-server listen port |
-| `AXION_MAX_TOKENS` | 4096 | Max tokens per LLM response |
-| `AXION_TEMPERATURE` | 0.1 | Sampling temperature |
+| `OPALZERO_MAX_TOKENS` | 4096 | Max tokens per LLM response |
+| `OPALZERO_TEMPERATURE` | 0.1 | Sampling temperature |
 | `OPALZERO_MISSION_TIMEOUT_SECS` | 300 | Wall-clock deadline per mission |
-| `AXION_MAX_LLM_RETRIES` | 3 | Retry attempts on transient LLM errors |
+| `OPALZERO_MAX_LLM_RETRIES` | 3 | Retry attempts on transient LLM errors |
 
 ---
 
@@ -258,7 +256,7 @@ dotenvy    = "0.15"
 - [opalzero-sdk](https://www.npmjs.com/package/opalzero-sdk) — React SDK (`useOpalZero`, `AgentStrip`, TypeScript types)
 - [opalzero-professionals](https://github.com/albertobarnabo/opalzero-professionals) — community WASM tool modules
 - [opalzero-demo](https://github.com/albertobarnabo/opalzero-demo) — reference apps built on opalzero-sdk (Lumen, Brief)
-- [Docs & landing](https://albertobarnabo.com/opalzero/)
+- [Docs & landing](https://albertobarnabo.com/opal-zero/)
 
 ---
 

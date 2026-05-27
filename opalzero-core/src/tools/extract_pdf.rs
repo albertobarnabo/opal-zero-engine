@@ -5,7 +5,7 @@
 //! Output is capped at 32 KB; if the PDF is longer the agent receives the
 //! first portion plus a truncation notice.
 //!
-//! Requires `AXION_UPLOAD_DIR` or defaults to `uploads/`.
+//! Requires `OPALZERO_UPLOAD_DIR` or defaults to `uploads/`.
 
 use serde::{Deserialize, Serialize};
 

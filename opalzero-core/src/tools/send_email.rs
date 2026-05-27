@@ -4,11 +4,11 @@
 //! passed through the agent context.  Configure once at server start:
 //!
 //! ```text
-//! AXION_SMTP_HOST=smtp.gmail.com
-//! AXION_SMTP_PORT=587          # default
-//! AXION_SMTP_USER=you@gmail.com
-//! AXION_SMTP_PASS=app-password
-//! AXION_SMTP_FROM=you@gmail.com
+//! OPALZERO_SMTP_HOST=smtp.gmail.com
+//! OPALZERO_SMTP_PORT=587          # default
+//! OPALZERO_SMTP_USER=you@gmail.com
+//! OPALZERO_SMTP_PASS=app-password
+//! OPALZERO_SMTP_FROM=you@gmail.com
 //! ```
 //!
 //! Works with any SMTP provider: Gmail (app password), SendGrid, Mailgun,
@@ -40,17 +40,17 @@ struct SendEmailArgs {
 
 /// Returns true when all required SMTP env vars are present.
 pub fn smtp_configured() -> bool {
-    std::env::var("AXION_SMTP_HOST").is_ok()
-        && std::env::var("AXION_SMTP_USER").is_ok()
-        && std::env::var("AXION_SMTP_PASS").is_ok()
-        && std::env::var("AXION_SMTP_FROM").is_ok()
+    std::env::var("OPALZERO_SMTP_HOST").is_ok()
+        && std::env::var("OPALZERO_SMTP_USER").is_ok()
+        && std::env::var("OPALZERO_SMTP_PASS").is_ok()
+        && std::env::var("OPALZERO_SMTP_FROM").is_ok()
 }
 
 pub async fn execute_send_email(arguments: &str) -> Result<String, String> {
     if !smtp_configured() {
         return Err(
-            "send_email: SMTP is not configured. Set AXION_SMTP_HOST, AXION_SMTP_USER, \
-             AXION_SMTP_PASS, and AXION_SMTP_FROM environment variables."
+            "send_email: SMTP is not configured. Set OPALZERO_SMTP_HOST, OPALZERO_SMTP_USER, \
+             OPALZERO_SMTP_PASS, and OPALZERO_SMTP_FROM environment variables."
                 .to_string(),
         );
     }
@@ -58,17 +58,17 @@ pub async fn execute_send_email(arguments: &str) -> Result<String, String> {
     let args: SendEmailArgs = serde_json::from_str(arguments)
         .map_err(|e| format!("send_email: invalid arguments: {e}"))?;
 
-    let smtp_host = std::env::var("AXION_SMTP_HOST").unwrap();
-    let smtp_port: u16 = std::env::var("AXION_SMTP_PORT")
+    let smtp_host = std::env::var("OPALZERO_SMTP_HOST").unwrap();
+    let smtp_port: u16 = std::env::var("OPALZERO_SMTP_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(587);
-    let smtp_user = std::env::var("AXION_SMTP_USER").unwrap();
-    let smtp_pass = std::env::var("AXION_SMTP_PASS").unwrap();
-    let smtp_from = std::env::var("AXION_SMTP_FROM").unwrap();
+    let smtp_user = std::env::var("OPALZERO_SMTP_USER").unwrap();
+    let smtp_pass = std::env::var("OPALZERO_SMTP_PASS").unwrap();
+    let smtp_from = std::env::var("OPALZERO_SMTP_FROM").unwrap();
 
     let from_mb = Mailbox::from_str(&smtp_from)
-        .map_err(|e| format!("send_email: invalid AXION_SMTP_FROM address: {e}"))?;
+        .map_err(|e| format!("send_email: invalid OPALZERO_SMTP_FROM address: {e}"))?;
     let to_mb = Mailbox::from_str(&args.to)
         .map_err(|e| format!("send_email: invalid 'to' address '{}': {e}", args.to))?;
 
