@@ -1,0 +1,51 @@
+# Founder & Executive Research Manifest
+#
+# Builds a profile of a named individual: professional history, current
+# focus, and their public presence (writing, talks, press coverage).
+#
+# Designed for Brief's people-research use case — understanding founders,
+# executives, and investors before a meeting or outreach.
+
+[manifest]
+id          = "founder_research"
+description = "Professional profile of a founder or executive: background, current work, and public presence."
+match_patterns = [
+    "who is",
+    "founder of",
+    "ceo of",
+    "background of",
+    "career of",
+    "profile of",
+    "tell me about",
+]
+
+# ── Variables ─────────────────────────────────────────────────────────────────
+
+[variables.person]
+# Matches two- or three-word capitalised names: "Sam Altman", "Jensen Huang"
+regex    = "\\b([A-Z][a-z]+\\s+[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)\\b"
+hint     = "the person's full name (first and last name), e.g. Sam Altman, Jensen Huang"
+required = true
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+
+[[sources]]
+id          = "professional_background"
+tool        = "web_search"
+description = "Career history, education, and previous companies"
+required    = true
+params      = { query = "{{person}} professional background career history education previous companies" }
+
+[[sources]]
+id          = "current_work"
+tool        = "web_search"
+description = "Current role, company, stated focus, and recent activity"
+required    = false
+params      = { query = "{{person}} current role company focus startup 2024 2025" }
+
+[[sources]]
+id          = "public_presence"
+tool        = "web_search"
+description = "Interviews, talks, articles, and public writing"
+required    = false
+params      = { query = "{{person}} interview talk essay article writing press" }

@@ -1,0 +1,59 @@
+# Company Intelligence Manifest
+#
+# Produces a structured profile of any company: what they do, who runs it,
+# how they're funded, how many people work there, and what's happening now.
+#
+# Uses Exa neural search — each source targets a distinct facet so the
+# extraction pass has clean, non-overlapping evidence for every dimension.
+# All sources are optional; the manifest degrades gracefully when a company
+# has limited public information.
+
+[manifest]
+id          = "company_intelligence"
+description = "Full company profile: overview, funding, leadership, tech, and recent news."
+match_patterns = [
+    "company profile",
+    "company overview",
+    "about the company",
+    "startup",
+    "founded",
+    "funding",
+    "valuation",
+    "headcount",
+    "employees",
+    "business model",
+]
+
+# ── Variables ─────────────────────────────────────────────────────────────────
+
+[variables.company]
+# Matches capitalised multi-word names: "Apple", "OpenAI", "Goldman Sachs"
+regex    = "\\b([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*)\\b"
+hint     = "the company or organisation name (e.g. Stripe, Notion, Anthropic)"
+required = true
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+# Three targeted Exa searches, each covering a different facet of the company.
+# Fewer searches keep the extraction-pass prompt manageable while still giving
+# the LLM distinct evidence for each dimension.
+
+[[sources]]
+id          = "overview"
+tool        = "web_search"
+description = "What the company does, its products, customers, and mission"
+required    = true
+params      = { query = "{{company}} company overview products customers mission what do they do" }
+
+[[sources]]
+id          = "funding_and_team"
+tool        = "web_search"
+description = "Funding rounds, investors, valuation, headcount, and founding team"
+required    = false
+params      = { query = "{{company}} funding raised investors valuation founders CEO leadership team" }
+
+[[sources]]
+id          = "recent_developments"
+tool        = "web_search"
+description = "Latest news, product launches, partnerships, and strategic moves"
+required    = false
+params      = { query = "{{company}} news launch announcement partnership 2024 2025" }

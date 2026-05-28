@@ -1,0 +1,51 @@
+# Competitive Landscape Manifest
+#
+# Maps the competitive environment around a company: who the direct rivals
+# are, how they compare on key dimensions, and where the subject stands
+# in terms of market position and differentiation.
+#
+# Useful for investor prep, sales battlecards, and market entry analysis.
+
+[manifest]
+id          = "competitive_landscape"
+description = "Competitive analysis: direct rivals, feature comparison, market position, and differentiation."
+match_patterns = [
+    "competitor",
+    "competitive",
+    "alternative to",
+    "versus",
+    "compare",
+    "market landscape",
+    "market map",
+    "who competes",
+]
+
+# ── Variables ─────────────────────────────────────────────────────────────────
+
+[variables.company]
+regex    = "\\b([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*)\\b"
+hint     = "the company being analysed (e.g. Notion, Figma, Linear)"
+required = true
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+
+[[sources]]
+id          = "direct_competitors"
+tool        = "web_search"
+description = "Who the main competitors and alternatives are"
+required    = true
+params      = { query = "{{company}} main competitors alternatives similar companies" }
+
+[[sources]]
+id          = "differentiation"
+tool        = "web_search"
+description = "How the company differentiates and what its competitive advantage is"
+required    = false
+params      = { query = "{{company}} vs competitors comparison differentiation unique advantage positioning" }
+
+[[sources]]
+id          = "market_position"
+tool        = "web_search"
+description = "Market share, growth, and analyst or investor perspective on competitive dynamics"
+required    = false
+params      = { query = "{{company}} market share growth competitive position industry analysis 2024" }
