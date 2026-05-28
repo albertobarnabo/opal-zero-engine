@@ -433,29 +433,33 @@ async fn execute_source(
 //
 // Routes to OpalZero built-in tools via `execute_tool`, keeping key resolution
 // and registry validation consistent with the normal agent path.
+//
+// Alpha Vantage tools receive special argument construction because their
+// primary input (the ticker symbol) comes from the extracted variables, not
+// from explicit manifest params.  Every other registered tool (web_search,
+// fetch_page, rss_reader, …) receives its arguments directly from the manifest
+// params after template substitution.
 
 async fn execute_native_source(
     source: &SourceSpec,
     vars:   &HashMap<String, String>,
     keys:   &RequestKeys,
 ) -> Result<String, String> {
-    let ticker = vars.get("ticker").map(|s| s.as_str()).unwrap_or("");
-
     let arguments = match source.tool.as_str() {
-        "get_company_overview" => {
+        // Alpha Vantage tools: inject the extracted ticker as "symbol"
+        "get_company_overview" | "get_income_statement" | "get_news_sentiment" => {
+            let ticker = vars.get("ticker").map(|s| s.as_str()).unwrap_or("");
             serde_json::json!({ "symbol": ticker }).to_string()
         }
         "get_price_history" => {
+            let ticker = vars.get("ticker").map(|s| s.as_str()).unwrap_or("");
             let period = source.params.get("period").map(|s| s.as_str()).unwrap_or("compact");
             serde_json::json!({ "symbol": ticker, "period": period }).to_string()
         }
-        "get_income_statement" => {
-            serde_json::json!({ "symbol": ticker }).to_string()
-        }
-        "get_news_sentiment" => {
-            serde_json::json!({ "symbol": ticker }).to_string()
-        }
-        unknown => return Err(format!("ResearchManifest: unknown native tool '{unknown}'")),
+        // General tools (web_search, fetch_page, rss_reader, …): convert
+        // params to JSON with template substitution.  Any registered OpalZero
+        // tool works here as long as its expected arguments match the params.
+        _ => params_to_json(&source.params, vars).to_string(),
     };
 
     crate::tools::execute_tool(&source.tool, &arguments, "research-manifest", keys).await
@@ -644,5 +648,94 @@ params      = { query = "{{company}} latest news", numResults = "5" }
             !m.manifest.match_patterns.iter().any(|p| no_match.contains(&p.to_lowercase())),
             "should not match"
         );
+    }
+
+    // ── New manifest TOML files parse correctly ───────────────────────────────
+
+    fn load_toml_manifest(filename: &str) -> ResearchManifest {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("professionals/research")
+            .join(filename);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {filename}: {e}"));
+        toml::from_str(&content)
+            .unwrap_or_else(|e| panic!("{filename} TOML parse error: {e}"))
+    }
+
+    #[test]
+    fn equity_toml_file_parses() {
+        let m = load_toml_manifest("equity.toml");
+        assert_eq!(m.manifest.id, "equity_research");
+        assert!(m.sources.iter().all(|s| s.kind == SourceKind::Native));
+        assert!(m.variables.contains_key("ticker"));
+    }
+
+    #[test]
+    fn company_intelligence_toml_parses() {
+        let m = load_toml_manifest("company_intelligence.toml");
+        assert_eq!(m.manifest.id, "company_intelligence");
+        assert!(m.variables.contains_key("company"));
+        assert!(m.sources.iter().all(|s| s.tool == "web_search"));
+        assert!(m.sources.iter().all(|s| s.kind == SourceKind::Native));
+        // Every web_search source must declare a query param
+        for src in &m.sources {
+            assert!(src.params.contains_key("query"), "{}: missing query param", src.id);
+        }
+    }
+
+    #[test]
+    fn founder_research_toml_parses() {
+        let m = load_toml_manifest("founder_research.toml");
+        assert_eq!(m.manifest.id, "founder_research");
+        assert!(m.variables.contains_key("person"));
+        assert!(m.sources.iter().all(|s| s.tool == "web_search"));
+        for src in &m.sources {
+            // Query templates must reference {{person}}
+            let query = src.params.get("query").expect("missing query");
+            assert!(
+                query.contains("{{person}}"),
+                "{}: query '{}' must contain {{{{person}}}}",
+                src.id, query
+            );
+        }
+    }
+
+    #[test]
+    fn competitive_landscape_toml_parses() {
+        let m = load_toml_manifest("competitive_landscape.toml");
+        assert_eq!(m.manifest.id, "competitive_landscape");
+        assert!(m.variables.contains_key("company"));
+        for src in &m.sources {
+            let query = src.params.get("query").expect("missing query");
+            assert!(
+                query.contains("{{company}}"),
+                "{}: query '{}' must contain {{{{company}}}}",
+                src.id, query
+            );
+        }
+    }
+
+    #[test]
+    fn company_news_toml_parses() {
+        let m = load_toml_manifest("company_news.toml");
+        assert_eq!(m.manifest.id, "company_news");
+        // Has at least one MCP source
+        assert!(
+            m.sources.iter().any(|s| s.kind == SourceKind::Mcp),
+            "company_news should have at least one MCP source"
+        );
+    }
+
+    // ── General tool path for web_search ──────────────────────────────────────
+
+    #[test]
+    fn params_to_json_produces_web_search_arguments() {
+        let mut params = HashMap::new();
+        params.insert("query".to_string(), "{{company}} funding rounds".to_string());
+        let mut vars = HashMap::new();
+        vars.insert("company".to_string(), "Stripe".to_string());
+
+        let json = params_to_json(&params, &vars);
+        assert_eq!(json["query"].as_str(), Some("Stripe funding rounds"));
     }
 }
