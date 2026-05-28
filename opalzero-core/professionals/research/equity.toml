@@ -56,3 +56,18 @@ id          = "news_sentiment"
 tool        = "get_news_sentiment"
 description = "Recent news articles with per-ticker sentiment scores"
 required    = false
+
+# ── Optional MCP source example ───────────────────────────────────────────────
+# Augment Alpha Vantage data with a neural web search via Exa MCP.
+# Requires: npm install -g @exa-ai/exa-mcp   and   EXA_API_KEY in env.
+# Remove the comment markers below to activate.
+#
+# [[sources]]
+# id          = "exa_analyst_coverage"
+# type        = "mcp"
+# server      = "stdio:npx @exa-ai/exa-mcp"
+# tool_name   = "web_search_exa"
+# api_key_env = "EXA_API_KEY"
+# description = "Analyst coverage and institutional commentary via Exa neural search"
+# required    = false
+# params      = { query = "{{ticker}} analyst rating price target 2024", numResults = "5" }
