@@ -897,20 +897,27 @@ pub enum MissionUpdate {
     /// Sent immediately after `MissionComplete` or `MissionFailed` so that
     /// the server / SSE stream can forward it to the frontend or log it.
     Metrics(crate::metrics::MissionMetrics),
+    /// Diff report emitted at the end of a `run_monitoring_mission` call.
+    ///
+    /// Contains the full structured diff between this run and the previous run,
+    /// plus a human-readable summary.  Sent over the SSE channel so the
+    /// frontend can update the monitoring dashboard in real time.
+    MonitoringReport(crate::monitoring::MonitoringReport),
 }
 
 impl MissionUpdate {
     /// Returns the SSE `event:` field value for this variant.
     pub fn event_name(&self) -> &'static str {
         match self {
-            MissionUpdate::TaskStarted { .. }    => "task_started",
-            MissionUpdate::TaskCompleted { .. }  => "task_completed",
-            MissionUpdate::TaskFailed { .. }     => "task_failed",
-            MissionUpdate::GovernorExpand { .. } => "governor_expand",
+            MissionUpdate::TaskStarted { .. }     => "task_started",
+            MissionUpdate::TaskCompleted { .. }   => "task_completed",
+            MissionUpdate::TaskFailed { .. }      => "task_failed",
+            MissionUpdate::GovernorExpand { .. }  => "governor_expand",
             MissionUpdate::MissionComplete { .. } => "mission_complete",
-            MissionUpdate::MissionFailed { .. }  => "mission_failed",
-            MissionUpdate::MissionPaused { .. }  => "mission_paused",
-            MissionUpdate::Metrics(_)            => "metrics",
+            MissionUpdate::MissionFailed { .. }   => "mission_failed",
+            MissionUpdate::MissionPaused { .. }   => "mission_paused",
+            MissionUpdate::Metrics(_)             => "metrics",
+            MissionUpdate::MonitoringReport(_)    => "monitoring_report",
         }
     }
 }

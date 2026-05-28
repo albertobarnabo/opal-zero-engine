@@ -1,3 +1,4 @@
+pub mod diff_engine;
 pub mod dispatcher;
 pub mod engine;
 pub mod executor;
@@ -5,6 +6,7 @@ pub mod governor;
 pub mod mcp;
 pub mod memory;
 pub mod metrics;
+pub mod monitoring;
 pub mod persistence;
 pub mod planner;
 pub mod protocol;
@@ -30,11 +32,13 @@ pub mod prelude {
     pub use crate::persistence::{load_latest_snapshot_for_intent, load_snapshot, MissionSnapshot};
     pub use crate::planner::{build_plan_from_intent, Plan};
     pub use crate::protocol::{AgentRole, ContextBus, HandshakeRequest, MissionUpdate, Task, TaskStatus};
+    pub use crate::diff_engine::{diff as diff_payloads, Change as PayloadChange};
     pub use crate::metrics::{GovernorVerdicts, MissionMetrics, TaskTiming};
+    pub use crate::monitoring::{load_latest_report, load_reports, list_monitor_ids, MonitoringReport};
     pub use crate::registry::Registry;
     pub use crate::tools::RequestKeys;
     pub use crate::{refine_mission, refine_mission_with_keys, resume_mission, run_mission,
-                    run_mission_with_history, run_scheduled_mission};
+                    run_mission_with_history, run_monitoring_mission, run_scheduled_mission};
 }
 
 // ── Mission wall-clock timeout ────────────────────────────────────────────────
@@ -255,6 +259,93 @@ pub async fn run_scheduled_mission(
     }
 
     run_mission_with_history(plan, prior.as_ref(), provider, governor, max_attempts, tx).await
+}
+
+/// Run a monitoring mission: executes [`run_scheduled_mission`] then computes
+/// the structured diff between this run and the previous one.
+///
+/// The [`monitoring::MonitoringReport`] is:
+/// 1. Emitted as a [`protocol::MissionUpdate::MonitoringReport`] event over `tx`
+///    (appears in the SSE stream so the frontend can update in real time).
+/// 2. Persisted to `monitoring_reports/<monitor_id>_<timestamp>.json` for the
+///    server API to serve later.
+///
+/// # Parameters
+/// - `monitor_id` — a stable slug identifying this monitor (e.g. `"ai_pricing"`).
+///   Used as the filename prefix for persisted reports and as the API key.
+/// - All other parameters are identical to [`run_scheduled_mission`].
+///
+/// # Returns
+/// Same as [`run_scheduled_mission`].  The monitoring report is a side-effect
+/// (channel event + disk write) rather than part of the return value, keeping
+/// the signature consistent across all `run_*` functions.
+pub async fn run_monitoring_mission(
+    monitor_id: &str,
+    plan: &mut planner::Plan,
+    provider: &dyn engine::AiProvider,
+    governor: &dyn governor::Governor,
+    max_attempts: u8,
+    tx: Option<tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+) -> Result<Option<protocol::HandshakeRequest>, String> {
+    // ── Capture prior state BEFORE the run ───────────────────────────────────
+    let prior_snapshot = persistence::load_latest_snapshot_for_intent(&plan.original_intent);
+    let prior_payload: Option<serde_json::Value> = prior_snapshot
+        .as_ref()
+        .and_then(|s| s.mission_state.as_ref())
+        .map(|ms| ms.data_payload.clone());
+    let prior_timestamp = prior_snapshot.as_ref().map(|s| s.timestamp);
+    let is_first_run   = prior_snapshot.is_none();
+
+    // ── Run the mission ───────────────────────────────────────────────────────
+    let result = run_scheduled_mission(plan, provider, governor, max_attempts, tx.clone()).await?;
+
+    // ── Extract current payload from the completed plan ───────────────────────
+    let current_payload: Option<serde_json::Value> = plan.tasks.iter()
+        .filter_map(|t| t.result.as_ref())
+        .filter_map(|r| serde_json::from_str::<protocol::MissionState>(r).ok())
+        .filter(|s| !s.data_payload.is_null())
+        .last()
+        .map(|s| s.data_payload);
+
+    if let Some(current) = current_payload {
+        // ── Compute diff ─────────────────────────────────────────────────────
+        let changes = match &prior_payload {
+            Some(previous) => diff_engine::diff(previous, &current),
+            None           => Vec::new(),   // first run: baseline, no diff
+        };
+
+        let has_changes    = !changes.is_empty();
+        let change_summary = diff_engine::summarize(&changes, is_first_run);
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let report = monitoring::MonitoringReport {
+            monitor_id:             monitor_id.to_string(),
+            intent:                 plan.original_intent.clone(),
+            timestamp,
+            previous_run_timestamp: prior_timestamp,
+            has_changes,
+            change_summary,
+            changes,
+            current_payload:        current,
+            previous_payload:       prior_payload,
+        };
+
+        // ── Persist ───────────────────────────────────────────────────────────
+        if let Err(e) = monitoring::save_report(&report) {
+            tracing::warn!(error = %e, monitor_id, "failed to save monitoring report");
+        }
+
+        // ── Emit over channel ─────────────────────────────────────────────────
+        if let Some(ref tx) = tx {
+            let _ = tx.send(protocol::MissionUpdate::MonitoringReport(report)).await;
+        }
+    }
+
+    Ok(result)
 }
 
 /// Inner body of [`run_mission`] — extracted so it can be wrapped by
