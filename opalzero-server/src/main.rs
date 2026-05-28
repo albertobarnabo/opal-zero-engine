@@ -1251,6 +1251,7 @@ async fn main() {
         .init();
     opalzero_core::registry::Registry::init_default();
     opalzero_core::research::init_default();
+    opalzero_core::monitoring_registry::init_default();
 
     // ── CORS origin allow-list ────────────────────────────────────────────────
     // Read from OPALZERO_ALLOWED_ORIGINS (comma-separated).  The special value "*"

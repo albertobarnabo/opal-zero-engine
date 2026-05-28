@@ -1,0 +1,37 @@
+[manifest]
+id          = "saas_competitors"
+description = "Track feature and pricing changes across leading SaaS competitors in the AI research/intelligence space"
+schedule    = "0 9 * * 1"
+intent      = """
+Research the current product offerings, pricing tiers, and notable feature announcements for the following
+AI-powered research and intelligence SaaS companies: Perplexity AI, You.com, Exa AI, Tavily, and Qdrant Cloud.
+For each company collect: their main product tiers and prices, any new features launched in the last 30 days,
+notable customer wins or partnerships announced, and their current positioning/tagline.
+Produce a structured JSON object with the output_schema fields below.
+"""
+
+[output_schema]
+competitors     = "object"
+new_features    = "object"
+pricing_changes = "string"
+market_moves    = "string"
+
+[[compare_fields]]
+key         = "competitors"
+description = "Per-competitor pricing and feature snapshot"
+importance  = "high"
+
+[[compare_fields]]
+key         = "new_features"
+description = "Recently launched features per competitor"
+importance  = "high"
+
+[[compare_fields]]
+key         = "pricing_changes"
+description = "Any pricing changes announced recently"
+importance  = "medium"
+
+[[compare_fields]]
+key         = "market_moves"
+description = "Partnerships, funding, or strategic announcements"
+importance  = "medium"
