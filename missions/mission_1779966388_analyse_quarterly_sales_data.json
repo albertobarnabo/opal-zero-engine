@@ -1,0 +1,27 @@
+{
+  "id": "mission_1779966388_analyse_quarterly_sales_data",
+  "timestamp": 1779966388,
+  "intent": "Analyse quarterly sales data",
+  "task_count": 4,
+  "expanded_task_count": 3,
+  "status": "completed",
+  "layout_hint": "Itinerary",
+  "context": {
+    "data": {
+      "perform_initial_analysis_sales_figures": "Feedback was requested: Initial analysis is complete. Does this meet your requirements?",
+      "awaiting_feedback_question": "Initial analysis is complete. Does this meet your requirements?",
+      "user_feedback": "Looks good — please add a bullet-point summary of the top 3 findings.",
+      "call_finalize_mission_state_fully_populated": "User feedback applied. Results updated per instructions.",
+      "call_finalize_mission_state_fully_populated_2": "User feedback applied. Results updated per instructions.",
+      "user_has_reviewed_results_responded_initial": "User feedback applied. Results updated per instructions."
+    },
+    "ordered_keys": [
+      "perform_initial_analysis_sales_figures",
+      "user_feedback",
+      "awaiting_feedback_question",
+      "user_has_reviewed_results_responded_initial",
+      "call_finalize_mission_state_fully_populated",
+      "call_finalize_mission_state_fully_populated_2"
+    ]
+  }
+}
