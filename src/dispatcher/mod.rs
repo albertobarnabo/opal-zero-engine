@@ -71,8 +71,10 @@ pub async fn dispatch_tasks(
     governor: &dyn Governor,
     tx: Option<&tokio::sync::mpsc::Sender<MissionUpdate>>,
     keys: &RequestKeys,
-) {
+) -> Vec<crate::metrics::TaskTiming> {
     tracing::info!("Dispatcher: checking dependencies and routing to agents");
+
+    let mut all_timings: Vec<crate::metrics::TaskTiming> = Vec::new();
 
     // ── 0. Cycle guard ────────────────────────────────────────────────────────
     if let Some(cycle) = detect_cycle(tasks) {
@@ -85,7 +87,7 @@ pub async fn dispatch_tasks(
                 task.result = Some(format!("Circular dependency: {cycle}"));
             }
         }
-        return;
+        return all_timings;
     }
 
     // ── 1. Main DAG loop (sequential execution, dependency-ordered) ───────────
@@ -217,8 +219,10 @@ pub async fn dispatch_tasks(
             .map(|(idx, mut task_copy)| {
                 let ctx = context_snapshot.clone();
                 async move {
+                    let t0 = std::time::Instant::now();
                     execute_with_role(&mut task_copy, &ctx, provider, governor, keys).await;
-                    (idx, task_copy)
+                    let duration_ms = t0.elapsed().as_millis() as u64;
+                    (idx, task_copy, duration_ms)
                 }
             })
             .collect();
@@ -228,9 +232,10 @@ pub async fn dispatch_tasks(
         tracing::info!(count = batch_results.len(), "batch of tasks completed");
 
         // Write results back, emit outcome events, and update the context bus.
-        for (idx, finished_task) in batch_results {
+        for (idx, finished_task, duration_ms) in batch_results {
             tasks[idx].status = finished_task.status.clone();
             tasks[idx].result = finished_task.result.clone();
+            tasks[idx].manifest_id = finished_task.manifest_id.clone();
 
             tracing::info!(slug = %finished_task.slug, status = ?finished_task.status, "task completed");
 
@@ -258,8 +263,18 @@ pub async fn dispatch_tasks(
                 tracing::debug!(slug = %finished_task.slug, "storing result in context");
                 context.data.insert(finished_task.slug.clone(), res.clone());
             }
+
+            // Record per-task timing for mission metrics.
+            all_timings.push(crate::metrics::TaskTiming {
+                slug: finished_task.slug.clone(),
+                role: finished_task.role.as_str().to_string(),
+                duration_ms,
+                manifest_id: finished_task.manifest_id.clone(),
+            });
         }
     }
+
+    all_timings
 }
 
 // ── Retry helper ─────────────────────────────────────────────────────────────
@@ -555,6 +570,7 @@ async fn execute_with_role(
                     tracing::info!(manifest = %manifest.manifest.id, "Research manifest completed");
                     task.result = Some(result);
                     task.status = TaskStatus::Completed;
+                    task.manifest_id = Some(manifest.manifest.id.clone());
                     return;
                 }
                 Err(e) => {
@@ -1014,6 +1030,7 @@ mod tests {
             excluded_tools: vec![],
             allowed_tools: None,
             output_schema: None,
+            manifest_id: None,
         }
     }
 

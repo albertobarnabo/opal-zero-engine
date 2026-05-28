@@ -4,6 +4,7 @@ pub mod executor;
 pub mod governor;
 pub mod mcp;
 pub mod memory;
+pub mod metrics;
 pub mod persistence;
 pub mod planner;
 pub mod protocol;
@@ -29,6 +30,7 @@ pub mod prelude {
     pub use crate::persistence::{load_latest_snapshot_for_intent, load_snapshot, MissionSnapshot};
     pub use crate::planner::{build_plan_from_intent, Plan};
     pub use crate::protocol::{AgentRole, ContextBus, HandshakeRequest, MissionUpdate, Task, TaskStatus};
+    pub use crate::metrics::{GovernorVerdicts, MissionMetrics, TaskTiming};
     pub use crate::registry::Registry;
     pub use crate::tools::RequestKeys;
     pub use crate::{refine_mission, refine_mission_with_keys, resume_mission, run_mission,
@@ -682,6 +684,63 @@ fn backfill_prior_keys(
     }
 }
 
+/// Assemble a [`metrics::MissionMetrics`] snapshot from the current plan state.
+fn build_mission_metrics(
+    plan: &planner::Plan,
+    mission_t0: std::time::Instant,
+    all_timings: &[metrics::TaskTiming],
+    retry_attempts: u8,
+    expansion_rounds: u8,
+    refinement_rounds: u8,
+    repair_rounds: u8,
+) -> metrics::MissionMetrics {
+    let tasks_completed = plan.tasks.iter().filter(|t| matches!(t.status, protocol::TaskStatus::Completed)).count();
+    let tasks_failed    = plan.tasks.iter().filter(|t| matches!(t.status, protocol::TaskStatus::Failed)).count();
+
+    let manifest_hits = all_timings.iter().filter(|t| t.manifest_id.is_some()).count();
+    let mut manifest_ids: Vec<String> = all_timings
+        .iter()
+        .filter_map(|t| t.manifest_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    manifest_ids.sort();
+
+    let estimated_tokens = plan.tasks.iter()
+        .filter_map(|t| t.result.as_ref())
+        .map(|r| r.len() as u64)
+        .sum::<u64>() / 4;
+
+    metrics::MissionMetrics {
+        total_duration_ms:   mission_t0.elapsed().as_millis() as u64,
+        tasks_total:         plan.tasks.len(),
+        tasks_completed,
+        tasks_failed,
+        manifest_hits,
+        manifest_ids,
+        governor_verdicts: metrics::GovernorVerdicts {
+            retries:     retry_attempts,
+            expansions:  expansion_rounds,
+            refinements: refinement_rounds,
+            repairs:     repair_rounds,
+        },
+        task_timings: all_timings.to_vec(),
+        estimated_tokens,
+    }
+}
+
+/// Emit mission metrics: log as a structured tracing event and optionally
+/// forward over the update channel so the server can include it in the SSE stream.
+async fn emit_metrics(
+    m: &metrics::MissionMetrics,
+    tx: Option<&tokio::sync::mpsc::Sender<protocol::MissionUpdate>>,
+) {
+    m.log_structured();
+    if let Some(tx) = tx {
+        let _ = tx.send(protocol::MissionUpdate::Metrics(m.clone())).await;
+    }
+}
+
 /// Core dispatch-validate loop shared by [`run_mission`] and [`resume_mission`].
 ///
 /// Does NOT clear the context — callers are responsible for that setup step.
@@ -700,8 +759,12 @@ async fn run_loop(
     let mut refinement_rounds: u8 = 0;
     let mut repair_rounds: u8 = 0;
 
+    // ── Observability ─────────────────────────────────────────────────────────
+    let mission_t0 = std::time::Instant::now();
+    let mut all_timings: Vec<metrics::TaskTiming> = Vec::new();
+
     loop {
-        dispatcher::dispatch_tasks(
+        let round_timings = dispatcher::dispatch_tasks(
             &mut plan.tasks,
             &mut plan.context,
             provider,
@@ -710,6 +773,7 @@ async fn run_loop(
             &plan.keys,
         )
         .await;
+        all_timings.extend(round_timings);
 
         // Resolve critic provider: Governor may declare a separate model for
         // quality-check calls (cheaper / independent from the agent model).
@@ -729,6 +793,8 @@ async fn run_loop(
         {
             governor::ValidationResult::Success => {
                 finish_success(plan, original_task_count, tx).await;
+                let m = build_mission_metrics(plan, mission_t0, &all_timings, retry_attempts, expansion_rounds, refinement_rounds, repair_rounds);
+                emit_metrics(&m, tx).await;
                 return Ok(None);
             }
 
@@ -751,6 +817,8 @@ async fn run_loop(
                         })
                         .await;
                 }
+                let m = build_mission_metrics(plan, mission_t0, &all_timings, retry_attempts, expansion_rounds, refinement_rounds, repair_rounds);
+                emit_metrics(&m, tx).await;
                 return Ok(Some(protocol::HandshakeRequest { mission_id, question }));
             }
 
@@ -845,6 +913,8 @@ async fn run_loop(
                 if expansion_rounds >= MAX_EXPANSIONS {
                     tracing::warn!(MAX_EXPANSIONS, "Governor: max expansions reached — treating as SUCCESS");
                     finish_success(plan, original_task_count, tx).await;
+                    let m = build_mission_metrics(plan, mission_t0, &all_timings, retry_attempts, expansion_rounds, refinement_rounds, repair_rounds);
+                    emit_metrics(&m, tx).await;
                     return Ok(None);
                 }
 
@@ -877,6 +947,8 @@ async fn run_loop(
                 if refinement_rounds >= MAX_REFINEMENTS {
                     tracing::warn!(MAX_REFINEMENTS, "Governor: max refinements reached — treating as SUCCESS");
                     finish_success(plan, original_task_count, tx).await;
+                    let m = build_mission_metrics(plan, mission_t0, &all_timings, retry_attempts, expansion_rounds, refinement_rounds, repair_rounds);
+                    emit_metrics(&m, tx).await;
                     return Ok(None);
                 }
 
@@ -917,6 +989,8 @@ async fn run_loop(
     if extract_mission_state(&plan.tasks).is_some() {
         tracing::warn!(failed_count = unfinished.len(), "task(s) failed but Analyst produced a result — emitting partial success");
         finish_success(plan, original_task_count, tx).await;
+        let m = build_mission_metrics(plan, mission_t0, &all_timings, retry_attempts, expansion_rounds, refinement_rounds, repair_rounds);
+        emit_metrics(&m, tx).await;
         return Ok(None);
     }
 
@@ -943,6 +1017,11 @@ async fn run_loop(
             .send(protocol::MissionUpdate::MissionFailed { error: error.clone() })
             .await;
     }
+
+    // Emit metrics even on failure — latency and verdict distribution are
+    // particularly useful for diagnosing why missions are failing.
+    let m = build_mission_metrics(plan, mission_t0, &all_timings, retry_attempts, expansion_rounds, refinement_rounds, repair_rounds);
+    emit_metrics(&m, tx).await;
 
     Err(error)
 }
@@ -1031,6 +1110,7 @@ mod tests {
             excluded_tools: vec![],
             allowed_tools: None,
             output_schema: None,
+            manifest_id: None,
         };
         plan.tasks.push(task);
         plan
@@ -1122,6 +1202,7 @@ mod tests {
             excluded_tools: vec![],
             allowed_tools: None,
             output_schema: None,
+            manifest_id: None,
         };
         plan.tasks.push(task);
 
@@ -1151,6 +1232,7 @@ mod tests {
             excluded_tools: vec![],
             allowed_tools: None,
             output_schema: None,
+            manifest_id: None,
         };
         plan.tasks.push(task);
 

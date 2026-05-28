@@ -95,6 +95,7 @@ impl Plan {
             excluded_tools,
             allowed_tools: None,  // populated by add_task_with_tools or the planner
             output_schema: None,  // populated by the planner via build_plan_from_intent
+            manifest_id: None,    // set by dispatcher when a research manifest short-circuits the task
         };
         self.tasks.push(task);
         slug
