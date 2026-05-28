@@ -12,8 +12,27 @@
 //!  3. **Runs one extraction-only LLM pass** — the LLM receives all raw source
 //!     data and produces structured research findings.  No further tool calls.
 //!
+//! ## Source types
+//!
+//! Each `[[sources]]` entry has a `type` field (default `"native"`):
+//!
+//! | `type`    | Description |
+//! |-----------|-------------|
+//! | `native`  | OpalZero built-in tool (`get_company_overview`, etc.) |
+//! | `mcp`     | External MCP server — HTTP or stdio subprocess |
+//!
+//! MCP sources add three fields:
+//! - `server` — `https://host/path` or `stdio:command [args]`
+//! - `tool_name` — the tool to call on the MCP server
+//! - `api_key_env` — env-var name holding the API key (HTTP only)
+//!
+//! Param values (both native and MCP) may contain `{{var_name}}` placeholders
+//! that are substituted with variables extracted from the task intent.
+//!
 //! If no manifest matches the intent, or if the manifest path errors, the
 //! Dispatcher falls through to the normal Exa multi-turn search.
+
+pub mod mcp_client;
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -63,18 +82,58 @@ pub struct VarSpec {
     pub required: bool,
 }
 
+/// Selects the execution backend for a `[[sources]]` entry.
+#[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    /// Built-in OpalZero tool (Alpha Vantage financial data, etc.).
+    #[default]
+    Native,
+    /// External MCP server — HTTP JSON-RPC or stdio subprocess.
+    Mcp,
+}
+
 /// A single data source within a research manifest.
 #[derive(Debug, Deserialize)]
 pub struct SourceSpec {
-    pub id:   String,
-    /// Native tool name — must match an arm in `execute_source`.
+    pub id: String,
+
+    /// Source backend: `"native"` (default) or `"mcp"`.
+    #[serde(rename = "type", default)]
+    pub kind: SourceKind,
+
+    // ── Native source ─────────────────────────────────────────────────────────
+    /// OpalZero tool name for `kind = native` (e.g. `"get_company_overview"`).
+    #[serde(default)]
     pub tool: String,
+
+    // ── MCP source ────────────────────────────────────────────────────────────
+    /// MCP server endpoint for `kind = mcp`.
+    /// Use `"https://host/path"` for HTTP transport or
+    /// `"stdio:command [args]"` to spawn a subprocess.
+    #[serde(default)]
+    pub server: Option<String>,
+
+    /// Tool name to call on the MCP server.
+    #[serde(default)]
+    pub tool_name: Option<String>,
+
+    /// Name of the environment variable holding the API key.
+    /// Sent as `Authorization: Bearer …` for HTTP transport; ignored for stdio.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+
+    // ── Shared ────────────────────────────────────────────────────────────────
     #[serde(default)]
     pub description: String,
-    /// Key/value params forwarded to the tool (e.g. `period = "compact"`).
+
+    /// Arguments forwarded to the tool.  Values may contain `{{var_name}}`
+    /// placeholders substituted with variables extracted from the task intent.
     #[serde(default)]
     pub params: HashMap<String, String>,
+
     /// Abort the manifest path when `true` and this source errors.
+    /// Optional sources contribute an "[unavailable]" note instead.
     #[serde(default)]
     pub required: bool,
 }
@@ -316,14 +375,66 @@ async fn extract_vars(
     vars
 }
 
+// ── Template variable substitution ───────────────────────────────────────────
+
+/// Replace every `{{key}}` placeholder in `template` with the corresponding
+/// value from `vars`.  Unrecognised placeholders are left unchanged so the
+/// caller can surface a clear error rather than silently passing a broken value.
+fn substitute_vars(template: &str, vars: &HashMap<String, String>) -> String {
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        result = result.replace(&format!("{{{{{}}}}}", key), value);
+    }
+    result
+}
+
+/// Convert a `params` map (after template substitution) to a `serde_json::Value`
+/// object.  Numeric-looking strings become JSON numbers; `"true"` / `"false"`
+/// become JSON booleans; everything else stays a string.
+fn params_to_json(
+    params: &HashMap<String, String>,
+    vars:   &HashMap<String, String>,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    for (key, template) in params {
+        let val = substitute_vars(template, vars);
+        let json_val = if let Ok(n) = val.parse::<i64>() {
+            serde_json::Value::Number(n.into())
+        } else if let Ok(f) = val.parse::<f64>() {
+            serde_json::Number::from_f64(f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::String(val.clone()))
+        } else if val == "true" {
+            serde_json::Value::Bool(true)
+        } else if val == "false" {
+            serde_json::Value::Bool(false)
+        } else {
+            serde_json::Value::String(val)
+        };
+        obj.insert(key.clone(), json_val);
+    }
+    serde_json::Value::Object(obj)
+}
+
 // ── Source execution ──────────────────────────────────────────────────────────
-//
-// Routes each source spec to the corresponding native Rust tool via the
-// standard `execute_tool` interface.  Using `execute_tool` keeps key
-// resolution, registry validation, and error formatting consistent with the
-// normal agent path.
 
 async fn execute_source(
+    source: &SourceSpec,
+    vars:   &HashMap<String, String>,
+    keys:   &RequestKeys,
+) -> Result<String, String> {
+    match source.kind {
+        SourceKind::Native => execute_native_source(source, vars, keys).await,
+        SourceKind::Mcp    => execute_mcp_source(source, vars).await,
+    }
+}
+
+// ── Native source execution ───────────────────────────────────────────────────
+//
+// Routes to OpalZero built-in tools via `execute_tool`, keeping key resolution
+// and registry validation consistent with the normal agent path.
+
+async fn execute_native_source(
     source: &SourceSpec,
     vars:   &HashMap<String, String>,
     keys:   &RequestKeys,
@@ -344,10 +455,46 @@ async fn execute_source(
         "get_news_sentiment" => {
             serde_json::json!({ "symbol": ticker }).to_string()
         }
-        unknown => return Err(format!("ResearchManifest: unknown source tool '{unknown}'")),
+        unknown => return Err(format!("ResearchManifest: unknown native tool '{unknown}'")),
     };
 
     crate::tools::execute_tool(&source.tool, &arguments, "research-manifest", keys).await
+}
+
+// ── MCP source execution ──────────────────────────────────────────────────────
+
+async fn execute_mcp_source(
+    source: &SourceSpec,
+    vars:   &HashMap<String, String>,
+) -> Result<String, String> {
+    let server = source
+        .server
+        .as_deref()
+        .ok_or("MCP source is missing 'server' field")?;
+    let tool_name = source
+        .tool_name
+        .as_deref()
+        .ok_or("MCP source is missing 'tool_name' field")?;
+
+    // Resolve API key from the named environment variable (if declared).
+    let api_key_owned: Option<String> = source
+        .api_key_env
+        .as_deref()
+        .and_then(|env_var| std::env::var(env_var).ok())
+        .filter(|k| !k.is_empty());
+    let api_key = api_key_owned.as_deref();
+
+    // Substitute template vars into every param value, then convert to JSON.
+    let arguments = params_to_json(&source.params, vars);
+
+    tracing::debug!(
+        source = %source.id,
+        server,
+        tool_name,
+        "MCP source: calling tool"
+    );
+
+    mcp_client::call_mcp_tool(server, tool_name, arguments, api_key).await
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -356,7 +503,7 @@ async fn execute_source(
 mod tests {
     use super::*;
 
-    // Helper: build a minimal ResearchManifest in memory (no disk I/O).
+    // Helper: build a minimal native manifest in memory (no disk I/O).
     fn equity_manifest() -> ResearchManifest {
         let toml_str = r#"
 [manifest]
@@ -383,22 +530,87 @@ params   = { period = "compact" }
         toml::from_str(toml_str).expect("test manifest must parse")
     }
 
+    // Helper: build a manifest with an MCP source.
+    fn mcp_manifest() -> ResearchManifest {
+        let toml_str = r#"
+[manifest]
+id = "mcp_test"
+description = "test mcp"
+match_patterns = ["news", "headlines"]
+
+[variables.company]
+hint     = "company name"
+required = true
+
+[[sources]]
+id          = "exa_news"
+type        = "mcp"
+server      = "https://mcp.example.com"
+tool_name   = "web_search"
+api_key_env = "TEST_API_KEY"
+required    = false
+params      = { query = "{{company}} latest news", numResults = "5" }
+"#;
+        toml::from_str(toml_str).expect("mcp test manifest must parse")
+    }
+
     #[test]
-    fn manifest_deserializes() {
+    fn native_manifest_deserializes() {
         let m = equity_manifest();
         assert_eq!(m.manifest.id, "equity_research");
         assert_eq!(m.sources.len(), 2);
         assert!(m.variables.contains_key("ticker"));
+        assert_eq!(m.sources[0].kind, SourceKind::Native);
+    }
+
+    #[test]
+    fn mcp_manifest_deserializes() {
+        let m = mcp_manifest();
+        assert_eq!(m.sources.len(), 1);
+        let src = &m.sources[0];
+        assert_eq!(src.kind, SourceKind::Mcp);
+        assert_eq!(src.server.as_deref(), Some("https://mcp.example.com"));
+        assert_eq!(src.tool_name.as_deref(), Some("web_search"));
+        assert_eq!(src.api_key_env.as_deref(), Some("TEST_API_KEY"));
+        assert_eq!(src.params.get("numResults").map(|s| s.as_str()), Some("5"));
+    }
+
+    #[test]
+    fn substitute_vars_replaces_placeholders() {
+        let mut vars = HashMap::new();
+        vars.insert("ticker".to_string(), "AAPL".to_string());
+        vars.insert("year".to_string(), "2024".to_string());
+
+        assert_eq!(
+            substitute_vars("{{ticker}} earnings {{year}}", &vars),
+            "AAPL earnings 2024"
+        );
+        // Unrecognised placeholder stays unchanged
+        assert_eq!(
+            substitute_vars("{{ticker}} {{unknown}}", &vars),
+            "AAPL {{unknown}}"
+        );
+    }
+
+    #[test]
+    fn params_to_json_converts_types() {
+        let mut params = HashMap::new();
+        params.insert("query".to_string(), "{{ticker}} news".to_string());
+        params.insert("numResults".to_string(), "5".to_string());
+        params.insert("useAutoprompt".to_string(), "true".to_string());
+
+        let mut vars = HashMap::new();
+        vars.insert("ticker".to_string(), "TSLA".to_string());
+
+        let json = params_to_json(&params, &vars);
+        assert_eq!(json["query"].as_str(), Some("TSLA news"));
+        assert_eq!(json["numResults"].as_i64(), Some(5));
+        assert_eq!(json["useAutoprompt"].as_bool(), Some(true));
     }
 
     #[test]
     fn regex_extracts_dollar_prefixed_ticker() {
-        let spec = VarSpec {
-            regex:    Some(r"\$([A-Z]{1,5})|\b([A-Z]{2,5})\b".to_string()),
-            hint:     "ticker".to_string(),
-            required: true,
-        };
-        let re = regex::Regex::new(spec.regex.as_ref().unwrap()).unwrap();
+        let re = regex::Regex::new(r"\$([A-Z]{1,5})|\b([A-Z]{2,5})\b").unwrap();
         let cap = re.captures("Tell me about $AAPL stock").unwrap();
         let value = (1..=cap.len().saturating_sub(1))
             .find_map(|i| cap.get(i))
@@ -422,11 +634,15 @@ params   = { period = "compact" }
     fn manifest_match_patterns_case_insensitive() {
         let m = equity_manifest();
         let lower = "analyze this stock for me".to_lowercase();
-        let matched = m.manifest.match_patterns.iter().any(|p| lower.contains(&p.to_lowercase()));
-        assert!(matched, "should match 'stock'");
+        assert!(
+            m.manifest.match_patterns.iter().any(|p| lower.contains(&p.to_lowercase())),
+            "should match 'stock'"
+        );
 
         let no_match = "write a poem about the moon".to_lowercase();
-        let not_matched = m.manifest.match_patterns.iter().any(|p| no_match.contains(&p.to_lowercase()));
-        assert!(!not_matched, "should not match");
+        assert!(
+            !m.manifest.match_patterns.iter().any(|p| no_match.contains(&p.to_lowercase())),
+            "should not match"
+        );
     }
 }

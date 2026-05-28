@@ -1,0 +1,65 @@
+# Company News & Sentiment Manifest
+#
+# Triggers on "news", "headlines", "press release", or "sentiment" intents.
+# Demonstrates MCP source consumption: optional sources backed by external
+# MCP servers degrade gracefully when the server or key is unavailable.
+#
+# Supported MCP transports:
+#   server = "https://host/path"        — HTTP JSON-RPC POST
+#   server = "stdio:npx some-mcp-pkg"  — subprocess, newline-delimited JSON-RPC
+
+[manifest]
+id          = "company_news"
+description = "Recent news, press releases, and sentiment for a company via MCP-connected sources."
+match_patterns = [
+    "news",
+    "headlines",
+    "press release",
+    "announcement",
+]
+
+# ── Variables ─────────────────────────────────────────────────────────────────
+
+[variables.company]
+# Matches a capitalised multi-word name (e.g. "Apple", "OpenAI", "Goldman Sachs")
+regex    = "\\b([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*)\\b"
+hint     = "the company or organisation name (e.g. Apple, Tesla, OpenAI)"
+required = true
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+
+# ── Exa neural search (MCP / stdio) ──────────────────────────────────────────
+# Requires: npm install -g @exa-ai/exa-mcp   and   EXA_API_KEY in env.
+# Optional — falls back gracefully if npx is unavailable.
+[[sources]]
+id          = "exa_news_search"
+type        = "mcp"
+server      = "stdio:npx @exa-ai/exa-mcp"
+tool_name   = "web_search_exa"
+api_key_env = "EXA_API_KEY"
+description = "Recent news and articles via Exa neural search"
+required    = false
+params      = { query = "{{company}} news 2024", numResults = "8", useAutoprompt = "true" }
+
+# ── Brave Search (MCP / stdio) ────────────────────────────────────────────────
+# Alternative search source. Requires BRAVE_API_KEY in env.
+# Uncomment and install: npm install -g @modelcontextprotocol/server-brave-search
+#
+# [[sources]]
+# id          = "brave_news_search"
+# type        = "mcp"
+# server      = "stdio:npx @modelcontextprotocol/server-brave-search"
+# tool_name   = "brave_web_search"
+# api_key_env = "BRAVE_API_KEY"
+# description = "News via Brave Search MCP"
+# required    = false
+# params      = { query = "{{company}} latest news", count = "5" }
+
+# ── Alpha Vantage news sentiment (native fallback) ────────────────────────────
+# If the company happens to have a known ticker, this adds structured sentiment
+# data.  Mark required = false so the manifest doesn't abort for private companies.
+[[sources]]
+id          = "av_news_sentiment"
+tool        = "get_news_sentiment"
+description = "Alpha Vantage news sentiment (requires ticker symbol in intent)"
+required    = false
