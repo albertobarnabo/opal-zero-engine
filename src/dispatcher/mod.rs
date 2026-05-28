@@ -7,10 +7,20 @@ use crate::governor::Governor;
 use crate::protocol::{ContextBus, MissionUpdate, Task, TaskStatus, Tool, CTX_OUTPUT_SCHEMA};
 use crate::tools::RequestKeys;
 
-// Maximum characters of prior-task context to include in an agent's prompt.
-// At ~4 chars/token this is ≈3 000 tokens — enough for the Analyst to see full
-// WebSearcher findings without hitting the 4 096 max_tokens ceiling.
-const CONTEXT_CHAR_BUDGET: usize = 12_000;
+// ── Context-window budget (chars, not tokens) ────────────────────────────────
+//
+// Analyst gets a larger window — it synthesises everything.
+// WebSearcher/Coder/Planner use a tighter budget; they only need their
+// direct dependencies plus recent context, not the full mission history.
+const CONTEXT_BUDGET_ANALYST:    usize = 32_000; // ~8 000 tokens
+const CONTEXT_BUDGET_DEFAULT:    usize = 16_000; // ~4 000 tokens
+
+fn context_budget_for_role(role: &crate::protocol::AgentRole) -> usize {
+    match role {
+        crate::protocol::AgentRole::Analyst => CONTEXT_BUDGET_ANALYST,
+        _ => CONTEXT_BUDGET_DEFAULT,
+    }
+}
 
 // ── Retry policy constants (overridable via environment variables) ─────────────
 const MAX_LLM_RETRIES: u32    = 3;
@@ -30,35 +40,90 @@ fn retry_base_delay_ms() -> u64 {
         .unwrap_or(RETRY_BASE_DELAY_MS)
 }
 
+/// Truncate `s` to at most `max` bytes at a valid UTF-8 char boundary.
+fn truncate_to_char_boundary(s: &str, max: usize) -> &str {
+    if s.len() <= max { return s; }
+    (0..=max).rev()
+        .find(|&i| s.is_char_boundary(i))
+        .map(|i| &s[..i])
+        .unwrap_or("")
+}
+
 /// Build a context string from the bus that fits within `char_budget` characters.
 ///
-/// Prioritises entries whose slug keys are longer (a rough proxy for recency,
-/// since later-planned tasks tend to have more descriptive, longer slugs).
-/// Individual entries are truncated at 600 characters rather than dropped
-/// entirely, so every task always contributes at least a summary.
-fn build_context_window(bus: &ContextBus, char_budget: usize) -> String {
-    const ENTRY_CAP: usize = 2_000;
+/// Two-tier priority model:
+///
+/// **Tier 1 — Dependency-guaranteed entries**
+/// Slugs listed in `depends_on` are always included first.  When there are
+/// many deps the available budget is split proportionally (minimum 800 chars
+/// each) so no critical input is silently dropped.
+///
+/// **Tier 2 — Recency fill**
+/// Remaining budget is filled with non-dep entries in *reverse insertion order*
+/// (most recently completed task first).  Each entry is capped at 2 000 chars.
+///
+/// **Metadata filtering**
+/// Keys prefixed with `__` are kernel metadata (output schema, global memory,
+/// etc.) and are excluded from the task-results block; they are injected into
+/// the prompt via dedicated headers instead.
+fn build_context_window(bus: &ContextBus, depends_on: &[String], char_budget: usize) -> String {
+    const FILL_ENTRY_CAP: usize = 2_000;
+    const MIN_DEP_CHARS:  usize = 800;
 
-    // Collect all entries and sort longest-key-first (recency heuristic).
-    let mut entries: Vec<(&String, &String)> = bus.data.iter().collect();
-    entries.sort_by_key(|(k, _)| Reverse(k.len()));
+    let is_task_key = |k: &str| !k.starts_with("__");
+
+    let dep_set: std::collections::HashSet<&str> =
+        depends_on.iter().map(|s| s.as_str()).collect();
+
+    // ── Tier 1: guaranteed dep entries ───────────────────────────────────────
+    let n_deps = depends_on.iter()
+        .filter(|s| bus.data.contains_key(s.as_str()) && is_task_key(s))
+        .count();
+
+    // Each dep gets an equal share of half the budget, at least MIN_DEP_CHARS.
+    let dep_cap_each = if n_deps > 0 {
+        ((char_budget / 2) / n_deps).max(MIN_DEP_CHARS)
+    } else {
+        0
+    };
 
     let mut out   = String::new();
     let mut spent = 0usize;
 
-    for (slug, result) in &entries {
-        let body: String = if result.len() > ENTRY_CAP {
-            let safe_end = (0..=ENTRY_CAP.min(result.len())).rev().find(|&i| result.is_char_boundary(i)).unwrap_or(0);
-            format!("{}… [truncated]", &result[..safe_end])
-        } else {
-            result.to_string()
-        };
-        let entry = format!("[{}]: {}\n", slug, body);
-        if spent + entry.len() > char_budget {
-            break;
+    for slug in depends_on {
+        if !is_task_key(slug) { continue; }
+        if let Some(result) = bus.data.get(slug.as_str()) {
+            let cap   = dep_cap_each.min(char_budget.saturating_sub(spent));
+            let body  = truncate_to_char_boundary(result, cap);
+            let trail = if body.len() < result.len() { "… [truncated]" } else { "" };
+            let entry = format!("[{}]: {}{}\n", slug, body, trail);
+            out.push_str(&entry);
+            spent += entry.len();
         }
-        out.push_str(&entry);
-        spent += entry.len();
+    }
+
+    // ── Tier 2: recency fill ──────────────────────────────────────────────────
+    // Use tracked insertion order when available; fall back to slug-length
+    // heuristic for old snapshots that pre-date `ordered_keys`.
+    let recency_iter: Box<dyn Iterator<Item = &String>> = if !bus.ordered_keys.is_empty() {
+        Box::new(bus.ordered_keys.iter().rev())
+    } else {
+        let mut keys: Vec<&String> = bus.data.keys().collect();
+        keys.sort_by_key(|k| Reverse(k.len()));
+        Box::new(keys.into_iter())
+    };
+
+    for slug in recency_iter {
+        if dep_set.contains(slug.as_str()) { continue; } // already in tier 1
+        if !is_task_key(slug) { continue; }             // skip metadata
+        if let Some(result) = bus.data.get(slug.as_str()) {
+            let body  = truncate_to_char_boundary(result, FILL_ENTRY_CAP);
+            let trail = if body.len() < result.len() { "… [truncated]" } else { "" };
+            let entry = format!("[{}]: {}{}\n", slug, body, trail);
+            if spent + entry.len() > char_budget { break; }
+            out.push_str(&entry);
+            spent += entry.len();
+        }
     }
 
     out
@@ -259,9 +324,11 @@ pub async fn dispatch_tasks(
             }
 
             // Store agent findings in the context bus (keyed by slug).
+            // Use context.insert() so insertion order is tracked for the
+            // context window builder.
             if let Some(ref res) = finished_task.result {
                 tracing::debug!(slug = %finished_task.slug, "storing result in context");
-                context.data.insert(finished_task.slug.clone(), res.clone());
+                context.insert(finished_task.slug.clone(), res.clone());
             }
 
             // Record per-task timing for mission metrics.
@@ -429,9 +496,23 @@ async fn execute_with_role(
     }
     prompt.push_str(&system_prefix);
 
-    if !context.data.is_empty() {
+    // ── Inject cross-mission memory with its own header ───────────────────────
+    // `__global_memory` is kernel metadata — it must NOT appear as a task
+    // result entry.  Give it a distinct header so agents understand its origin.
+    if let Some(mem) = context.data.get(crate::protocol::CTX_GLOBAL_MEMORY) {
+        if !mem.is_empty() {
+            prompt.push_str("\nKNOWLEDGE FROM PAST MISSIONS:\n");
+            prompt.push_str(mem);
+            prompt.push('\n');
+        }
+    }
+
+    // ── Inject task results (metadata keys filtered out) ─────────────────────
+    let budget = context_budget_for_role(&task.role);
+    let window = build_context_window(context, &task.depends_on, budget);
+    if !window.is_empty() {
         prompt.push_str("\nPREVIOUS TASK RESULTS:\n");
-        prompt.push_str(&build_context_window(context, CONTEXT_CHAR_BUDGET));
+        prompt.push_str(&window);
     }
 
     prompt.push_str(&format!("\nTASK: {}", task.intent));
@@ -1116,10 +1197,12 @@ mod tests {
 
     // ── build_context_window tests ────────────────────────────────────────────
 
+    /// Build a ContextBus from a slice of (key, value) pairs via `insert()`
+    /// so ordered_keys is populated correctly.
     fn make_bus(entries: &[(&str, &str)]) -> ContextBus {
         let mut bus = ContextBus::default();
         for (k, v) in entries {
-            bus.data.insert(k.to_string(), v.to_string());
+            bus.insert(k.to_string(), v.to_string());
         }
         bus
     }
@@ -1127,31 +1210,28 @@ mod tests {
     #[test]
     fn context_window_empty_bus_returns_empty_string() {
         let bus = ContextBus::default();
-        let out = build_context_window(&bus, 1_000);
+        let out = build_context_window(&bus, &[], 1_000);
         assert_eq!(out, "", "empty bus must produce empty context window");
     }
 
     #[test]
     fn context_window_single_entry_included() {
         let bus = make_bus(&[("task_one", "hello world")]);
-        let out = build_context_window(&bus, 10_000);
+        let out = build_context_window(&bus, &[], 10_000);
         assert!(out.contains("task_one"), "output must contain the slug key");
         assert!(out.contains("hello world"), "output must contain the entry value");
     }
 
     #[test]
     fn context_window_respects_char_budget() {
-        // Build a bus with two entries whose combined formatted size exceeds the
-        // tight budget so only the first (longest key, priority) fits.
         let long_val = "x".repeat(50);
         let bus = make_bus(&[
             ("longer_key_here", &long_val),
             ("short", &long_val),
         ]);
         // Budget just enough for one entry but not two.
-        // "[longer_key_here]: " + 50 x's + "\n" ≈ 71 chars
         let budget = 80;
-        let out = build_context_window(&bus, budget);
+        let out = build_context_window(&bus, &[], budget);
         assert!(
             out.len() <= budget,
             "output length {} exceeds budget {budget}",
@@ -1161,14 +1241,11 @@ mod tests {
 
     #[test]
     fn context_window_long_entry_truncated_not_dropped() {
-        // A single entry whose value exceeds ENTRY_CAP (2 000) must appear truncated.
         let big_val = "z".repeat(2_200);
         let bus = make_bus(&[("big_task", &big_val)]);
-        let out = build_context_window(&bus, 10_000);
-        // The entry must be present but not contain the full 800 chars.
+        let out = build_context_window(&bus, &[], 10_000);
         assert!(out.contains("big_task"), "key must appear even when value is truncated");
         assert!(out.contains("… [truncated]"), "truncation marker must be present");
-        // The raw 800-char value must NOT appear verbatim.
         assert!(!out.contains(&big_val), "full oversized value must not appear verbatim");
     }
 
@@ -1178,9 +1255,53 @@ mod tests {
             ("task_alpha", "result alpha"),
             ("task_beta",  "result beta"),
         ]);
-        let out = build_context_window(&bus, 100_000);
+        let out = build_context_window(&bus, &[], 100_000);
         assert!(out.contains("task_alpha"));
         assert!(out.contains("task_beta"));
+    }
+
+    #[test]
+    fn context_window_filters_metadata_keys() {
+        // Keys starting with "__" must not appear in the context window.
+        let bus = make_bus(&[
+            ("__output_schema",  r#"{"price":"number"}"#),
+            ("__global_memory",  "past missions summary"),
+            ("task_result",      "actual task result"),
+        ]);
+        let out = build_context_window(&bus, &[], 100_000);
+        assert!(!out.contains("__output_schema"),  "metadata key must be filtered");
+        assert!(!out.contains("__global_memory"),  "metadata key must be filtered");
+        assert!( out.contains("task_result"),      "task result must be present");
+    }
+
+    #[test]
+    fn context_window_dep_appears_even_when_budget_tight() {
+        // The dep result must be included even when a non-dep result would fill
+        // the budget first under the old slug-length heuristic.
+        let bus = make_bus(&[
+            ("aaaaaaaaaaaaaa", "filler filler filler filler filler"),
+            ("dep",            "critical dependency result"),
+        ]);
+        let depends_on = vec!["dep".to_string()];
+        // Budget just barely enough for one 2000-char-capped entry.
+        let out = build_context_window(&bus, &depends_on, 500);
+        assert!(out.contains("dep"), "dep must always appear in context window");
+        assert!(out.contains("critical dependency result"));
+    }
+
+    #[test]
+    fn context_window_recency_order_most_recent_first() {
+        // Insert in order: first, second, third.  With no deps and enough budget,
+        // "third" (most recent) must appear before "first" (oldest).
+        let bus = make_bus(&[
+            ("first_task",  "old result"),
+            ("second_task", "middle result"),
+            ("third_task",  "newest result"),
+        ]);
+        let out = build_context_window(&bus, &[], 100_000);
+        let pos_first  = out.find("first_task").unwrap();
+        let pos_third  = out.find("third_task").unwrap();
+        assert!(pos_third < pos_first, "most recent task must appear before oldest");
     }
 }
 

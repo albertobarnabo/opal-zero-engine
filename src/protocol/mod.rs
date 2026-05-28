@@ -166,13 +166,36 @@ impl AgentRole {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ContextBus {
     pub data: HashMap<String, String>,
+
+    /// Keys in the order they were first inserted.
+    ///
+    /// Used by `build_context_window` to sort entries most-recent-first (reverse
+    /// insertion order) so agents always see the freshest task results first.
+    ///
+    /// `#[serde(default)]` ensures old mission snapshots (which lack this field)
+    /// deserialise without error; the empty Vec causes `build_context_window` to
+    /// fall back to its slug-length heuristic for pre-existing entries.
+    #[serde(default)]
+    pub ordered_keys: Vec<String>,
 }
 
 impl ContextBus {
+    /// Insert (or update) a key, tracking insertion order for context building.
+    ///
+    /// If `key` already exists its value is updated but its position in
+    /// `ordered_keys` is preserved — first-insertion order is stable.
+    pub fn insert(&mut self, key: String, value: String) {
+        if !self.data.contains_key(&key) {
+            self.ordered_keys.push(key.clone());
+        }
+        self.data.insert(key, value);
+    }
+
     /// Wipe all stored results. Call this before re-running a mission to
     /// guarantee no stale data from a previous execution leaks through.
     pub fn clear(&mut self) {
         self.data.clear();
+        self.ordered_keys.clear();
     }
 }
 /// A directory the Wasm executor should expose to the guest module.

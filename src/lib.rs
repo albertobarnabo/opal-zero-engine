@@ -276,13 +276,13 @@ async fn run_mission_inner(
 
     // Restore preserved keys so downstream agents can read them.
     if let Some(schema) = preserved_schema {
-        plan.context.data.insert(protocol::CTX_OUTPUT_SCHEMA.into(), schema);
+        plan.context.insert(protocol::CTX_OUTPUT_SCHEMA.into(), schema);
     }
     if let Some(ms) = preserved_prior_ms {
-        plan.context.data.insert(protocol::CTX_PRIOR_MISSION_STATE.into(), ms);
+        plan.context.insert(protocol::CTX_PRIOR_MISSION_STATE.into(), ms);
     }
     if let Some(ts) = preserved_prior_ts {
-        plan.context.data.insert(protocol::CTX_PRIOR_RUN_TIMESTAMP.into(), ts);
+        plan.context.insert(protocol::CTX_PRIOR_RUN_TIMESTAMP.into(), ts);
     }
 
     // ── Inject cross-mission persistent memory into the context bus ───────────
@@ -294,9 +294,7 @@ async fn run_mission_inner(
             .map(|(k, e)| format!("{k}: {}", e.value))
             .collect::<Vec<_>>()
             .join("\n");
-        plan.context
-            .data
-            .insert(protocol::CTX_GLOBAL_MEMORY.into(), summary);
+        plan.context.insert(protocol::CTX_GLOBAL_MEMORY.into(), summary);
     }
 
     let original_task_count = plan.tasks.len();
@@ -379,20 +377,16 @@ async fn resume_mission_inner(
                 question = q.lines().next().unwrap_or(q).to_string();
                 let cleaned = format!("Feedback was requested: {}", question);
                 // Also update the context bus entry so context is consistent.
-                plan.context.data.insert(task.slug.clone(), cleaned.clone());
+                plan.context.insert(task.slug.clone(), cleaned.clone());
                 *result = cleaned;
             }
         }
     }
 
     // ── 2. Inject the user's response into the ContextBus ────────────────────
-    plan.context
-        .data
-        .insert(protocol::CTX_USER_FEEDBACK.to_string(), user_feedback.to_string());
+    plan.context.insert(protocol::CTX_USER_FEEDBACK.to_string(), user_feedback.to_string());
     if !question.is_empty() {
-        plan.context
-            .data
-            .insert(protocol::CTX_FEEDBACK_QUESTION.to_string(), question.clone());
+        plan.context.insert(protocol::CTX_FEEDBACK_QUESTION.to_string(), question.clone());
     }
 
     // ── 3. Append a feedback-driven refinement task ───────────────────────────
@@ -518,16 +512,26 @@ async fn refine_mission_inner(
     plan.keys = keys;
 
     // ── 3. Pre-populate context bus with prior task results ───────────────────
+    // Restore snapshot context in recorded insertion order so the context window
+    // builder sees prior task results in the right recency sequence.
+    for k in &snapshot.context.ordered_keys {
+        if let Some(v) = snapshot.context.data.get(k) {
+            if !plan.context.data.contains_key(k) {
+                plan.context.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    // Also pick up any keys absent from ordered_keys (backward compat with old snapshots).
     for (k, v) in &snapshot.context.data {
-        plan.context.data.entry(k.clone()).or_insert_with(|| v.clone());
+        if !plan.context.data.contains_key(k) {
+            plan.context.insert(k.clone(), v.clone());
+        }
     }
     // Inject the structured prior payload so the Analyst can reference it
     // by name when writing its finalize_mission_state call.
     if let Some(ms) = &snapshot.mission_state {
         if let Ok(json) = serde_json::to_string(&ms.data_payload) {
-            plan.context
-                .data
-                .insert(protocol::CTX_PRIOR_MISSION_STATE.to_string(), json);
+            plan.context.insert(protocol::CTX_PRIOR_MISSION_STATE.to_string(), json);
         }
     }
 

@@ -139,7 +139,7 @@ pub async fn build_plan_from_intent(intent: &str, provider: &dyn AiProvider) -> 
     // verify completeness before declaring success.
     let requirements = crate::safety::extract_requirements(intent, provider).await;
     if !requirements.is_empty() {
-        plan.context.data.insert(
+        plan.context.insert(
             crate::safety::CTX_REQUIREMENTS.to_string(),
             crate::safety::serialize_requirements(&requirements),
         );
