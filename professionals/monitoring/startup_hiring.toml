@@ -1,0 +1,38 @@
+[manifest]
+id          = "startup_hiring"
+description = "Track hiring signals from high-growth AI startups to surface funding, expansion, and strategic pivot indicators"
+schedule    = "0 7 * * 1"
+intent      = """
+Research the current open job postings and recent hiring activity at the following AI startups:
+Mistral AI, Cohere, Together AI, Replicate, Modal Labs, and Groq.
+For each company collect: total number of open roles, the top 3-5 departments hiring most aggressively,
+any newly opened senior leadership roles (VP, Director, C-suite), any roles that signal a strategic expansion
+(e.g. enterprise sales, new geography, new product line), and the overall hiring trend (accelerating/stable/slowing).
+Produce a structured JSON object with the output_schema fields below.
+"""
+
+[output_schema]
+companies         = "object"
+leadership_hires  = "array"
+strategic_signals = "string"
+hiring_trend      = "string"
+
+[[compare_fields]]
+key         = "companies"
+description = "Per-company open role counts and top departments"
+importance  = "high"
+
+[[compare_fields]]
+key         = "leadership_hires"
+description = "Senior leadership positions opened since last run"
+importance  = "high"
+
+[[compare_fields]]
+key         = "strategic_signals"
+description = "Roles that indicate a strategic shift or expansion"
+importance  = "medium"
+
+[[compare_fields]]
+key         = "hiring_trend"
+description = "Overall hiring velocity trend across the cohort"
+importance  = "low"

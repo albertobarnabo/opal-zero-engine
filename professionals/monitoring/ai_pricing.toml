@@ -1,0 +1,31 @@
+[manifest]
+id          = "ai_pricing"
+description = "Track pricing changes across major AI API providers (OpenAI, Anthropic, Google, Mistral, Cohere)"
+schedule    = "0 8 * * *"
+intent      = """
+Research the current pricing for the major AI API providers: OpenAI, Anthropic, Google (Gemini), Mistral, and Cohere.
+For each provider collect: the model names currently available, their input and output token prices per million tokens,
+any free tier or trial credits offered, and any recent pricing changes announced in the last 30 days.
+Produce a structured JSON object with the output_schema fields below.
+"""
+
+[output_schema]
+providers       = "object"
+free_tiers      = "object"
+recent_changes  = "string"
+last_updated    = "string"
+
+[[compare_fields]]
+key         = "providers"
+description = "Per-provider model pricing table"
+importance  = "high"
+
+[[compare_fields]]
+key         = "free_tiers"
+description = "Free tier availability and limits"
+importance  = "medium"
+
+[[compare_fields]]
+key         = "recent_changes"
+description = "Pricing announcements in the last 30 days"
+importance  = "high"

@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod memory;
 pub mod metrics;
 pub mod monitoring;
+pub mod monitoring_registry;
 pub mod persistence;
 pub mod planner;
 pub mod protocol;
@@ -35,6 +36,7 @@ pub mod prelude {
     pub use crate::diff_engine::{diff as diff_payloads, Change as PayloadChange};
     pub use crate::metrics::{GovernorVerdicts, MissionMetrics, TaskTiming};
     pub use crate::monitoring::{load_latest_report, load_reports, list_monitor_ids, MonitoringReport};
+    pub use crate::monitoring_registry::{get_all as get_all_monitors, get_by_id as get_monitor_by_id, MonitoringManifest};
     pub use crate::registry::Registry;
     pub use crate::tools::RequestKeys;
     pub use crate::{refine_mission, refine_mission_with_keys, resume_mission, run_mission,
