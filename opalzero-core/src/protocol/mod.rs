@@ -133,6 +133,14 @@ pub struct Task {
     /// schema always takes priority.
     #[serde(default)]
     pub output_schema: Option<String>,
+
+    /// Research manifest that short-circuited this task's execution.
+    ///
+    /// Set by the dispatcher when a TOML manifest match succeeds and the
+    /// manifest path produces a result (bypassing the multi-turn Exa loop).
+    /// `None` means the task ran via the normal LLM tool-call path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -861,6 +869,11 @@ pub enum MissionUpdate {
         /// Snapshot ID so the caller can persist/resume the mission.
         mission_id: String,
     },
+    /// Structured performance and quality metrics emitted once per mission.
+    ///
+    /// Sent immediately after `MissionComplete` or `MissionFailed` so that
+    /// the server / SSE stream can forward it to the frontend or log it.
+    Metrics(crate::metrics::MissionMetrics),
 }
 
 impl MissionUpdate {
@@ -874,6 +887,7 @@ impl MissionUpdate {
             MissionUpdate::MissionComplete { .. } => "mission_complete",
             MissionUpdate::MissionFailed { .. }  => "mission_failed",
             MissionUpdate::MissionPaused { .. }  => "mission_paused",
+            MissionUpdate::Metrics(_)            => "metrics",
         }
     }
 }
