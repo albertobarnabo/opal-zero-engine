@@ -22,7 +22,7 @@ The fastest path is the HTTP server + React SDK. No Rust required.
 git clone https://github.com/albertobarnabo/opalzero-engine
 cd opalzero-engine
 export OPENAI_API_KEY=sk-...
-PORT=8080 cargo run --bin opalzero-server
+PORT=8000 cargo run --bin opalzero-server
 ```
 
 **2 — Install the SDK**
@@ -37,7 +37,7 @@ npm install opal-zero
 import { OpalZeroClient } from "opal-zero";
 import { useOpalZero } from "opal-zero/react";
 
-const client = new OpalZeroClient({ baseUrl: "http://localhost:8080" });
+const client = new OpalZeroClient({ baseUrl: "http://localhost:8000" });
 
 export function Brief() {
   const { run, cards, status } = useOpalZero({ client });
@@ -121,7 +121,7 @@ Pass a typed schema and the Analyst is contractually bound to produce exactly th
 ```ts
 import { OpalZeroClient } from "opal-zero";
 
-const client = new OpalZeroClient({ baseUrl: "http://localhost:8080" });
+const client = new OpalZeroClient({ baseUrl: "http://localhost:8000" });
 
 const SCHEMA = {
   current_price_usd: "number",
@@ -207,7 +207,7 @@ Full methodology, scoring rubrics, per-framework profiles, and performance numbe
 | `OPALZERO_SMTP_USER` | optional | SMTP username |
 | `OPALZERO_SMTP_PASS` | optional | SMTP password / app password |
 | `OPALZERO_SMTP_FROM` | optional | Sender address |
-| `PORT` | 8080 | opalzero-server listen port |
+| `PORT` | 8000 | opalzero-server listen port |
 | `OPALZERO_MAX_TOKENS` | 4096 | Max tokens per LLM response |
 | `OPALZERO_TEMPERATURE` | 0.1 | Sampling temperature |
 | `OPALZERO_MISSION_TIMEOUT_SECS` | 300 | Wall-clock deadline per mission |
