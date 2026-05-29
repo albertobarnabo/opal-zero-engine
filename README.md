@@ -2,11 +2,13 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
-![npm](https://img.shields.io/npm/v/opalzero-sdk.svg)
+![npm](https://img.shields.io/npm/v/opal-zero.svg)
 
-**A Rust-native multi-agent intelligence kernel. Give it an intent — it plans, executes, validates, and streams structured results back to you.**
+**The AI kernel your app delegates to. Send an intent and the exact output schema you want — get back finished, structured data. Stop writing AI code.**
 
-Most agent frameworks hand you a pile of primitives and wish you luck. opalzero-engine is an opinionated kernel: it takes a plain-English intent, breaks it into a dependency-ordered task graph, dispatches each task to a specialist agent (Analyst, WebSearcher), runs the combined output through a five-criterion quality rubric, and either approves it or sends agents back to fix specific gaps. No manual orchestration. No prompt babysitting.
+You run opalzero-engine as a headless server next to your app — in any language — and **delegate the entire AI part to it.** Your app sends an intent (and optionally a schema) and gets structured data back; it never writes a prompt or picks a model.
+
+Most agent frameworks hand you a pile of primitives and wish you luck. opalzero-engine is the opposite — an opinionated kernel: it takes a plain-English intent, breaks it into a dependency-ordered task graph, dispatches each task to a specialist agent (Analyst, WebSearcher), runs the combined output through a five-criterion quality rubric, and either approves it or sends agents back to fix specific gaps. No manual orchestration. No prompt babysitting.
 
 ---
 
@@ -20,31 +22,39 @@ The fastest path is the HTTP server + React SDK. No Rust required.
 git clone https://github.com/albertobarnabo/opalzero-engine
 cd opalzero-engine
 export OPENAI_API_KEY=sk-...
-PORT=3491 cargo run --bin opalzero-server
+PORT=8080 cargo run --bin opalzero-server
 ```
 
 **2 — Install the SDK**
 
 ```bash
-npm install opalzero-sdk
+npm install opal-zero
 ```
 
 **3 — Use it in React**
 
 ```tsx
-import { useOpalZero } from "opalzero-sdk";
+import { OpalZeroClient } from "opal-zero";
+import { useOpalZero } from "opal-zero/react";
+
+const client = new OpalZeroClient({ baseUrl: "http://localhost:8080" });
 
 export function Brief() {
-  const { data, agents, status } = useOpalZero(
-    "Interview brief for Software Engineer at Stripe",
-    { config: { serverUrl: "http://localhost:3491" } }
-  );
+  const { run, cards, status } = useOpalZero({ client });
 
-  return <pre>{JSON.stringify(data, null, 2)}</pre>;
+  return (
+    <div>
+      <button onClick={() => run("Interview brief for a Software Engineer at Stripe")}>
+        Run
+      </button>
+      {status === "complete" &&
+        cards.map((c) => <pre key={c.key}>{JSON.stringify(c.props, null, 2)}</pre>)}
+    </div>
+  );
 }
 ```
 
-That's it. The kernel plans, searches, analyses, and validates. You get structured JSON.
+That's it. The kernel plans, searches, analyses, and validates. Your app just renders the structured result.
 
 ---
 
@@ -106,26 +116,30 @@ OPALZERO_PROVIDER=compatible \
 
 ## Output schema contract
 
-Pass a typed schema and the Analyst is contractually bound to produce exactly those keys — no hallucinated fields, no missing keys, no extra output to wrangle downstream.
+Pass a typed schema and the Analyst is contractually bound to produce exactly those keys — no hallucinated fields, no missing keys, no extra output to wrangle downstream. **This is what makes the kernel general: every problem becomes the same problem — an intent and the shape of its answer.**
 
-```tsx
+```ts
+import { OpalZeroClient } from "opal-zero";
+
+const client = new OpalZeroClient({ baseUrl: "http://localhost:8080" });
+
 const SCHEMA = {
-  current_price_usd:  "number",
-  market_cap_usd:     "number",
-  top_competitors:    "array",
-  analyst_consensus:  "string",
-  recent_news:        "array",
+  current_price_usd: "number",
+  market_cap_usd:    "number",
+  top_competitors:   "array",
+  analyst_consensus: "string",
+  recent_news:       "array",
 };
 
-const { data } = useOpalZero("Financial brief for Apple", {
-  schema: SCHEMA,
-  config: { serverUrl: "http://localhost:3491" },
-});
-
-// data is guaranteed to have exactly these keys, nothing else
+for await (const event of client.execute("Financial brief for Apple", undefined, SCHEMA)) {
+  if (event.type === "mission_complete") {
+    // event.mission_state.data_payload has exactly these keys, nothing else
+    console.log(event.mission_state?.data_payload);
+  }
+}
 ```
 
-The Governor enforces the contract. If the Analyst drifts, it gets sent back. The result you receive always matches the shape you declared.
+The Governor enforces the contract. If the Analyst drifts, it gets sent back. The result you receive always matches the shape you declared. Python (`oz.execute(intent, schema=SCHEMA)`) and raw `curl` accept the same `schema` field.
 
 ---
 
@@ -253,7 +267,7 @@ dotenvy    = "0.15"
 
 ## Related
 
-- [opalzero-sdk](https://www.npmjs.com/package/opalzero-sdk) — React SDK (`useOpalZero`, `AgentStrip`, TypeScript types)
+- [opal-zero](https://www.npmjs.com/package/opal-zero) — TypeScript / React SDK (`OpalZeroClient`, `useOpalZero`, full type defs)
 - [opalzero-professionals](https://github.com/albertobarnabo/opalzero-professionals) — community WASM tool modules
 - [opalzero-demo](https://github.com/albertobarnabo/opalzero-demo) — reference apps built on opalzero-sdk (Lumen, Brief)
 - [Docs & landing](https://albertobarnabo.com/opal-zero/)
