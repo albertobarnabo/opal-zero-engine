@@ -4,9 +4,9 @@
 ![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 ![npm](https://img.shields.io/npm/v/opal-zero.svg)
 
-**The AI kernel your app delegates to. Send an intent and the exact output schema you want — get back finished, structured data. Stop writing AI code.**
+**Want to use AI in your app but you're not an AI engineer? OpalZero is the one you don't have to hire.** Send it an intent and the exact output schema you want — get back finished, structured data. No prompts, no model wiring, no orchestration code.
 
-You run opalzero-engine as a headless server next to your app — in any language — and **delegate the entire AI part to it.** Your app sends an intent (and optionally a schema) and gets structured data back; it never writes a prompt or picks a model.
+You run opalzero-engine as a headless server next to your app — in any language — and hand it the entire AI part. Your app sends an intent (and optionally a schema) and gets structured data back; it never writes a prompt or picks a model.
 
 Most agent frameworks hand you a pile of primitives and wish you luck. opalzero-engine is the opposite — an opinionated kernel: it takes a plain-English intent, breaks it into a dependency-ordered task graph, dispatches each task to a specialist agent (Analyst, WebSearcher), runs the combined output through a five-criterion quality rubric, and either approves it or sends agents back to fix specific gaps. No manual orchestration. No prompt babysitting.
 
