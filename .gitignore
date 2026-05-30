@@ -1,0 +1,9 @@
+# Build output
+target/
+
+# Backups / editor cruft
+**/*.rs.bk
+*.pdb
+
+# macOS
+.DS_Store
