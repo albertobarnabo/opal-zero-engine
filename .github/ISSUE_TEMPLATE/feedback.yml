@@ -1,0 +1,44 @@
+name: 💬 Product feedback
+description: Tell us what you tried, what worked, and what didn't. ~2 minutes.
+title: "[Feedback] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying OpalZero. Honest feedback — including "I couldn't get it working" — is exactly what helps most.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to build or do with OpalZero?
+      placeholder: e.g. add structured AI extraction to my Node app; monitor competitor pricing; just kicking the tires
+    validations:
+      required: true
+  - type: dropdown
+    id: worked
+    attributes:
+      label: Did it work?
+      options:
+        - "Yes — running, and it did what I wanted"
+        - "Partly — it ran, but the output/behavior wasn't right"
+        - "No — I couldn't get it running"
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: What was confusing, missing, or annoying?
+      placeholder: an install step, a docs gap, an error message, a missing feature, the pricing of the hosted version…
+  - type: dropdown
+    id: glimpse
+    attributes:
+      label: Would you use the hosted version (OpalGlimpse — scheduled monitoring with structured diffs)?
+      options:
+        - "Yes — I'd try it"
+        - "Maybe"
+        - "Not for me"
+  - type: input
+    id: contact
+    attributes:
+      label: Open to a 15-min chat? (optional)
+      placeholder: your email — only if you're up for it

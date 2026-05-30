@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💡 Ideas & Q&A (Discussions)
+    url: https://github.com/albertobarnabo/opal-zero-engine/discussions
+    about: Ask a question, share what you built, or suggest an idea.
+  - name: 🔭 OpalGlimpse early access — vote
+    url: https://github.com/albertobarnabo/opal-zero-engine/issues/1
+    about: Want the hosted monitoring product? 👍 here so we know to deploy it.
+  - name: ✉️ Email the maker
+    url: mailto:albertobarnabo@gmail.com
+    about: Prefer email? Reach out directly.
