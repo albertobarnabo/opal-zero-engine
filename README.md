@@ -12,6 +12,19 @@ Most agent frameworks hand you a pile of primitives and wish you luck. opalzero-
 
 ---
 
+## 🔭 OpalGlimpse — the first product built on OpalZero *(coming soon)*
+
+Autonomous monitoring powered by OpalZero: point it at markets, competitors, or any signal — it runs on a schedule and shows you **exactly what changed**, as structured diffs, not noise. *Watch the world change while you sleep.*
+
+It launches as a hosted SaaS, and **we deploy it once there's enough interest.** Want early access?
+
+- 👍 or comment on the **[OpalGlimpse early-access issue →](https://github.com/albertobarnabo/opal-zero-engine/issues/1)**
+- or email **albertobarnabo@gmail.com**
+
+Meanwhile, run the OpalZero engine yourself today — bring your own API key.
+
+---
+
 ## Quickstart
 
 The fastest path is the HTTP server + React SDK. No Rust required.
